@@ -1,0 +1,361 @@
+import {sectorFor} from "@/lib/sectors";
+import type {
+  Asset,
+  AssetKind,
+  ChartPoint,
+  NewsItem,
+  RwaAsset,
+  Timeframe,
+  TokenAsset,
+  Trade,
+} from "@/lib/types";
+import {between, fakeAddress, pick, rng} from "./rng";
+import {launchpadFor, RWA_SEEDS, TOKEN_SEEDS} from "./universe";
+
+/**
+ * The seeded market.
+ *
+ * Every number here is a pure function of an asset key and a timestamp, which
+ * buys three things a random generator would not: a card and the chart page it
+ * opens always agree, a chart redrawn on a timeframe switch is the same curve
+ * at a different resolution, and reloading the feed does not reshuffle it.
+ *
+ * `sources.ts` is the seam where real feeds replace this.
+ */
+
+/** Minutes in each chart window, and how many points to draw across it. */
+const WINDOWS: Record<Timeframe, {minutes: number; points: number}> = {
+  "5m": {minutes: 5 * 60, points: 90},
+  "15m": {minutes: 15 * 60, points: 90},
+  "1h": {minutes: 60 * 24, points: 96},
+  "4h": {minutes: 60 * 24 * 4, points: 96},
+  "1D": {minutes: 60 * 24 * 30, points: 120},
+};
+
+interface Harmonic {
+  period: number;
+  amp: number;
+  phase: number;
+}
+
+const HARMONIC_PERIODS = [10080, 2880, 1440, 360, 90, 30, 8];
+const HARMONIC_WEIGHTS = [1, 0.7, 0.5, 0.32, 0.2, 0.12, 0.06];
+
+const harmonicCache = new Map<string, Harmonic[]>();
+
+function harmonicsFor(key: string): Harmonic[] {
+  const cached = harmonicCache.get(key);
+  if (cached) return cached;
+
+  const next = rng(`harmonics:${key}`);
+  const built = HARMONIC_PERIODS.map((period, i) => ({
+    period,
+    amp: HARMONIC_WEIGHTS[i] * between(next, 0.6, 1.4),
+    phase: next() * Math.PI * 2,
+  }));
+  harmonicCache.set(key, built);
+  return built;
+}
+
+/**
+ * A smooth, unbounded walk in log space.
+ *
+ * Summed sine waves rather than an accumulated random walk, because a walk
+ * would have to be replayed from a fixed origin on every request to stay
+ * stable — this is O(7) at any point in time.
+ */
+function drift(key: string, atMs: number): number {
+  const minutes = atMs / 60_000;
+  let value = 0;
+  for (const h of harmonicsFor(key)) {
+    value += h.amp * Math.sin((minutes / h.period) * Math.PI * 2 + h.phase);
+  }
+  return value;
+}
+
+/** Annualised-ish wiggle. Tokens move far harder than the assets they pair with. */
+function volatilityFor(kind: AssetKind): number {
+  return kind === "rwa" ? 0.018 : 0.16;
+}
+
+function priceAt(
+  key: string,
+  base: number,
+  kind: AssetKind,
+  atMs: number,
+): number {
+  return base * Math.exp(volatilityFor(kind) * drift(key, atMs));
+}
+
+function changeOver(
+  key: string,
+  base: number,
+  kind: AssetKind,
+  minutes: number,
+  now: number,
+): number {
+  const then = priceAt(key, base, kind, now - minutes * 60_000);
+  const live = priceAt(key, base, kind, now);
+  return ((live - then) / then) * 100;
+}
+
+/** Rounds to the precision the asset actually trades at. */
+export function roundPrice(value: number): number {
+  if (value >= 1) return Number(value.toFixed(2));
+  if (value >= 0.01) return Number(value.toFixed(4));
+  return Number(value.toPrecision(3));
+}
+
+function cardSeries(
+  key: string,
+  base: number,
+  kind: AssetKind,
+  now: number,
+): number[] {
+  const span = 24 * 60 * 60_000;
+  return Array.from({length: 24}, (_, i) =>
+    roundPrice(priceAt(key, base, kind, now - span + (span * i) / 23)),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// RWAs
+// ---------------------------------------------------------------------------
+
+export function listRwas(now: number = Date.now()): RwaAsset[] {
+  return RWA_SEEDS.map((seed) => {
+    const key = `rwa:${seed.ticker}`;
+    const next = rng(`meta:${key}`);
+    const price = priceAt(key, seed.basePrice, "rwa", now);
+    const floatShares = between(next, 4e8, 9e9);
+
+    return {
+      kind: "rwa" as const,
+      id: seed.ticker.toLowerCase(),
+      ticker: seed.ticker,
+      name: seed.name,
+      logoUrl: null,
+      contractAddress: fakeAddress(`rwa-token:${seed.ticker}`),
+      verified: true as const,
+      stockType: seed.stockType,
+      sector: sectorFor(seed.ticker)?.id ?? "software",
+      description: seed.description,
+      priceUsd: roundPrice(price),
+      changePct: Number(changeOver(key, seed.basePrice, "rwa", 1440, now).toFixed(2)),
+      volume24hUsd: Math.round(price * floatShares * between(next, 0.002, 0.03)),
+      marketCapUsd: Math.round(price * floatShares),
+      series: cardSeries(key, seed.basePrice, "rwa", now),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tokens with an RWA pair
+// ---------------------------------------------------------------------------
+
+export function listTokens(now: number = Date.now()): TokenAsset[] {
+  return TOKEN_SEEDS.map((seed) => {
+    const key = `token:${seed.symbol}`;
+    const next = rng(`meta:${key}`);
+    const address = fakeAddress(`token-contract:${seed.symbol}`);
+
+    // Supply is fixed at deploy, so market cap moves only with price.
+    const supply = pick(next, [1e9, 1e9, 1e9, 1e8, 1e10]);
+    const basePrice = between(next, 0.00004, 0.0092);
+    const price = priceAt(key, basePrice, "token", now);
+    const marketCap = price * supply;
+
+    return {
+      kind: "token" as const,
+      id: address,
+      address,
+      symbol: seed.symbol,
+      name: seed.name,
+      imageUrl: null,
+      priceUsd: roundPrice(price),
+      changePct: Number(changeOver(key, basePrice, "token", 1440, now).toFixed(2)),
+      volume24hUsd: Math.round(marketCap * between(next, 0.04, 0.9)),
+      marketCapUsd: Math.round(marketCap),
+      liquidityUsd: Math.round(marketCap * between(next, 0.03, 0.14)),
+      holders: Math.round(between(next, 240, 41_000)),
+      createdAt: new Date(
+        now - between(next, 2, 240) * 24 * 60 * 60_000,
+      ).toISOString(),
+      pairedTicker: seed.pairedTicker,
+      launchpad: launchpadFor(seed.launchpadId, address),
+      socials: seed.socials,
+      description: seed.description,
+      series: cardSeries(key, basePrice, "token", now),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Lookup
+// ---------------------------------------------------------------------------
+
+export function getAsset(
+  kind: AssetKind,
+  id: string,
+  now: number = Date.now(),
+): Asset | null {
+  const wanted = id.toLowerCase();
+  if (kind === "rwa") {
+    return listRwas(now).find((asset) => asset.id === wanted) ?? null;
+  }
+  return (
+    listTokens(now).find(
+      (asset) =>
+        asset.id.toLowerCase() === wanted ||
+        asset.symbol.toLowerCase() === wanted,
+    ) ?? null
+  );
+}
+
+/** The seed inputs a chart or trade list needs, without re-deriving the asset. */
+function priceInputs(asset: Asset): {key: string; base: number} {
+  if (asset.kind === "rwa") {
+    const seed = RWA_SEEDS.find((s) => s.ticker === asset.ticker);
+    return {key: `rwa:${asset.ticker}`, base: seed?.basePrice ?? asset.priceUsd};
+  }
+  const next = rng(`meta:token:${asset.symbol}`);
+  // Consumed in the same order as listTokens, so the base price matches.
+  pick(next, [1e9, 1e9, 1e9, 1e8, 1e10]);
+  return {key: `token:${asset.symbol}`, base: between(next, 0.00004, 0.0092)};
+}
+
+// ---------------------------------------------------------------------------
+// Charts and trades
+// ---------------------------------------------------------------------------
+
+export function chartFor(
+  asset: Asset,
+  timeframe: Timeframe,
+  now: number = Date.now(),
+): ChartPoint[] {
+  const {key, base} = priceInputs(asset);
+  const {minutes, points} = WINDOWS[timeframe];
+  const span = minutes * 60_000;
+  const step = span / (points - 1);
+
+  return Array.from({length: points}, (_, i) => {
+    const t = now - span + step * i;
+    return {t: Math.round(t), price: roundPrice(priceAt(key, base, asset.kind, t))};
+  });
+}
+
+export function tradesFor(
+  asset: Asset,
+  limit = 40,
+  now: number = Date.now(),
+): Trade[] {
+  const {key, base} = priceInputs(asset);
+  const next = rng(`trades:${key}:${Math.floor(now / 60_000)}`);
+  // Busier tokens print more often, so the gap between fills scales with size.
+  const meanGapMs = asset.kind === "rwa" ? 42_000 : 15_000;
+
+  const trades: Trade[] = [];
+  let at = now - between(next, 1_000, 9_000);
+
+  for (let i = 0; i < limit; i++) {
+    const price = priceAt(key, base, asset.kind, at);
+    const amountUsd = Math.round(
+      between(next, 45, asset.kind === "rwa" ? 24_000 : 9_000) *
+        (next() < 0.08 ? between(next, 4, 22) : 1),
+    );
+    const maker = fakeAddress(`maker:${key}:${i}:${Math.floor(at / 3_600_000)}`);
+
+    trades.push({
+      id: `${key}-${i}-${Math.round(at)}`,
+      side: next() < 0.53 ? "buy" : "sell",
+      amount: Number((amountUsd / price).toPrecision(6)),
+      amountUsd,
+      priceUsd: roundPrice(price),
+      maker,
+      makerHandle: null,
+      at: new Date(Math.round(at)).toISOString(),
+    });
+
+    at -= between(next, 0.2, 2.4) * meanGapMs;
+  }
+
+  return trades;
+}
+
+// ---------------------------------------------------------------------------
+// News
+// ---------------------------------------------------------------------------
+
+const HEADLINE_TEMPLATES = [
+  "{name} tokenized supply on Robinhood Chain crosses a new high",
+  "Liquidity in {ticker} pairs deepens as market makers step in",
+  "{name} volume picks up ahead of the next earnings print",
+  "What the {ticker} tokenization means for round-the-clock trading",
+  "{name} holders now split across custody and on-chain wrappers",
+  "Desk note: how {ticker} has traded since the RWA listing",
+];
+
+const SOURCES = ["Market Wire", "Chain Desk", "The Ledger", "Onchain Daily"];
+
+/**
+ * Placeholder headlines.
+ *
+ * Deliberately not attributed to real publications, and flagged as sample data
+ * by the route, so nothing here can be mistaken for reporting. The real feed
+ * lands in `sources.fetchNews`.
+ */
+export function newsFor(asset: RwaAsset, now: number = Date.now()): NewsItem[] {
+  const next = rng(`news:${asset.ticker}:${Math.floor(now / 3_600_000)}`);
+  return HEADLINE_TEMPLATES.slice(0, 5).map((template, i) => ({
+    id: `${asset.ticker}-news-${i}`,
+    title: template
+      .replaceAll("{name}", asset.name)
+      .replaceAll("{ticker}", asset.ticker),
+    url: "#",
+    source: pick(next, SOURCES),
+    publishedAt: new Date(
+      now - between(next, 0.5, 60) * 3_600_000,
+    ).toISOString(),
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/**
+ * Matches tickers, symbols, names and contract addresses across both sides of
+ * the universe. A pasted address is the whole point of the field, so it is
+ * checked with a prefix match rather than a substring one.
+ */
+export function searchAssets(query: string, now: number = Date.now()): Asset[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+
+  const all: Asset[] = [...listTokens(now), ...listRwas(now)];
+  const scored = all
+    .map((asset) => ({asset, score: scoreMatch(asset, q)}))
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score || b.asset.volume24hUsd - a.asset.volume24hUsd);
+
+  return scored.slice(0, 40).map((row) => row.asset);
+}
+
+function scoreMatch(asset: Asset, q: string): number {
+  const symbol = (asset.kind === "rwa" ? asset.ticker : asset.symbol).toLowerCase();
+  const address = (
+    asset.kind === "rwa" ? asset.contractAddress : asset.address
+  ).toLowerCase();
+  const name = asset.name.toLowerCase();
+
+  if (symbol === q) return 100;
+  if (address.startsWith(q) && q.length >= 4) return 95;
+  if (symbol.startsWith(q)) return 80;
+  if (name.startsWith(q)) return 70;
+  if (symbol.includes(q)) return 50;
+  if (name.includes(q)) return 40;
+  // A token is findable by the RWA it trades against — that is often the only
+  // thing someone knows about it.
+  if (asset.kind === "token" && asset.pairedTicker.toLowerCase() === q) return 60;
+  return 0;
+}

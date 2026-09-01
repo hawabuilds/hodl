@@ -1,0 +1,94 @@
+"use client";
+
+import {useCallback, useMemo, type ReactNode} from "react";
+import {PrivyProvider, usePrivy, useWallets} from "@privy-io/react-auth";
+import {useTheme} from "@/hooks/useTheme";
+import {PRIVY_APP_ID} from "@/lib/env";
+import {SessionContext, type AppUser, type Session} from "@/lib/session";
+
+export function PrivySessionProvider({children}: {children: ReactNode}) {
+  const {theme} = useTheme();
+
+  return (
+    <PrivyProvider
+      key={theme}
+      appId={PRIVY_APP_ID}
+      config={{
+        loginMethods: ["twitter", "email"],
+        embeddedWallets: {
+          ethereum: {createOnLogin: "users-without-wallets"},
+        },
+        appearance: {
+          theme,
+          accentColor: "#00C805",
+          walletChainType: "ethereum-only",
+        },
+      }}
+    >
+      <PrivyBridge>{children}</PrivyBridge>
+    </PrivyProvider>
+  );
+}
+
+function PrivyBridge({children}: {children: ReactNode}) {
+  const {ready, authenticated, user, login, logout, exportWallet} = usePrivy();
+  const {wallets} = useWallets();
+
+  const embeddedWallet =
+    user?.wallet?.address ??
+    wallets.find((w) => w.walletClientType === "privy")?.address ??
+    null;
+
+  const appUser: AppUser | null = useMemo(() => {
+    if (!user) return null;
+    const twitter = user.twitter;
+    return {
+      id: user.id,
+      handle: twitter?.username ?? null,
+      displayName: twitter?.name ?? twitter?.username ?? "Trader",
+      // Privy returns the 48px variant; drop the suffix for a crisp avatar.
+      pfpUrl: twitter?.profilePictureUrl?.replace("_normal", "") ?? null,
+      embeddedWallet,
+    };
+  }, [user, embeddedWallet]);
+
+  const privyWallet = wallets.find((w) => w.walletClientType === "privy");
+
+  const getEmbeddedProvider = useCallback(async () => {
+    if (!privyWallet) return null;
+    try {
+      const provider = await privyWallet.getEthereumProvider();
+      return {request: provider.request.bind(provider)};
+    } catch {
+      return null;
+    }
+  }, [privyWallet]);
+
+  const exportEmbeddedWallet = useCallback(async () => {
+    await exportWallet();
+  }, [exportWallet]);
+
+  const value: Session = useMemo(
+    () => ({
+      ready,
+      authenticated,
+      user: appUser,
+      login: () => login(),
+      logout: () => void logout(),
+      mode: "privy",
+      getEmbeddedProvider,
+      exportEmbeddedWallet,
+    }),
+    [
+      ready,
+      authenticated,
+      appUser,
+      login,
+      logout,
+      getEmbeddedProvider,
+      exportEmbeddedWallet,
+    ],
+  );
+
+  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
+}

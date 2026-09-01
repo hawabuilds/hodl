@@ -1,0 +1,186 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --card: #ffffff;
+  --ink: #0b0f0c;
+  --muted: #5c665f;
+  --faint: #8a938c;
+  --hairline: rgba(11, 15, 12, 0.09);
+  --wash: #f4f7f5;
+  --green: #00c805;
+  --green-deep: #068a3a;
+  --red: #ff5a52;
+  --surface-elevated: #fafdfb;
+  --frame-chrome: #e7ece8;
+  --frame-chrome-glow: #edf2ee;
+  --scrollbar-thumb: rgba(11, 15, 12, 0.16);
+  --shadow-card: 0 14px 30px -26px rgba(9, 24, 14, 0.35);
+  --shadow-lift: 0 22px 40px -26px rgba(9, 24, 14, 0.4);
+  --shadow-panel: 0 20px 44px -32px rgba(9, 24, 14, 0.45);
+  --shadow-modal: 0 40px 90px -24px rgba(9, 24, 14, 0.55),
+    0 0 0 1px rgba(11, 15, 12, 0.05);
+  --shadow-frame: 0 44px 100px -34px rgba(9, 24, 14, 0.46),
+    0 0 0 1px rgba(11, 15, 12, 0.05);
+  --shadow-menu: 0 24px 50px -18px rgba(9, 24, 14, 0.4);
+  --shadow-dark: 0 16px 34px -14px rgba(11, 15, 12, 0.55);
+  --shadow-green: 0 16px 32px -14px rgba(0, 200, 5, 0.6);
+  --premium-bg: radial-gradient(
+      560px 340px at 88% 4%,
+      rgba(0, 200, 5, 0.09),
+      transparent 66%
+    ),
+    radial-gradient(700px 480px at 2% 102%, rgba(0, 200, 5, 0.045), transparent 70%),
+    #ffffff;
+  --overlay-wash: rgba(11, 15, 12, 0.05);
+  --overlay-wash-hover: rgba(11, 15, 12, 0.1);
+  --border-hover: rgba(11, 15, 12, 0.14);
+  --border-hover-strong: rgba(11, 15, 12, 0.2);
+  --btn-dark-bg: #0b0f0c;
+  --btn-dark-fg: #ffffff;
+}
+
+html.dark {
+  --card: #0f1311;
+  --ink: #f4f7f5;
+  --muted: #9aa39c;
+  --faint: #6b736c;
+  --hairline: rgba(255, 255, 255, 0.09);
+  --wash: #1a201c;
+  --green: #00c805;
+  --green-deep: #2ee05a;
+  --red: #ff5a52;
+  --surface-elevated: #151a17;
+  --frame-chrome: #0a0d0b;
+  --frame-chrome-glow: #121614;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --shadow-card: 0 14px 30px -26px rgba(0, 0, 0, 0.55);
+  --shadow-lift: 0 22px 40px -26px rgba(0, 0, 0, 0.6);
+  --shadow-panel: 0 20px 44px -32px rgba(0, 0, 0, 0.65);
+  --shadow-modal: 0 40px 90px -24px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-frame: 0 44px 100px -34px rgba(0, 0, 0, 0.75),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-menu: 0 24px 50px -18px rgba(0, 0, 0, 0.65);
+  --shadow-dark: 0 16px 34px -14px rgba(0, 0, 0, 0.65);
+  --shadow-green: 0 16px 32px -14px rgba(0, 200, 5, 0.35);
+  --premium-bg: radial-gradient(
+      560px 340px at 88% 4%,
+      rgba(0, 200, 5, 0.12),
+      transparent 66%
+    ),
+    radial-gradient(700px 480px at 2% 102%, rgba(0, 200, 5, 0.06), transparent 70%),
+    #0f1311;
+  --overlay-wash: rgba(255, 255, 255, 0.06);
+  --overlay-wash-hover: rgba(255, 255, 255, 0.1);
+  --border-hover: rgba(255, 255, 255, 0.14);
+  --border-hover-strong: rgba(255, 255, 255, 0.2);
+}
+
+html,
+body {
+  height: 100%;
+  min-height: 100dvh;
+}
+
+body {
+  background: var(--card);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Full-bleed on phones and in landscape. The device chrome is desktop-only. */
+.app-frame {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--card);
+}
+
+#app-overlays {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  overflow: hidden;
+}
+
+@media (min-width: 600px) and (min-height: 700px) {
+  body {
+    background: radial-gradient(
+        1100px 620px at 50% -8%,
+        var(--frame-chrome-glow) 0%,
+        transparent 62%
+      ),
+      var(--frame-chrome);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100dvh;
+    padding: 24px;
+  }
+
+  .app-frame {
+    width: 430px;
+    height: 860px;
+    max-height: calc(100dvh - 48px);
+    border-radius: 38px;
+    box-shadow: var(--shadow-frame);
+  }
+}
+
+@layer utilities {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .bottom-safe {
+    bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Scrollbars stay out of the way without hiding overflow affordances entirely. */
+.scroll-quiet {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.scroll-quiet::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scroll-quiet::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+
+/* Horizontal chip rails are swiped, so the bar itself would only add noise. */
+.rail {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.rail::-webkit-scrollbar {
+  display: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
