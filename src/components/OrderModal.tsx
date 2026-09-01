@@ -11,8 +11,9 @@ import {
   writeTradeSettings,
   type TradeSettings,
 } from "@/lib/localStore";
+import {feeFor, FEE_BPS, tooSmall} from "@/config/fees";
 import {cn} from "@/lib/cn";
-import {money, price as fmtPrice, units} from "@/lib/format";
+import {money, percent, price as fmtPrice, units} from "@/lib/format";
 import type {Asset} from "@/lib/types";
 import {Modal} from "./ui/Modal";
 import {SettingsIcon} from "./ui/Icons";
@@ -87,10 +88,15 @@ export function OrderModal({
   const maxUsd = buying ? book.cashUsd : (position?.valueUsd ?? 0);
   const maxEntered = rate > 0 ? maxUsd / rate : 0;
 
+  // The fee comes off before the swap, so what the amount actually buys is the
+  // net — quoting the gross would overstate every trade by the fee.
+  const fee = useMemo(() => feeFor(amountUsd), [amountUsd]);
+  const undersized = valid ? tooSmall(amountUsd) : null;
+
   const estimatedUnits = useMemo(() => {
     if (!asset || !valid || asset.priceUsd <= 0) return 0;
-    return amountUsd / asset.priceUsd;
-  }, [asset, amountUsd, valid]);
+    return (amountUsd - fee.usd) / asset.priceUsd;
+  }, [asset, amountUsd, valid, fee.usd]);
 
   /** Rounded to the precision the field itself accepts, so Max is spendable. */
   function setEntered(value: number) {
@@ -121,6 +127,11 @@ export function OrderModal({
       return;
     }
 
+    if (undersized) {
+      setError(undersized);
+      return;
+    }
+
     const result = book.trade({
       kind: asset.kind,
       assetId: asset.id,
@@ -129,6 +140,7 @@ export function OrderModal({
       side: activeSide,
       amountUsd,
       priceUsd: asset.priceUsd,
+      feeUsd: fee.usd,
     });
 
     if (!result.ok) {
@@ -316,6 +328,25 @@ export function OrderModal({
             </span>
           </div>
 
+          {valid ? (
+            <div className="mt-2.5 flex items-center justify-between gap-3 px-1 text-[12px] font-semibold">
+              <span className="text-faint">
+                Fee
+                {fee.atFloor ? (
+                  <span className="ml-1 font-medium opacity-80">minimum</span>
+                ) : (
+                  <span className="ml-1 font-medium opacity-80">{FEE_BPS / 100}%</span>
+                )}
+              </span>
+              <span className="tnum font-bold text-muted">
+                {money(fee.usd)}
+                <span className="ml-1.5 font-semibold text-faint">
+                  {percent(fee.pct)}
+                </span>
+              </span>
+            </div>
+          ) : null}
+
           {error ? (
             <p role="alert" className="mt-3 text-[12.5px] font-semibold text-red">
               {error}
@@ -333,7 +364,7 @@ export function OrderModal({
           <button
             type="button"
             onClick={confirm}
-            disabled={!valid}
+            disabled={!valid || undersized !== null}
             className={cn(
               "mt-4 w-full rounded-[16px] py-[16px] text-[16px] font-extrabold text-white",
               "transition-[transform,opacity] duration-200 hover:-translate-y-0.5",

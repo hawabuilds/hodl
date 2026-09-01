@@ -92,6 +92,7 @@ export interface SimOrder {
   amount: number;
   amountUsd: number;
   priceUsd: number;
+  feeUsd: number;
   at: string;
 }
 
@@ -147,6 +148,8 @@ export interface FillInput {
   side: "buy" | "sell";
   amountUsd: number;
   priceUsd: number;
+  /** Platform fee on this trade, in dollars. Taken off the top either way. */
+  feeUsd: number;
 }
 
 export interface FillResult {
@@ -165,6 +168,7 @@ export interface FillResult {
  */
 export function applyFill(input: FillInput): FillResult {
   const {kind, assetId, symbol, name, side, amountUsd, priceUsd} = input;
+  const feeUsd = Number.isFinite(input.feeUsd) ? Math.max(0, input.feeUsd) : 0;
 
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
     return {ok: false, error: "Enter an amount."};
@@ -172,18 +176,28 @@ export function applyFill(input: FillInput): FillResult {
   if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
     return {ok: false, error: "No price for this asset right now."};
   }
+  if (feeUsd >= amountUsd) {
+    return {ok: false, error: "That trade is too small to cover the fee."};
+  }
 
   const book = readBook();
   const positions = [...book.positions];
   const index = positions.findIndex(
     (p) => p.assetId === assetId && p.kind === kind,
   );
-  const units = amountUsd / priceUsd;
+
+  // The fee comes off the top on both sides: a buyer converts less than they
+  // spent, a seller receives less than their position was worth. Units always
+  // price off the net amount, never the gross.
+  const netUsd = amountUsd - feeUsd;
+  const units = side === "buy" ? netUsd / priceUsd : amountUsd / priceUsd;
 
   if (side === "buy") {
     if (amountUsd > book.cashUsd + 1e-9) {
       return {ok: false, error: "Not enough simulated cash."};
     }
+    // Cost basis is what was actually paid, fee included — so a position opens
+    // slightly down, which is the truth of it.
     if (index === -1) {
       positions.push({kind, assetId, symbol, name, amount: units, costUsd: amountUsd});
     } else {
@@ -216,11 +230,12 @@ export function applyFill(input: FillInput): FillResult {
     amount: units,
     amountUsd,
     priceUsd,
+    feeUsd,
     at: new Date().toISOString(),
   };
 
   write("book", {
-    cashUsd: side === "buy" ? book.cashUsd - amountUsd : book.cashUsd + amountUsd,
+    cashUsd: side === "buy" ? book.cashUsd - amountUsd : book.cashUsd + netUsd,
     positions,
     orders: [order, ...book.orders].slice(0, 200),
   } satisfies Book);
