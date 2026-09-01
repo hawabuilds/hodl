@@ -4,8 +4,16 @@ export const THEME_STORAGE_KEY = "rwa.theme";
 
 export const THEME_COLORS: Record<Theme, string> = {
   light: "#FFFFFF",
-  dark: "#0F1311",
+  dark: "#0A0B0B",
 };
+
+/** What the device is set to, for anyone who has not chosen yet. */
+export function systemTheme(): Theme {
+  if (typeof window === "undefined") return "light";
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
 
 export function isTheme(value: string | null | undefined): value is Theme {
   return value === "light" || value === "dark";

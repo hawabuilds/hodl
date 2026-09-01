@@ -11,6 +11,7 @@ import {
 import {
   applyThemeToDocument,
   readStoredTheme,
+  systemTheme,
   type Theme,
   writeStoredTheme,
 } from "@/lib/theme";
@@ -27,8 +28,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("light");
 
   useEffect(() => {
+    // No stored choice means the device decides. Defaulting to light put a
+    // white screen in front of anyone whose phone is set to dark.
     const stored = readStoredTheme();
-    const next = stored ?? "light";
+    const next = stored ?? systemTheme();
     setThemeState(next);
     applyThemeToDocument(next);
   }, []);

@@ -26,13 +26,9 @@
   --shadow-menu: 0 24px 50px -18px rgba(9, 24, 14, 0.4);
   --shadow-dark: 0 16px 34px -14px rgba(11, 15, 12, 0.55);
   --shadow-green: 0 16px 32px -14px rgba(0, 200, 5, 0.6);
-  --premium-bg: radial-gradient(
-      560px 340px at 88% 4%,
-      rgba(0, 200, 5, 0.09),
-      transparent 66%
-    ),
-    radial-gradient(700px 480px at 2% 102%, rgba(0, 200, 5, 0.045), transparent 70%),
-    #ffffff;
+  /* Plain ground. The accent belongs on the numbers that move, not behind
+     them — a tinted field reads as the brand colour once it fills a phone. */
+  --premium-bg: #ffffff;
   --overlay-wash: rgba(11, 15, 12, 0.05);
   --overlay-wash-hover: rgba(11, 15, 12, 0.1);
   --border-hover: rgba(11, 15, 12, 0.14);
@@ -42,18 +38,18 @@
 }
 
 html.dark {
-  --card: #0f1311;
-  --ink: #f4f7f5;
-  --muted: #9aa39c;
-  --faint: #6b736c;
+  --card: #0a0b0b;
+  --ink: #f5f6f6;
+  --muted: #9aa09d;
+  --faint: #6a706e;
   --hairline: rgba(255, 255, 255, 0.09);
-  --wash: #1a201c;
+  --wash: #161818;
   --green: #00c805;
   --green-deep: #2ee05a;
   --red: #ff5a52;
-  --surface-elevated: #151a17;
-  --frame-chrome: #0a0d0b;
-  --frame-chrome-glow: #121614;
+  --surface-elevated: #101212;
+  --frame-chrome: #060707;
+  --frame-chrome-glow: #0e1010;
   --scrollbar-thumb: rgba(255, 255, 255, 0.16);
   --shadow-card: 0 14px 30px -26px rgba(0, 0, 0, 0.55);
   --shadow-lift: 0 22px 40px -26px rgba(0, 0, 0, 0.6);
@@ -65,13 +61,7 @@ html.dark {
   --shadow-menu: 0 24px 50px -18px rgba(0, 0, 0, 0.65);
   --shadow-dark: 0 16px 34px -14px rgba(0, 0, 0, 0.65);
   --shadow-green: 0 16px 32px -14px rgba(0, 200, 5, 0.35);
-  --premium-bg: radial-gradient(
-      560px 340px at 88% 4%,
-      rgba(0, 200, 5, 0.12),
-      transparent 66%
-    ),
-    radial-gradient(700px 480px at 2% 102%, rgba(0, 200, 5, 0.06), transparent 70%),
-    #0f1311;
+  --premium-bg: #0a0b0b;
   --overlay-wash: rgba(255, 255, 255, 0.06);
   --overlay-wash-hover: rgba(255, 255, 255, 0.1);
   --border-hover: rgba(255, 255, 255, 0.14);

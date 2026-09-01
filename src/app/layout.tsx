@@ -40,7 +40,12 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#FFFFFF",
+  // Two entries so the phone's own chrome follows the theme; a single light
+  // value left a white bar above a dark app.
+  themeColor: [
+    {media: "(prefers-color-scheme: light)", color: "#FFFFFF"},
+    {media: "(prefers-color-scheme: dark)", color: "#0A0B0B"},
+  ],
 };
 
 export default function RootLayout({
@@ -56,7 +61,7 @@ export default function RootLayout({
         {/* Applied before first paint so a dark-mode reload never flashes white. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("rwa.theme");if(t==="dark"){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark";var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content","#0F1311");}}catch(e){}})();`,
+            __html: `(function(){try{var t=localStorage.getItem("rwa.theme");var d=t==="dark"||(t!=="light"&&window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(d){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark";var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content","#0A0B0B");}}catch(e){}})();`,
           }}
         />
       </head>
