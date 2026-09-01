@@ -4,12 +4,13 @@ import type {
   AssetKind,
   ChartPoint,
   NewsItem,
+  Range,
   RwaAsset,
   Timeframe,
   TokenAsset,
   Trade,
 } from "@/lib/types";
-import {between, fakeAddress, pick, rng} from "./rng";
+import {between, fakeAddress, fakeHash, pick, rng} from "./rng";
 import {launchpadFor, RWA_SEEDS, TOKEN_SEEDS} from "./universe";
 
 /**
@@ -38,21 +39,43 @@ interface Harmonic {
   phase: number;
 }
 
-const HARMONIC_PERIODS = [10080, 2880, 1440, 360, 90, 30, 8];
-const HARMONIC_WEIGHTS = [1, 0.7, 0.5, 0.32, 0.2, 0.12, 0.06];
+/**
+ * Two bands of periods, in minutes.
+ *
+ * The short band is what a 5m or 4h chart is made of. The long band — quarters
+ * and years — barely moves inside a day, but without it a 1Y chart sampled at
+ * weekly intervals aliases the weekly wave into noise around a flat line, and a
+ * year of a portfolio looks like it went nowhere.
+ */
+const SHORT_PERIODS = [10080, 2880, 1440, 360, 90, 30, 8];
+const SHORT_WEIGHTS = [1, 0.7, 0.5, 0.32, 0.2, 0.12, 0.06];
 
-const harmonicCache = new Map<string, Harmonic[]>();
+const LONG_PERIODS = [525_600, 175_200, 61_320];
+const LONG_WEIGHTS = [1, 0.6, 0.35];
 
-function harmonicsFor(key: string): Harmonic[] {
+const harmonicCache = new Map<string, {short: Harmonic[]; long: Harmonic[]}>();
+
+function build(
+  next: () => number,
+  periods: number[],
+  weights: number[],
+): Harmonic[] {
+  return periods.map((period, i) => ({
+    period,
+    amp: weights[i] * between(next, 0.6, 1.4),
+    phase: next() * Math.PI * 2,
+  }));
+}
+
+function harmonicsFor(key: string) {
   const cached = harmonicCache.get(key);
   if (cached) return cached;
 
   const next = rng(`harmonics:${key}`);
-  const built = HARMONIC_PERIODS.map((period, i) => ({
-    period,
-    amp: HARMONIC_WEIGHTS[i] * between(next, 0.6, 1.4),
-    phase: next() * Math.PI * 2,
-  }));
+  const built = {
+    short: build(next, SHORT_PERIODS, SHORT_WEIGHTS),
+    long: build(next, LONG_PERIODS, LONG_WEIGHTS),
+  };
   harmonicCache.set(key, built);
   return built;
 }
@@ -62,21 +85,23 @@ function harmonicsFor(key: string): Harmonic[] {
  *
  * Summed sine waves rather than an accumulated random walk, because a walk
  * would have to be replayed from a fixed origin on every request to stay
- * stable — this is O(7) at any point in time.
+ * stable — this is a constant number of terms at any point in time.
  */
-function drift(key: string, atMs: number): number {
-  const minutes = atMs / 60_000;
+function wave(harmonics: Harmonic[], minutes: number): number {
   let value = 0;
-  for (const h of harmonicsFor(key)) {
+  for (const h of harmonics) {
     value += h.amp * Math.sin((minutes / h.period) * Math.PI * 2 + h.phase);
   }
   return value;
 }
 
-/** Annualised-ish wiggle. Tokens move far harder than the assets they pair with. */
-function volatilityFor(kind: AssetKind): number {
-  return kind === "rwa" ? 0.018 : 0.16;
-}
+/**
+ * Session wiggle and multi-year trend are scaled separately: a stock that moves
+ * two percent in a day still moves forty over a year, and one volatility number
+ * cannot produce both.
+ */
+const SHORT_VOL: Record<AssetKind, number> = {rwa: 0.018, token: 0.16};
+const LONG_VOL: Record<AssetKind, number> = {rwa: 0.18, token: 0.7};
 
 function priceAt(
   key: string,
@@ -84,7 +109,14 @@ function priceAt(
   kind: AssetKind,
   atMs: number,
 ): number {
-  return base * Math.exp(volatilityFor(kind) * drift(key, atMs));
+  const minutes = atMs / 60_000;
+  const {short, long} = harmonicsFor(key);
+  return (
+    base *
+    Math.exp(
+      SHORT_VOL[kind] * wave(short, minutes) + LONG_VOL[kind] * wave(long, minutes),
+    )
+  );
 }
 
 function changeOver(
@@ -164,6 +196,9 @@ export function listTokens(now: number = Date.now()): TokenAsset[] {
     const basePrice = between(next, 0.00004, 0.0092);
     const price = priceAt(key, basePrice, "token", now);
     const marketCap = price * supply;
+    const taxed = next() < 0.35;
+    const volume = Math.round(marketCap * between(next, 0.04, 0.9));
+    const feeBps = between(next, 20, 100);
 
     return {
       kind: "token" as const,
@@ -174,14 +209,18 @@ export function listTokens(now: number = Date.now()): TokenAsset[] {
       imageUrl: null,
       priceUsd: roundPrice(price),
       changePct: Number(changeOver(key, basePrice, "token", 1440, now).toFixed(2)),
-      volume24hUsd: Math.round(marketCap * between(next, 0.04, 0.9)),
+      volume24hUsd: volume,
       marketCapUsd: Math.round(marketCap),
       liquidityUsd: Math.round(marketCap * between(next, 0.03, 0.14)),
+      rewards24hUsd: Math.round((volume * feeBps) / 10_000),
       holders: Math.round(between(next, 240, 41_000)),
       createdAt: new Date(
         now - between(next, 2, 240) * 24 * 60 * 60_000,
       ).toISOString(),
       pairedTicker: seed.pairedTicker,
+      // Most launches ship untaxed; a minority keep a small transfer fee.
+      buyTaxPct: taxed ? Number(between(next, 0.5, 5).toFixed(1)) : 0,
+      sellTaxPct: taxed ? Number(between(next, 0.5, 6).toFixed(1)) : 0,
       launchpad: launchpadFor(seed.launchpadId, address),
       socials: seed.socials,
       description: seed.description,
@@ -222,6 +261,7 @@ function priceInputs(asset: Asset): {key: string; base: number} {
   // Consumed in the same order as listTokens, so the base price matches.
   pick(next, [1e9, 1e9, 1e9, 1e8, 1e10]);
   return {key: `token:${asset.symbol}`, base: between(next, 0.00004, 0.0092)};
+
 }
 
 // ---------------------------------------------------------------------------
@@ -272,6 +312,7 @@ export function tradesFor(
       amountUsd,
       priceUsd: roundPrice(price),
       maker,
+      txHash: fakeHash(`tx:${key}:${i}:${Math.round(at)}`),
       makerHandle: null,
       at: new Date(Math.round(at)).toISOString(),
     });
@@ -280,6 +321,44 @@ export function tradesFor(
   }
 
   return trades;
+}
+
+/**
+ * A price series over one of the portfolio ranges.
+ *
+ * Shares `priceAt` with the chart, so a position's contribution to the
+ * portfolio line and its own chart page cannot disagree.
+ */
+const RANGE_MINUTES: Record<Range, number> = {
+  "1D": 60 * 24,
+  "1W": 60 * 24 * 7,
+  "1M": 60 * 24 * 30,
+  "1Y": 60 * 24 * 365,
+  ALL: 60 * 24 * 730,
+};
+
+export function seriesFor(
+  asset: Asset,
+  range: Range,
+  points = 48,
+  now: number = Date.now(),
+): number[] {
+  const {key, base} = priceInputs(asset);
+  const span = RANGE_MINUTES[range] * 60_000;
+  return Array.from({length: points}, (_, i) =>
+    roundPrice(priceAt(key, base, asset.kind, now - span + (span * i) / (points - 1))),
+  );
+}
+
+/**
+ * The gas token, priced in dollars.
+ *
+ * Rides the same drift as everything else so an order denominated in ETH and
+ * the same order denominated in dollars settle at a consistent rate. Scaled as
+ * an RWA rather than a token: ETH moves, but not the way a launchpad coin does.
+ */
+export function ethPriceUsd(now: number = Date.now()): number {
+  return roundPrice(priceAt("native:eth", 3200, "rwa", now));
 }
 
 // ---------------------------------------------------------------------------

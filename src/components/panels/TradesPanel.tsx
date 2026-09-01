@@ -1,16 +1,30 @@
 "use client";
 
-import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
+import {RH_MAINNET_ID, txUrlForChain} from "@/config/chain";
 import {cn} from "@/lib/cn";
-import {compactMoney, price as fmtPrice, relativeTime, shortAddress, units} from "@/lib/format";
+import {
+  compactMoney,
+  price as fmtPrice,
+  relativeTime,
+  shortAddress,
+  units,
+} from "@/lib/format";
 import type {Trade} from "@/lib/types";
+import {ArrowUpRightIcon} from "../ui/Icons";
 
 /**
- * Recent fills.
+ * The tape.
  *
- * Side is carried by colour and by the word, not colour alone — the buy/sell
- * distinction is the whole content of the row, so it cannot rest on hue.
+ * Four columns in the order a fill is read: what happened, how much of the
+ * asset moved, what it was worth, and where to verify it. Header and rows share
+ * one fixed template — the header lived on its own grid before, so `auto`
+ * columns sized to different content and the labels drifted off their numbers.
+ *
+ * No rules between rows. Direction is already the strongest signal on the line;
+ * hairlines on top of it turn a tape into a spreadsheet.
  */
+const COLUMNS = "grid grid-cols-[58px_1fr_76px_72px] items-center gap-2";
+
 export function TradesPanel({
   trades,
   symbol,
@@ -24,61 +38,84 @@ export function TradesPanel({
     return <PanelNote>Loading trades</PanelNote>;
   }
   if (trades.length === 0) {
-    return <PanelNote>No trades in this pool yet.</PanelNote>;
+    return <PanelNote>No trades yet.</PanelNote>;
   }
 
   return (
-    <div>
-      <div className="grid grid-cols-[auto_1fr_auto_auto] gap-3 border-b border-hairline px-1 pb-2 text-[10.5px] font-bold uppercase tracking-[0.07em] text-faint">
-        <span>Side</span>
-        <span>{symbol}</span>
-        <span className="text-right">Value</span>
-        <span className="text-right">Maker</span>
+    <div className="-mx-[22px]">
+      <div
+        className={cn(
+          COLUMNS,
+          "px-[22px] pb-2 text-[10px] font-bold uppercase tracking-[0.09em] text-faint",
+        )}
+      >
+        <span>Type</span>
+        <span>Amount</span>
+        <span className="text-right">USD</span>
+        <span className="text-right">TXN</span>
       </div>
+
       <ul>
         {trades.map((trade) => {
           const buy = trade.side === "buy";
           return (
             <li
               key={trade.id}
-              className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 border-b border-hairline px-1 py-2.5 last:border-b-0"
+              className={cn(
+                COLUMNS,
+                "px-[22px] py-[9px] transition-colors duration-150 hover:bg-[var(--overlay-wash)]",
+              )}
             >
-              <span
-                className={cn(
-                  "w-[34px] rounded-[6px] px-1.5 py-1 text-center text-[10.5px] font-extrabold uppercase",
-                  buy
-                    ? "bg-[rgba(0,200,5,0.12)] text-green-deep"
-                    : "bg-[rgba(255,90,82,0.11)] text-red",
-                )}
-              >
-                {buy ? "Buy" : "Sell"}
-              </span>
-
-              <span className="min-w-0">
-                <span className="tnum block truncate text-[13px] font-bold tracking-[-0.01em]">
-                  {units(trade.amount)}
+              <div className="min-w-0">
+                <span
+                  className={cn(
+                    "block text-[12.5px] font-extrabold leading-none",
+                    buy ? "text-green-deep" : "text-red",
+                  )}
+                >
+                  {buy ? "Buy" : "Sell"}
                 </span>
-                <span className="tnum block text-[11.5px] font-semibold text-faint">
-                  at {fmtPrice(trade.priceUsd)}
-                </span>
-              </span>
-
-              <span className="text-right">
-                <span className="tnum block text-[13px] font-extrabold">
-                  {compactMoney(trade.amountUsd)}
-                </span>
-                <span className="block text-[11.5px] font-semibold text-faint">
+                <span className="mt-1 block text-[10.5px] font-semibold text-faint">
                   {relativeTime(trade.at)}
                 </span>
+              </div>
+
+              <div className="min-w-0">
+                <span className="tnum block truncate text-[13.5px] font-bold tracking-[-0.01em]">
+                  {units(trade.amount)}
+                  <span className="ml-1 text-[10.5px] font-semibold text-faint">
+                    {symbol}
+                  </span>
+                </span>
+                <span className="tnum mt-1 block truncate text-[10.5px] font-semibold text-faint">
+                  {fmtPrice(trade.priceUsd)}
+                </span>
+              </div>
+
+              <span
+                className={cn(
+                  "tnum self-center text-right text-[13.5px] font-extrabold tracking-[-0.01em]",
+                  buy ? "text-green-deep" : "text-red",
+                )}
+              >
+                {compactMoney(trade.amountUsd)}
               </span>
 
               <a
-                href={addressUrlForChain(trade.maker, RH_MAINNET_ID)}
+                href={txUrlForChain(trade.txHash, RH_MAINNET_ID)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="tnum text-right text-[11.5px] font-semibold text-faint transition-colors hover:text-ink"
+                aria-label="View transaction"
+                // No horizontal padding: the hash has to end on the same pixel
+                // as the TXN heading above it, and any inset here pushes it off.
+                // The row carries the hover surface instead.
+                className={cn(
+                  "flex items-center justify-end gap-1 self-center",
+                  "font-mono text-[10.5px] text-faint transition-colors hover:text-ink",
+                )}
               >
-                {shortAddress(trade.maker, 4)}
+                {shortAddress(trade.txHash, 4)}
+                <ArrowUpRightIcon className="h-[11px] w-[11px] shrink-0" />
               </a>
             </li>
           );

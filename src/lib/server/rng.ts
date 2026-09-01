@@ -41,13 +41,22 @@ export function between(next: () => number, min: number, max: number): number {
  * keep every copy-to-clipboard and explorer link in the UI exercisable.
  */
 export function fakeAddress(seed: string): string {
-  let out = "0x";
+  return `0x${hexDigits(seed, 40)}`;
+}
+
+function hexDigits(seed: string, count: number): string {
+  let out = "";
   let h = hash(seed);
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < count; i++) {
     h = Math.imul(h ^ (h >>> 13), 0x5bd1e995) >>> 0;
     out += "0123456789abcdef"[h & 15];
   }
   return out;
+}
+
+/** A well-formed 32-byte transaction hash, stable for a given key. */
+export function fakeHash(seed: string): string {
+  return `0x${hexDigits(seed, 64)}`;
 }
 
 /**

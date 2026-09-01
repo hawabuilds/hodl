@@ -106,6 +106,30 @@ export const STARTING_CASH_USD = 10_000;
 
 const EMPTY_BOOK: Book = {cashUsd: STARTING_CASH_USD, positions: [], orders: []};
 
+/** True once a book has been written, seeded or otherwise. */
+export function hasBook(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(`${NS}.book`) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Writes the opening book.
+ *
+ * Called once, on the first run, with positions priced from the live feed so
+ * the sample holdings are consistent with the market the rest of the app is
+ * showing. Never overwrites an existing book — someone who has sold everything
+ * down to cash has an empty book on purpose.
+ */
+export function seedBook(positions: Position[], cashUsd: number): void {
+  if (hasBook()) return;
+  write("book", {cashUsd, positions, orders: []} satisfies Book);
+  announce();
+}
+
 export function readBook(): Book {
   const book = read<Book>("book", EMPTY_BOOK);
   return {
@@ -207,6 +231,39 @@ export function applyFill(input: FillInput): FillResult {
 
 export function resetBook(): void {
   write("book", EMPTY_BOOK);
+  announce();
+}
+
+// ---------------------------------------------------------------------------
+// Trade settings
+// ---------------------------------------------------------------------------
+
+export interface TradeSettings {
+  /** Maximum price move tolerated between quote and fill, in percent. */
+  slippagePct: number;
+  /** Which currency the amount field is denominated in. */
+  currency: "USD" | "ETH";
+}
+
+export const SLIPPAGE_PRESETS = [0.5, 1, 3] as const;
+export const MAX_SLIPPAGE_PCT = 50;
+
+const DEFAULT_TRADE_SETTINGS: TradeSettings = {slippagePct: 1, currency: "USD"};
+
+export function readTradeSettings(): TradeSettings {
+  const stored = read<Partial<TradeSettings>>("trade", {});
+  const slippage = Number(stored.slippagePct);
+  return {
+    slippagePct:
+      Number.isFinite(slippage) && slippage > 0 && slippage <= MAX_SLIPPAGE_PCT
+        ? slippage
+        : DEFAULT_TRADE_SETTINGS.slippagePct,
+    currency: stored.currency === "ETH" ? "ETH" : "USD",
+  };
+}
+
+export function writeTradeSettings(settings: TradeSettings): void {
+  write("trade", settings);
   announce();
 }
 

@@ -17,12 +17,13 @@ market is seeded. Copy `.env.local.example` to `.env.local` and set
 | Route | What it is |
 | --- | --- |
 | `/` | Privy login. Same screen and modal as Pick. |
-| `/home` | Trending feed. Tokens / RWAs toggle, sector rail on the RWA side, sort chips, and search over tickers, symbols, names and contract addresses. |
-| `/token/[address]` | Token chart page: launchpad link, contract, socials, watchlist star, chart, then Trades / Comments / Info. |
-| `/rwa/[ticker]` | RWA chart page: verified badge, stock type, contract, description, chart, then Trades / Comments / News. |
-| `/watchlist` | Everything starred, filterable by side. |
-| `/profile` | Your portfolio: value, 24h line, holdings split RWAs / Tokens, recent orders, edit profile, settings. |
-| `/u/[handle]` | Someone else: bio, socials, follow, followers and following, public holdings. |
+| `/home` | The feed. Watchlist / Tokens / RWAs tabs; New, Trending, Market cap and Rewards on the token side; sector and Market cap / Movers rails on the RWA side; search over tickers, symbols, names and contract addresses. |
+| `/token/[address]` | Token chart page: pair market, transfer taxes, launchpad, contract, socials, watchlist star, chart, then Trades / Comments / Info. |
+| `/rwa/[ticker]` | RWA chart page: verified tick, stock type, sector, contract, description, chart, then Trades / Comments / News. No artwork, the way a brokerage lists equities. |
+| `/search` | People, tickers, token symbols and contract addresses, filterable by side. Shows the largest names on both sides before anyone types. |
+| `/news` | RWA and Robinhood coverage, filtered by topic and by time, with the official Robinhood accounts pinned in as primary sources. |
+| `/profile` | Your portfolio: value over 1D / 1W / 1M / 1Y / ALL, holdings split RWAs / Tokens with unrealised profit, recent orders, edit profile, settings. |
+| `/u/[handle]` | Someone else: bio, socials, follow, followers and following, and their book — total value, unrealised profit, and every position, but no value line, because their entry times are not published. |
 
 ## Data
 
@@ -47,6 +48,12 @@ down, the way Pick falls back to demo data.
 - **News** — a headline provider keyed by ticker. Until then the route returns
   `seeded: true` and the panel labels the items as samples. Do not drop that
   flag when a real provider lands.
+- **News feed** — a headline provider for the coverage on `/news`, plus the X
+  API for the Robinhood accounts. Those accounts carry no post text today:
+  everything else in the feed is attributed to outlets that do not exist, but
+  these are real people, and inventing something for them to have said would be
+  a fabricated record however clearly the feed is labelled. The cards link out
+  instead.
 - **Comments, profiles and follows** — seeded server-side, with anything posted
   here written to the browser and merged in. A Supabase table like Pick's
   replaces the merge with a `POST` and nothing above the hook changes.
@@ -61,6 +68,7 @@ Buy and sell are fully built and validated — insufficient cash and oversized
 sells fail exactly as they would against a router — but a confirmed order is
 **bookkeeping only**. Nothing signs a wallet or moves funds. The book, the
 watchlist, posted comments, follows and profile edits all live in
-`localStorage` (`src/lib/localStore.ts`), seeded with $10,000 of simulated cash.
+`localStorage` (`src/lib/localStore.ts`). The first run opens a sample book of
+four positions priced off the live feed, defined in `src/lib/sampleBook.ts`.
 
 Every surface that shows a position says so.

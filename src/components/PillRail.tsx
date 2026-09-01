@@ -1,41 +1,46 @@
 "use client";
 
 import {cn} from "@/lib/cn";
-import {TIMEFRAMES, type Timeframe} from "@/lib/types";
 
 /**
- * Timeframe pills under the chart. Swipeable on a phone and clickable
- * everywhere, so the rail scrolls rather than wrapping onto a second line.
+ * A compact row of window pills — chart timeframes and portfolio ranges.
+ *
+ * Separate from `FilterRail`: those chips filter a list and are read as
+ * options, these switch the window under a chart and take their colour from
+ * the direction of that window, the way a brokerage tints them.
  */
-export function TimeframeRail({
+export function PillRail<T extends string>({
+  options,
   value,
   onChange,
   positive,
+  label,
   className,
 }: {
-  value: Timeframe;
-  onChange: (value: Timeframe) => void;
-  /** Active pill picks up the direction of the window, as a brokerage would. */
+  options: readonly T[];
+  value: T;
+  onChange: (value: T) => void;
   positive: boolean;
+  label: string;
   className?: string;
 }) {
   return (
     <div
       role="group"
-      aria-label="Chart timeframe"
+      aria-label={label}
       className={cn(
         "rail flex gap-1.5 overflow-x-auto overscroll-x-contain pb-0.5",
         className,
       )}
     >
-      {TIMEFRAMES.map((tf) => {
-        const active = tf === value;
+      {options.map((option) => {
+        const active = option === value;
         return (
           <button
-            key={tf}
+            key={option}
             type="button"
             aria-pressed={active}
-            onClick={() => onChange(tf)}
+            onClick={() => onChange(option)}
             className={cn(
               "shrink-0 rounded-[9px] px-3.5 py-1.5 text-[12.5px] font-extrabold transition-colors duration-150",
               active
@@ -45,7 +50,7 @@ export function TimeframeRail({
                 : "text-faint hover:text-muted",
             )}
           >
-            {tf}
+            {option}
           </button>
         );
       })}

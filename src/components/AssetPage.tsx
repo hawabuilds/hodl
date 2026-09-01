@@ -1,21 +1,20 @@
 "use client";
 
 import {useMemo, useState} from "react";
-import Link from "next/link";
 import {useRouter} from "next/navigation";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {useAsset, useChart, useNews, useTrades} from "@/hooks/useAsset";
 import {cn} from "@/lib/cn";
 import {clock, compactMoney, percent, price as fmtPrice, shortAddress} from "@/lib/format";
 import {sectorFor} from "@/lib/sectors";
-import {assetPath} from "@/lib/routes";
 import type {AssetKind, ChartPoint, Timeframe} from "@/lib/types";
+import {TIMEFRAMES} from "@/lib/types";
 import {LaunchpadMark} from "./LaunchpadMark";
-import {OrderSheet} from "./OrderSheet";
+import {OrderModal} from "./OrderModal";
 import {PanelTabs, type PanelTab} from "./PanelTabs";
 import {PriceChart} from "./PriceChart";
 import {SocialRow} from "./SocialRow";
-import {TimeframeRail} from "./TimeframeRail";
+import {PillRail} from "./PillRail";
 import {TradeBar} from "./TradeBar";
 import {WatchStar} from "./WatchStar";
 import {CommentsPanel} from "./panels/CommentsPanel";
@@ -23,7 +22,7 @@ import {InfoPanel} from "./panels/InfoPanel";
 import {NewsPanel} from "./panels/NewsPanel";
 import {TradesPanel} from "./panels/TradesPanel";
 import {Avatar} from "./ui/Avatar";
-import {TypeBadge, VerifiedBadge} from "./ui/Badges";
+import {PairMarket, TaxChip, TypeBadge, VerifiedTick} from "./ui/Badges";
 import {ArrowUpRightIcon, ChevronLeftIcon, CopyIcon} from "./ui/Icons";
 
 type PanelKey = "trades" | "comments" | "detail";
@@ -90,58 +89,64 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
     <div className="pb-[calc(84px+env(safe-area-inset-bottom))]">
       <BackButton onClick={() => router.back()} />
 
-      <div className="mt-3 flex items-start gap-3">
-        <Avatar
-          name={symbol}
-          src={asset.kind === "rwa" ? asset.logoUrl : asset.imageUrl}
-          size={44}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1">
-            <h1 className="truncate text-[20px] font-extrabold tracking-[-0.03em]">
-              {symbol}
-            </h1>
-            <WatchStar kind={asset.kind} id={asset.id} />
+      {asset.kind === "rwa" ? (
+        // Robinhood lists equities without artwork, so the name carries the
+        // header on its own.
+        <div className="mt-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[12px] font-extrabold uppercase tracking-[0.06em] text-faint">
+              {asset.ticker}
+            </span>
+            <VerifiedTick size={14} />
+            <TypeBadge type={asset.stockType} />
+            <WatchStar kind={asset.kind} id={asset.id} className="-my-1 ml-auto" />
           </div>
-          <div className="-mt-0.5 truncate text-[13px] font-semibold text-faint">
+          <h1 className="mt-1 text-[24px] font-extrabold leading-tight tracking-[-0.035em]">
             {asset.name}
+          </h1>
+        </div>
+      ) : (
+        <div className="mt-3 flex items-start gap-3">
+          <Avatar name={symbol} src={asset.imageUrl} size={44} />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1">
+              <h1 className="truncate text-[20px] font-extrabold tracking-[-0.03em]">
+                {symbol}
+              </h1>
+              <WatchStar kind={asset.kind} id={asset.id} />
+            </div>
+            <div className="-mt-0.5 truncate text-[13px] font-semibold text-faint">
+              {asset.name}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         {asset.kind === "rwa" ? (
-          <>
-            <VerifiedBadge />
-            <TypeBadge type={asset.stockType} />
-            {sectorFor(asset.ticker) ? (
-              <span
-                title={sectorFor(asset.ticker)?.description}
-                className="rounded-pill border border-hairline bg-wash px-2 py-[3px] text-[10.5px] font-extrabold uppercase tracking-[0.04em] text-muted"
-              >
-                {sectorFor(asset.ticker)?.label}
-              </span>
-            ) : null}
-          </>
+          sectorFor(asset.ticker) ? (
+            <span
+              title={sectorFor(asset.ticker)?.description}
+              className="rounded-[8px] bg-[var(--overlay-wash)] px-2 py-1 text-[11.5px] font-extrabold text-muted"
+            >
+              {sectorFor(asset.ticker)?.label}
+            </span>
+          ) : null
         ) : (
           <>
+            <PairMarket base={asset.symbol} quote={asset.pairedTicker} />
+            <TaxChip buyPct={asset.buyTaxPct} sellPct={asset.sellTaxPct} />
             <a
               href={asset.launchpad.tokenUrl}
               target="_blank"
               rel="noopener noreferrer"
               title={`View on ${asset.launchpad.name}`}
-              className="flex items-center gap-1.5 rounded-pill border border-hairline bg-card py-[3px] pl-[3px] pr-2.5 text-[11px] font-extrabold transition-colors hover:border-[var(--border-hover-strong)]"
+              className="flex items-center gap-1.5 rounded-[8px] bg-[var(--overlay-wash)] py-1 pl-1 pr-2 text-[11.5px] font-extrabold transition-colors hover:bg-[var(--overlay-wash-hover)]"
             >
-              <LaunchpadMark launchpad={asset.launchpad} size={18} />
+              <LaunchpadMark launchpad={asset.launchpad} size={16} />
               {asset.launchpad.name}
               <ArrowUpRightIcon className="h-3 w-3 text-faint" />
             </a>
-            <Link
-              href={assetPath("rwa", asset.pairedTicker)}
-              className="rounded-pill border border-hairline bg-wash px-2 py-[5px] text-[10.5px] font-extrabold uppercase tracking-[0.04em] text-muted transition-colors hover:text-ink"
-            >
-              LP {asset.pairedTicker}
-            </Link>
           </>
         )}
         <ContractChip address={contractAddress} />
@@ -173,15 +178,22 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
             </span>
           </div>
         </div>
+
         <div className="text-right">
-          <div className="text-[10.5px] font-bold uppercase tracking-[0.07em] text-faint">
-            {asset.kind === "rwa" ? "Market cap" : "Liquidity"}
+          <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
+            Market cap
           </div>
-          <div className="tnum text-[14px] font-extrabold">
-            {compactMoney(
-              asset.kind === "rwa" ? asset.marketCapUsd : asset.liquidityUsd,
-            )}
+          <div className="tnum text-[15px] font-extrabold tracking-[-0.02em]">
+            {compactMoney(asset.marketCapUsd)}
           </div>
+          {asset.kind === "token" ? (
+            <div className="tnum mt-0.5 inline-flex items-center gap-1 rounded-[6px] bg-[var(--overlay-wash)] px-1.5 py-[3px] text-[11px] font-bold">
+              <span className="text-faint">Liq</span>
+              <span className="text-muted">
+                {compactMoney(asset.liquidityUsd)}
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -192,7 +204,9 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
         className="mt-3"
       />
 
-      <TimeframeRail
+      <PillRail
+        label="Chart timeframe"
+        options={TIMEFRAMES}
         value={timeframe}
         onChange={setTimeframe}
         positive={positive}
@@ -227,7 +241,7 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
         onSell={() => setOrderSide("sell")}
       />
 
-      <OrderSheet
+      <OrderModal
         asset={orderSide ? asset : null}
         side={orderSide ?? "buy"}
         onClose={() => setOrderSide(null)}
@@ -263,8 +277,10 @@ function ContractChip({address}: {address: string}) {
   }
 
   return (
-    <span className="flex items-center gap-0.5 rounded-pill border border-hairline bg-card pl-2.5 pr-0.5 text-[11px] font-semibold text-muted">
-      <span className="tnum">{copied ? "Copied" : shortAddress(address, 5)}</span>
+    <span className="flex items-center gap-0.5 rounded-[8px] bg-[var(--overlay-wash)] py-0.5 pl-2 pr-0.5 text-[11.5px] font-semibold text-muted">
+      <span className="font-mono text-[11px]">
+        {copied ? "Copied" : shortAddress(address, 5)}
+      </span>
       <button
         type="button"
         onClick={() => void copy()}

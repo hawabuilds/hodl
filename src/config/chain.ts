@@ -69,6 +69,12 @@ export function explorerAddressUrl(address: string) {
 
 const MAINNET_EXPLORER = "https://robinhoodchain.blockscout.com";
 
+/** Transactions, on whichever chain the fill settled. */
+export function txUrlForChain(hash: string, chainId: number) {
+  const base = chainId === RH_MAINNET_ID ? MAINNET_EXPLORER : EXPLORER;
+  return `${base}/tx/${hash}`;
+}
+
 /** Holdings span both chains, so the link has to follow the token. */
 export function addressUrlForChain(address: string, chainId: number) {
   const base = chainId === RH_MAINNET_ID ? MAINNET_EXPLORER : EXPLORER;

@@ -159,6 +159,9 @@ function holdingsFor(handle: string, now: number): Holding[] {
     if (taken.has(asset.id)) continue;
     taken.add(asset.id);
     const amount = Number(between(next, 0.4, 180).toFixed(4));
+    // Entry is drawn relative to the current price, so a public book shows a
+    // realistic spread of winners and losers rather than all-green.
+    const entry = asset.priceUsd * between(next, 0.55, 1.35);
     out.push({
       kind: "rwa",
       assetId: asset.id,
@@ -168,6 +171,7 @@ function holdingsFor(handle: string, now: number): Holding[] {
       amount,
       valueUsd: Number((amount * asset.priceUsd).toFixed(2)),
       changePct: asset.changePct,
+      costUsd: Number((amount * entry).toFixed(2)),
     });
   }
 
@@ -176,6 +180,7 @@ function holdingsFor(handle: string, now: number): Holding[] {
     if (taken.has(asset.id)) continue;
     taken.add(asset.id);
     const amount = Math.round(between(next, 50_000, 40_000_000));
+    const entry = asset.priceUsd * between(next, 0.3, 2.1);
     out.push({
       kind: "token",
       assetId: asset.id,
@@ -185,6 +190,7 @@ function holdingsFor(handle: string, now: number): Holding[] {
       amount,
       valueUsd: Number((amount * asset.priceUsd).toFixed(2)),
       changePct: asset.changePct,
+      costUsd: Number((amount * entry).toFixed(2)),
     });
   }
 
@@ -226,4 +232,24 @@ export function connectionsFor(
 
 export function listPersonas(): {handle: string; displayName: string}[] {
   return PERSONAS.map(({handle, displayName}) => ({handle, displayName}));
+}
+
+/**
+ * People matching a query, handle-first.
+ *
+ * An empty query returns the whole cast rather than nothing: the search tab
+ * uses it to show who is here before anyone has typed.
+ */
+export function searchPeople(query: string, now: number = Date.now()): Profile[] {
+  const q = query.trim().replace(/^@/, "").toLowerCase();
+  const matches = PERSONAS.filter(
+    (persona) =>
+      q.length === 0 ||
+      persona.handle.includes(q) ||
+      persona.displayName.toLowerCase().includes(q),
+  );
+
+  return matches
+    .map((persona) => getProfile(persona.handle, now))
+    .filter((profile): profile is Profile => profile !== null);
 }

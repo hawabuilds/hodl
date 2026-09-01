@@ -2,13 +2,17 @@ import type {
   Asset,
   AssetKind,
   ChartPoint,
+  FeedItem,
   NewsItem,
+  Profile,
   RwaAsset,
   Timeframe,
   TokenAsset,
   Trade,
 } from "@/lib/types";
 import * as seeded from "./market";
+import {feedFor, type FeedQuery} from "./newsfeed";
+import {searchPeople} from "./social";
 
 /**
  * The seam between the app and its data.
@@ -91,6 +95,37 @@ export async function fetchNews(
   return {data: seeded.newsFor(asset), seeded: true};
 }
 
+/**
+ * TODO(live): the chain's own ETH/USD oracle. The order sheet reads this to
+ * convert between the two currencies someone can size a trade in.
+ */
+export async function fetchEthPrice(): Promise<SourceResult<number>> {
+  return {data: seeded.ethPriceUsd(), seeded: true};
+}
+
 export async function search(query: string): Promise<SourceResult<Asset[]>> {
   return {data: seeded.searchAssets(query), seeded: true};
+}
+
+/**
+ * TODO(live): the same Supabase `users` table the profiles come from, matched
+ * on handle and display name.
+ */
+export async function searchUsers(
+  query: string,
+): Promise<SourceResult<Profile[]>> {
+  return {data: searchPeople(query), seeded: true};
+}
+
+/**
+ * The news tab.
+ *
+ * TODO(live): a headline provider keyed by ticker for the coverage, and the X
+ * API for the Robinhood accounts. `seeded` is what the UI reads to decide
+ * whether to caveat the feed.
+ */
+export async function fetchFeed(
+  query: FeedQuery,
+): Promise<SourceResult<FeedItem[]>> {
+  return {data: feedFor(query), seeded: true};
 }

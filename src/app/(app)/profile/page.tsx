@@ -1,50 +1,87 @@
 "use client";
 
 import {useMemo, useState} from "react";
+import {ConnectionsSheet} from "@/components/ConnectionsSheet";
 import {EditProfileSheet} from "@/components/EditProfileSheet";
+import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {HoldingsList} from "@/components/HoldingsList";
+import {PillRail} from "@/components/PillRail";
 import {PriceChart} from "@/components/PriceChart";
-import {SettingsSheet} from "@/components/SettingsSheet";
+import {SettingsMenu} from "@/components/SettingsMenu";
 import {SocialRow} from "@/components/SocialRow";
 import {Avatar} from "@/components/ui/Avatar";
 import {SectionLabel} from "@/components/ui/Card";
-import {PencilIcon, SettingsIcon} from "@/components/ui/Icons";
+import {PencilIcon} from "@/components/ui/Icons";
 import {useBook} from "@/hooks/useBook";
 import {useMe} from "@/hooks/useMe";
+import {useMyFollowers, usePeople} from "@/hooks/usePeople";
+import {useFollows} from "@/hooks/useProfile";
 import {cn} from "@/lib/cn";
-import {money, percent, relativeTime, shortAddress, units} from "@/lib/format";
-import type {ChartPoint} from "@/lib/types";
+import {compact, money, percent, relativeTime, shortAddress, units} from "@/lib/format";
+import {RANGES, type ChartPoint, type Range} from "@/lib/types";
 
 type Side = "rwa" | "token";
 
+const SIDES: FilterOption<Side>[] = [
+  {value: "rwa", label: "RWAs"},
+  {value: "token", label: "Tokens"},
+];
+
+/** How far back each range reaches, for spacing the points along the x axis. */
+const RANGE_SPAN_MS: Record<Range, number> = {
+  "1D": 86_400_000,
+  "1W": 7 * 86_400_000,
+  "1M": 30 * 86_400_000,
+  "1Y": 365 * 86_400_000,
+  ALL: 730 * 86_400_000,
+};
+
 export default function ProfilePage() {
   const me = useMe();
-  const book = useBook();
+  const [range, setRange] = useState<Range>("1D");
+  const book = useBook(range);
   const [side, setSide] = useState<Side>("rwa");
   const [editOpen, setEditOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-
-  // The chart takes the same shape as an asset chart so it can share the
-  // component; the timestamps are only there to space the points evenly.
-  const points: ChartPoint[] = useMemo(() => {
-    const span = 24 * 60 * 60_000;
-    const now = Date.now();
-    return book.series.map((value, i) => ({
-      t: now - span + (span * i) / Math.max(book.series.length - 1, 1),
-      price: value,
-    }));
-  }, [book.series]);
-
-  const pnl = useMemo(
-    () =>
-      new Map(
-        book.holdings.map((h) => [h.assetId, {pnlUsd: h.pnlUsd, pnlPct: h.pnlPct}]),
-      ),
-    [book.holdings],
+  const [scrubbed, setScrubbed] = useState<ChartPoint | null>(null);
+  const [connections, setConnections] = useState<"followers" | "following" | null>(
+    null,
   );
 
-  const shown = side === "rwa" ? book.rwaHoldings : book.tokenHoldings;
+  const follows = useFollows();
+  // Loaded up front rather than on open, so the count beside the label is the
+  // length of the list the sheet actually shows.
+  const followers = useMyFollowers();
+  const following = usePeople(follows.following, connections === "following");
+
+  // Shaped like an asset chart so the two can share a component; the timestamps
+  // only exist to space the points evenly across the window.
+  const points: ChartPoint[] = useMemo(() => {
+    const span = RANGE_SPAN_MS[range];
+    const now = Date.now();
+    const last = Math.max(book.series.length - 1, 1);
+    return book.series.map((value, i) => ({
+      t: now - span + (span * i) / last,
+      price: value,
+    }));
+  }, [book.series, range]);
+
   const positive = book.changePct >= 0;
+  const shownValue = scrubbed?.price ?? book.totalValue;
+  const openValue = book.series[0] ?? book.totalValue;
+  const shownChangeUsd = scrubbed ? scrubbed.price - openValue : book.changeUsd;
+  const shownChangePct =
+    openValue > 0 ? (shownChangeUsd / openValue) * 100 : 0;
+
+  const shown = side === "rwa" ? book.rwaHoldings : book.tokenHoldings;
+
+  const sides: FilterOption<Side>[] = SIDES.map((option) => ({
+    ...option,
+    hint: String(
+      option.value === "rwa"
+        ? book.rwaHoldings.length
+        : book.tokenHoldings.length,
+    ),
+  }));
 
   return (
     <div>
@@ -57,23 +94,41 @@ export default function ProfilePage() {
             </div>
             <div className="truncate text-[12.5px] font-semibold text-faint">
               {me.handle ? `@${me.handle}` : "Signed in"}
-              {me.wallet ? ` · ${shortAddress(me.wallet, 4)}` : ""}
+              {me.wallet ? (
+                <span className="ml-1 font-mono text-[11.5px] font-medium">
+                  {shortAddress(me.wallet, 4)}
+                </span>
+              ) : null}
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          aria-label="Settings"
-          className="-mr-1 grid h-9 w-9 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-[var(--overlay-wash)] hover:text-ink"
-        >
-          <SettingsIcon className="h-[19px] w-[19px]" />
-        </button>
+        <SettingsMenu />
       </div>
 
       {me.bio ? (
-        <p className="mb-3 text-[13.5px] leading-[1.5] text-muted">{me.bio}</p>
+        <p className="mb-2.5 text-[13.5px] leading-[1.5] text-muted">{me.bio}</p>
       ) : null}
+
+      <div className="mb-4 flex items-center gap-4 text-[12.5px] font-semibold">
+        <button
+          type="button"
+          onClick={() => setConnections("followers")}
+          className="transition-colors hover:text-green-deep"
+        >
+          <b className="tnum font-extrabold">
+            {compact(followers.followers.length)}
+          </b>{" "}
+          <span className="text-faint">followers</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setConnections("following")}
+          className="transition-colors hover:text-green-deep"
+        >
+          <b className="tnum font-extrabold">{follows.following.length}</b>{" "}
+          <span className="text-faint">following</span>
+        </button>
+      </div>
 
       <div className="mb-5 flex items-center gap-2">
         <button
@@ -87,68 +142,62 @@ export default function ProfilePage() {
         <SocialRow socials={me.socials} />
       </div>
 
-      <div className="mb-5 rounded-panel border border-hairline bg-gradient-to-b from-card to-[var(--surface-elevated)] p-[22px] pb-4 shadow-panel">
-        <div className="text-[11px] font-bold tracking-[0.09em] text-faint">
-          PORTFOLIO VALUE
-        </div>
-        <div className="tnum my-[9px] text-[38px] font-extrabold tracking-[-0.035em]">
-          {book.isLoading ? "—" : money(book.totalValue)}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] font-semibold">
-          <span
-            className={cn(
-              "tnum font-bold",
-              positive ? "text-green-deep" : "text-red",
-            )}
-          >
-            {percent(book.changePct)} today
-          </span>
-          <span className="tnum text-muted">
-            {money(book.cashUsd)} cash · {money(book.positionsValue)} in positions
-          </span>
-        </div>
+      <div className="text-[11px] font-bold tracking-[0.09em] text-faint">
+        PORTFOLIO VALUE
+      </div>
+      <div className="tnum mt-1.5 text-[38px] font-extrabold leading-none tracking-[-0.035em]">
+        {book.isLoading ? "—" : money(shownValue)}
+      </div>
+      <div
+        className={cn(
+          "tnum mt-2 text-[13.5px] font-bold",
+          shownChangeUsd >= 0 ? "text-green-deep" : "text-red",
+        )}
+      >
+        {shownChangeUsd >= 0 ? "+" : "−"}
+        {money(Math.abs(shownChangeUsd))}
+        <span className="ml-1.5">{percent(shownChangePct)}</span>
+        <span className="ml-1.5 font-semibold text-faint">{range}</span>
+      </div>
 
-        {points.length > 1 ? (
+      {points.length > 1 ? (
+        <>
           <PriceChart
             points={points}
-            height={110}
+            height={140}
             positive={positive}
             showBaseline={false}
+            onScrub={setScrubbed}
             className="mt-3"
           />
-        ) : null}
+          <PillRail
+            label="Portfolio range"
+            options={RANGES}
+            value={range}
+            onChange={setRange}
+            positive={positive}
+            className="mt-2"
+          />
+        </>
+      ) : null}
+
+      <div className="mb-1 mt-6 text-[12.5px] font-semibold text-muted">
+        <span className="tnum font-extrabold text-ink">
+          {money(book.positionsValue)}
+        </span>{" "}
+        in positions · {money(book.cashUsd)} cash
       </div>
 
-      <div className="mb-3 flex gap-0.5 rounded-[12px] border border-hairline bg-wash p-[3px]">
-        {(
-          [
-            {value: "rwa", label: `RWAs ${book.rwaHoldings.length || ""}`},
-            {value: "token", label: `Tokens ${book.tokenHoldings.length || ""}`},
-          ] as const
-        ).map((option) => {
-          const active = option.value === side;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              aria-pressed={active}
-              onClick={() => setSide(option.value)}
-              className={cn(
-                "flex-1 rounded-[9px] py-2 text-[13px] font-extrabold transition-all duration-150",
-                active
-                  ? "bg-card text-ink shadow-[0_2px_6px_-3px_rgba(9,24,14,0.3)]"
-                  : "text-faint",
-              )}
-            >
-              {option.label.trim()}
-            </button>
-          );
-        })}
-      </div>
+      <FilterRail
+        label="Filter holdings"
+        options={sides}
+        value={side}
+        onChange={setSide}
+        className="mb-1 mt-3"
+      />
 
       <HoldingsList
         holdings={shown}
-        pnl={pnl}
         empty={
           side === "rwa"
             ? "No tokenized stocks yet. Buy one from any RWA chart page."
@@ -159,11 +208,11 @@ export default function ProfilePage() {
       {book.orders.length > 0 ? (
         <>
           <SectionLabel>RECENT ORDERS</SectionLabel>
-          <ul className="overflow-hidden rounded-[16px] border border-hairline bg-card">
+          <ul className="-mx-[22px] divide-y divide-hairline">
             {book.orders.slice(0, 8).map((order) => (
               <li
                 key={order.id}
-                className="flex items-center justify-between gap-3 border-b border-hairline px-4 py-3 last:border-b-0"
+                className="flex items-center justify-between gap-3 px-[22px] py-3"
               >
                 <div className="min-w-0">
                   <div className="text-[13px] font-extrabold">
@@ -190,12 +239,29 @@ export default function ProfilePage() {
       ) : null}
 
       <p className="mt-5 px-0.5 text-[11.5px] leading-[1.5] text-faint">
-        This book is simulated. Orders are recorded in this browser only — no
-        wallet is signed and no funds move.
+        This book is simulated and opens with sample positions. Orders are
+        recorded in this browser only — no wallet is signed and no funds move.
+        Followers are seeded; who you follow is real and lives in this browser.
       </p>
 
+      <ConnectionsSheet
+        open={connections === "followers"}
+        title="Followers"
+        people={followers.followers}
+        loading={followers.isLoading}
+        emptyLabel="Nobody yet."
+        onClose={() => setConnections(null)}
+      />
+      <ConnectionsSheet
+        open={connections === "following"}
+        title="Following"
+        people={following.people}
+        loading={following.isLoading}
+        emptyLabel="You are not following anyone yet. Open a profile from any comment to follow them."
+        onClose={() => setConnections(null)}
+      />
+
       <EditProfileSheet open={editOpen} onClose={() => setEditOpen(false)} />
-      <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

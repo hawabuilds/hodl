@@ -1,18 +1,18 @@
 "use client";
 
 import {useMemo, useState} from "react";
-import Link from "next/link";
 import {useRouter} from "next/navigation";
+import {ConnectionsSheet} from "@/components/ConnectionsSheet";
+import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {HoldingsList} from "@/components/HoldingsList";
 import {SocialRow} from "@/components/SocialRow";
 import {Avatar} from "@/components/ui/Avatar";
 import {ChevronLeftIcon} from "@/components/ui/Icons";
-import {Sheet, SheetTitle} from "@/components/ui/Sheet";
+import {usePeople} from "@/hooks/usePeople";
 import {useFollows, useProfile} from "@/hooks/useProfile";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {cn} from "@/lib/cn";
-import {compact, money, shortAddress} from "@/lib/format";
-import {profilePath} from "@/lib/routes";
+import {compact, money, percent, shortAddress} from "@/lib/format";
 
 type Side = "rwa" | "token";
 type Connections = "followers" | "following";
@@ -29,17 +29,35 @@ export default function PublicProfilePage({
   const [side, setSide] = useState<Side>("rwa");
   const [connections, setConnections] = useState<Connections | null>(null);
 
+  const shownHandles =
+    connections === "following" ? followingHandles : followerHandles;
+  const connectionProfiles = usePeople(shownHandles, connections !== null);
+
   const following = profile ? follows.has(profile.handle) : false;
+  const holdings = useMemo(() => profile?.holdings ?? [], [profile]);
 
-  const holdings = useMemo(
-    () => (profile?.holdings ?? []).filter((h) => h.kind === side),
-    [profile, side],
-  );
+  // Someone else's book shows what it is worth and what it is up, but never a
+  // value line: the entry times behind it are not published, so a chart would
+  // be an invention rather than a summary.
+  const totals = useMemo(() => {
+    const value = holdings.reduce((sum, h) => sum + h.valueUsd, 0);
+    const cost = holdings.reduce((sum, h) => sum + h.costUsd, 0);
+    const pnl = value - cost;
+    return {value, cost, pnl, pct: cost > 0 ? (pnl / cost) * 100 : 0};
+  }, [holdings]);
 
-  const totalValue = (profile?.holdings ?? []).reduce(
-    (sum, h) => sum + h.valueUsd,
-    0,
-  );
+  const sides: FilterOption<Side>[] = [
+    {
+      value: "rwa",
+      label: "RWAs",
+      hint: String(holdings.filter((h) => h.kind === "rwa").length),
+    },
+    {
+      value: "token",
+      label: "Tokens",
+      hint: String(holdings.filter((h) => h.kind === "token").length),
+    },
+  ];
 
   // A local follow is only visible to this browser, so it is added to the
   // seeded count rather than replacing it.
@@ -110,7 +128,7 @@ export default function PublicProfilePage({
           href={addressUrlForChain(profile.wallet, RH_MAINNET_ID)}
           target="_blank"
           rel="noopener noreferrer"
-          className="tnum text-faint transition-colors hover:text-ink"
+          className="font-mono text-[11.5px] text-faint transition-colors hover:text-ink"
         >
           {shortAddress(profile.wallet, 4)}
         </a>
@@ -118,44 +136,34 @@ export default function PublicProfilePage({
 
       <SocialRow socials={profile.socials} className="-ml-2 mt-1.5" />
 
-      <div className="mb-4 mt-5 rounded-panel border border-hairline bg-gradient-to-b from-card to-[var(--surface-elevated)] px-[22px] py-4 shadow-panel">
-        <div className="text-[11px] font-bold tracking-[0.09em] text-faint">
-          PUBLIC HOLDINGS
-        </div>
-        <div className="tnum mt-1.5 text-[28px] font-extrabold tracking-[-0.035em]">
-          {money(totalValue)}
-        </div>
+      <div className="mt-5 text-[11px] font-bold tracking-[0.09em] text-faint">
+        TOTAL HOLDINGS
+      </div>
+      <div className="tnum mt-1.5 text-[32px] font-extrabold leading-none tracking-[-0.035em]">
+        {money(totals.value)}
+      </div>
+      <div
+        className={cn(
+          "tnum mt-2 text-[13.5px] font-bold",
+          totals.pnl >= 0 ? "text-green-deep" : "text-red",
+        )}
+      >
+        {totals.pnl >= 0 ? "+" : "−"}
+        {money(Math.abs(totals.pnl))}
+        <span className="ml-1.5">{percent(totals.pct)}</span>
+        <span className="ml-1.5 font-semibold text-faint">unrealised</span>
       </div>
 
-      <div className="mb-3 flex gap-0.5 rounded-[12px] border border-hairline bg-wash p-[3px]">
-        {(
-          [
-            {value: "rwa", label: "RWAs"},
-            {value: "token", label: "Tokens"},
-          ] as const
-        ).map((option) => {
-          const active = option.value === side;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              aria-pressed={active}
-              onClick={() => setSide(option.value)}
-              className={cn(
-                "flex-1 rounded-[9px] py-2 text-[13px] font-extrabold transition-all duration-150",
-                active
-                  ? "bg-card text-ink shadow-[0_2px_6px_-3px_rgba(9,24,14,0.3)]"
-                  : "text-faint",
-              )}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
+      <FilterRail
+        label="Filter holdings"
+        options={sides}
+        value={side}
+        onChange={setSide}
+        className="mb-1 mt-4"
+      />
 
       <HoldingsList
-        holdings={holdings}
+        holdings={holdings.filter((h) => h.kind === side)}
         empty={
           side === "rwa"
             ? `@${profile.handle} holds no tokenized stocks.`
@@ -163,57 +171,16 @@ export default function PublicProfilePage({
         }
       />
 
-      <Sheet
+      <ConnectionsSheet
         open={connections !== null}
+        title={connections === "following" ? "Following" : "Followers"}
+        people={connectionProfiles.people}
+        loading={connectionProfiles.isLoading}
+        emptyLabel="Nobody yet."
         onClose={() => setConnections(null)}
-        height="auto"
-        label={connections ?? "Connections"}
-        header={
-          <SheetTitle
-            title={connections === "following" ? "Following" : "Followers"}
-            onClose={() => setConnections(null)}
-          />
-        }
-      >
-        <ConnectionList
-          handles={
-            connections === "following" ? followingHandles : followerHandles
-          }
-          onNavigate={() => setConnections(null)}
-        />
-      </Sheet>
+      />
+
     </div>
-  );
-}
-
-function ConnectionList({
-  handles,
-  onNavigate,
-}: {
-  handles: string[];
-  onNavigate: () => void;
-}) {
-  if (handles.length === 0) {
-    return (
-      <p className="py-6 text-center text-[13px] text-muted">Nobody yet.</p>
-    );
-  }
-
-  return (
-    <ul className="pb-2 pt-1">
-      {handles.map((handle) => (
-        <li key={handle}>
-          <Link
-            href={profilePath(handle)}
-            onClick={onNavigate}
-            className="flex items-center gap-3 border-b border-hairline py-3 last:border-b-0"
-          >
-            <Avatar name={handle} size={34} />
-            <span className="text-[13.5px] font-extrabold">@{handle}</span>
-          </Link>
-        </li>
-      ))}
-    </ul>
   );
 }
 

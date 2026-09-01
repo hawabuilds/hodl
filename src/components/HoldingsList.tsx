@@ -6,67 +6,77 @@ import {money, percent, units} from "@/lib/format";
 import {assetPath} from "@/lib/routes";
 import type {Holding} from "@/lib/types";
 import {Avatar} from "./ui/Avatar";
-
-export interface HoldingsListProps {
-  holdings: Holding[];
-  /** Unrealised P&L per row, keyed by asset id. Own book only. */
-  pnl?: Map<string, {pnlUsd: number; pnlPct: number}>;
-  empty: string;
-}
+import {VerifiedTick} from "./ui/Badges";
 
 /**
  * Holdings, as rows that link through to the chart page.
  *
- * The secondary line carries P&L when the viewer owns the book and the 24-hour
- * move otherwise — showing someone else's P&L would mean inventing a cost
- * basis nobody published.
+ * The right-hand column is always position value over unrealised profit rather
+ * than the asset's own 24-hour move: on a portfolio, what the position has done
+ * since it was opened is the number being looked for, and the day's move is
+ * already one tap away on the chart page.
  */
-export function HoldingsList({holdings, pnl, empty}: HoldingsListProps) {
+export function HoldingsList({
+  holdings,
+  empty,
+}: {
+  holdings: Holding[];
+  empty: string;
+}) {
   if (holdings.length === 0) {
     return (
-      <div className="rounded-[16px] border border-hairline bg-card px-4 py-6 text-center text-[13px] leading-[1.5] text-muted">
+      <p className="px-1 py-8 text-center text-[13px] leading-[1.5] text-muted">
         {empty}
-      </div>
+      </p>
     );
   }
 
   return (
-    <ul className="overflow-hidden rounded-[16px] border border-hairline bg-card">
+    <ul className="-mx-[22px]">
       {holdings.map((holding) => {
-        const row = pnl?.get(holding.assetId);
-        const secondaryValue = row ? row.pnlPct : holding.changePct;
-        const positive = secondaryValue >= 0;
+        const pnlUsd = holding.valueUsd - holding.costUsd;
+        const pnlPct =
+          holding.costUsd > 0 ? (pnlUsd / holding.costUsd) * 100 : 0;
+        const positive = pnlUsd >= 0;
 
         return (
-          <li key={`${holding.kind}:${holding.assetId}`} className="border-b border-hairline last:border-b-0">
+          <li key={`${holding.kind}:${holding.assetId}`}>
             <Link
               href={assetPath(holding.kind, holding.assetId)}
-              className="flex items-center gap-3 px-4 py-[13px] transition-colors hover:bg-wash"
+              className="flex items-center gap-3 px-[22px] py-[13px] transition-colors hover:bg-[var(--overlay-wash)]"
             >
-              <Avatar name={holding.symbol} src={holding.logoUrl} size={36} />
+              {holding.kind === "rwa" ? null : (
+                <Avatar name={holding.symbol} src={holding.logoUrl} size={38} />
+              )}
 
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[13.5px] font-extrabold tracking-[-0.01em]">
-                  {holding.symbol}
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-[14px] font-extrabold tracking-[-0.015em]">
+                    {holding.symbol}
+                  </span>
+                  {holding.kind === "rwa" ? <VerifiedTick size={13} /> : null}
                 </div>
-                <div className="tnum truncate text-[12px] font-semibold text-faint">
-                  {units(holding.amount)} {holding.kind === "rwa" ? "shares" : "tokens"}
+                <div className="tnum mt-[3px] truncate text-[12px] font-semibold text-faint">
+                  {units(holding.amount)}{" "}
+                  {holding.kind === "rwa" ? "shares" : "tokens"}
                 </div>
               </div>
 
               <div className="shrink-0 text-right">
-                <div className="tnum text-[13.5px] font-extrabold tracking-[-0.01em]">
+                <div className="tnum text-[14px] font-extrabold tracking-[-0.015em]">
                   {money(holding.valueUsd)}
                 </div>
                 <div
                   className={cn(
-                    "tnum text-[12px] font-bold",
+                    "tnum mt-[3px] text-[12px] font-bold",
                     positive ? "text-green-deep" : "text-red",
                   )}
                 >
-                  {row
-                    ? `${row.pnlUsd >= 0 ? "+" : "−"}${money(Math.abs(row.pnlUsd))}`
-                    : percent(holding.changePct)}
+                  {positive ? "+" : "−"}
+                  {money(Math.abs(pnlUsd))}
+                  <span className="ml-1.5 font-semibold opacity-75">
+                    {percent(pnlPct)}
+                  </span>
                 </div>
               </div>
             </Link>

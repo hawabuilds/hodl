@@ -69,6 +69,19 @@ export function InfoPanel({token}: {token: TokenAsset}) {
             <ArrowUpRightIcon className="h-3.5 w-3.5 text-faint" />
           </a>
         </Row>
+        <Row label="Taxes">
+          <span className="tnum text-[13px] font-extrabold">
+            {token.buyTaxPct === 0 && token.sellTaxPct === 0 ? (
+              <span className="text-green-deep">None</span>
+            ) : (
+              <>
+                {token.buyTaxPct}% buy
+                <span className="mx-1 font-semibold text-faint">·</span>
+                {token.sellTaxPct}% sell
+              </>
+            )}
+          </span>
+        </Row>
         <Row label="Contract">
           <a
             href={addressUrlForChain(token.address, RH_MAINNET_ID)}

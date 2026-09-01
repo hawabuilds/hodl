@@ -1,6 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // A production build writes a different chunk map than the dev server's, so
+  // running one against a live `next dev` leaves it loading modules that no
+  // longer exist. `npm run verify` builds into its own directory instead.
+  distDir: process.env.BUILD_DIR || ".next",
   images: {
     remotePatterns: [{protocol: "https", hostname: "pbs.twimg.com"}],
   },

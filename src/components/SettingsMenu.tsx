@@ -1,14 +1,17 @@
 "use client";
 
 import {useEffect, useRef, useState} from "react";
-import {useUser} from "@/hooks/useUser";
 import {cn} from "@/lib/cn";
-import {Avatar} from "./ui/Avatar";
+import {SettingsIcon} from "./ui/Icons";
 import {WalletControls} from "./WalletControls";
 
-/** The avatar in the app header, and the account menu behind it. */
-export function ProfileMenu() {
-  const {displayName, pfpUrl} = useUser();
+/**
+ * Account settings, anchored to the gear that opens them.
+ *
+ * A panel that grows out of its own control keeps the connection between the
+ * two, where a sheet rising from the opposite edge of the screen breaks it.
+ */
+export function SettingsMenu() {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
 
@@ -30,31 +33,36 @@ export function ProfileMenu() {
   }, [open]);
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative shrink-0">
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
+        onClick={(event) => {
+          event.stopPropagation();
           setOpen((prev) => !prev);
         }}
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label="Account and wallet"
-        className="block rounded-full"
+        aria-label="Settings"
+        className={cn(
+          "-mr-1 grid h-9 w-9 place-items-center rounded-full transition-colors",
+          open
+            ? "bg-[var(--overlay-wash-hover)] text-ink"
+            : "text-muted hover:bg-[var(--overlay-wash)] hover:text-ink",
+        )}
       >
-        <Avatar name={displayName} src={pfpUrl} size={40} ring />
+        <SettingsIcon className="h-[19px] w-[19px]" />
       </button>
 
       <div
         role="menu"
-        aria-label="Account"
+        aria-label="Settings"
         className={cn(
-          "absolute right-0 top-[calc(100%+8px)] z-50 w-[min(280px,calc(100vw-44px))]",
+          "absolute right-0 top-[calc(100%+8px)] z-50 w-[min(286px,calc(100vw-44px))]",
           "rounded-panel border border-hairline bg-card p-2 shadow-menu",
           "origin-top-right transition-[opacity,transform,visibility] duration-150",
           open
             ? "visible scale-100 opacity-100"
-            : "invisible pointer-events-none scale-[0.98] opacity-0",
+            : "invisible pointer-events-none scale-[0.96] opacity-0",
         )}
       >
         <WalletControls onNavigate={() => setOpen(false)} />

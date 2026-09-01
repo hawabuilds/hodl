@@ -7,11 +7,16 @@ export const APP_SUBTITLE =
 export const APP_DOMAIN = "rwa.xyz";
 
 /**
- * Feed first, then the things you are watching, then your own book.
+ * The four destinations. Labels are for screen readers and tooltips only — the
+ * bar itself is icons, so each one has to be unambiguous on its own.
+ *
+ * The watchlist is not here: it lives inside the feed as a tab, where it is
+ * read against the same rows it filters.
  */
 export const TABS = [
   {href: "/home", label: "Home", key: "home"},
-  {href: "/watchlist", label: "Watchlist", key: "watchlist"},
+  {href: "/search", label: "Search", key: "search"},
+  {href: "/news", label: "News", key: "news"},
   {href: "/profile", label: "Profile", key: "profile"},
 ] as const;
 

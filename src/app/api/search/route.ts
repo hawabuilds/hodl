@@ -1,14 +1,34 @@
 import type {NextRequest} from "next/server";
 import {json} from "@/lib/server/http";
-import {search} from "@/lib/server/sources";
+import {search, searchUsers} from "@/lib/server/sources";
 
 export const dynamic = "force-dynamic";
 
-/** Tickers, symbols, names and contract addresses, across both sides. */
+/**
+ * Tickers, symbols, names, contract addresses and people.
+ *
+ * People are only looked up when asked for, so the feed's own search bar — which
+ * wants assets and nothing else — does not pay for a profile scan on every
+ * keystroke.
+ */
 export async function GET(request: NextRequest) {
-  const query = request.nextUrl.searchParams.get("q") ?? "";
-  if (query.trim().length === 0) return json({query, results: []});
+  const params = request.nextUrl.searchParams;
+  const query = params.get("q") ?? "";
+  const withPeople = params.get("people") === "1";
 
-  const {data, seeded} = await search(query);
-  return json({query, results: data, seeded});
+  if (query.trim().length === 0) {
+    return json({query, results: [], people: []});
+  }
+
+  const [assets, people] = await Promise.all([
+    search(query),
+    withPeople ? searchUsers(query) : Promise.resolve({data: [], seeded: true}),
+  ]);
+
+  return json({
+    query,
+    results: assets.data,
+    people: people.data,
+    seeded: assets.seeded,
+  });
 }

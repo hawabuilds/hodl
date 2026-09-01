@@ -1,36 +1,97 @@
 "use client";
 
-import {useCallback, useMemo} from "react";
-import {useQuery, useQueryClient} from "@tanstack/react-query";
+import {useCallback, useEffect, useMemo, useRef} from "react";
+import {keepPreviousData, useQuery, useQueryClient} from "@tanstack/react-query";
 import {
   applyFill,
+  hasBook,
   readBook,
+  seedBook,
   STARTING_CASH_USD,
   type Book,
   type FillInput,
+  type Position,
 } from "@/lib/localStore";
-import type {Asset, Holding} from "@/lib/types";
+import {SAMPLE_CASH_USD, SAMPLE_POSITIONS} from "@/lib/sampleBook";
+import type {Asset, Holding, Range} from "@/lib/types";
 import {useLocalStore} from "./useLocalStore";
 
 const EMPTY: Book = {cashUsd: STARTING_CASH_USD, positions: [], orders: []};
 
 export interface ValuedHolding extends Holding {
-  costUsd: number;
   /** Unrealised profit and loss in dollars, against the average entry. */
   pnlUsd: number;
   pnlPct: number;
 }
 
 /**
- * The simulated book, priced.
+ * Seeds the opening book once, from live prices.
+ *
+ * Runs in the browser rather than in `localStore` because the sample positions
+ * are expressed as dollar amounts at a fraction of the current price, and only
+ * the market knows what that price is.
+ */
+function useSeedBook() {
+  const started = useRef(false);
+
+  useEffect(() => {
+    if (started.current || hasBook()) return;
+    started.current = true;
+
+    const ids = SAMPLE_POSITIONS.map((p) => `${p.kind}:${p.lookup}`).join(",");
+
+    // Deliberately not cancelled on cleanup. Strict mode mounts, unmounts and
+    // remounts this effect, and the remount is short-circuited by the ref — so
+    // cancelling the first fetch would leave the book unseeded in development
+    // and seeded in production.
+    void (async () => {
+      try {
+        const res = await fetch(`/api/assets?ids=${encodeURIComponent(ids)}`);
+        if (!res.ok) return;
+        const {assets} = (await res.json()) as {assets: Asset[]};
+
+        const positions: Position[] = [];
+        for (const sample of SAMPLE_POSITIONS) {
+          const asset = assets.find(
+            (candidate) =>
+              candidate.kind === sample.kind &&
+              (candidate.id.toLowerCase() === sample.lookup ||
+                (candidate.kind === "token" &&
+                  candidate.symbol.toLowerCase() === sample.lookup)),
+          );
+          if (!asset || asset.priceUsd <= 0) continue;
+          const entry = asset.priceUsd * sample.entryFactor;
+          positions.push({
+            kind: asset.kind,
+            // The canonical id, so the row links to the same page a feed card
+            // does even though the sample was written against a symbol.
+            assetId: asset.id,
+            symbol: asset.kind === "rwa" ? asset.ticker : asset.symbol,
+            name: asset.name,
+            amount: sample.costUsd / entry,
+            costUsd: sample.costUsd,
+          });
+        }
+
+        if (positions.length > 0) seedBook(positions, SAMPLE_CASH_USD);
+      } catch {
+        // A failed seed leaves an empty book, which the page renders fine.
+      }
+    })();
+  }, []);
+}
+
+/**
+ * The simulated book, priced over a window.
  *
  * Positions live in the browser; prices come from one batched lookup so a book
  * with a dozen names does not fire a dozen requests. The portfolio line is the
- * sum of each position's own 24-hour series, which is why the batch endpoint
- * returns `series` rather than just a price.
+ * sum of each position's own series over the requested range, which is why the
+ * batch endpoint takes a range and returns `series` rather than just a price.
  */
-export function useBook() {
+export function useBook(range: Range = "1D") {
   const queryClient = useQueryClient();
+  useSeedBook();
   const [book] = useLocalStore<Book>(readBook, EMPTY);
 
   const ids = useMemo(
@@ -39,11 +100,16 @@ export function useBook() {
   );
 
   const priced = useQuery({
-    queryKey: ["book-prices", ids],
+    queryKey: ["book-prices", ids, range],
     enabled: ids.length > 0,
     refetchInterval: 60_000,
+    // Switching range refetches every position. Without this the holdings all
+    // price at zero for a frame and the rows flash a full loss.
+    placeholderData: keepPreviousData,
     queryFn: async () => {
-      const res = await fetch(`/api/assets?ids=${encodeURIComponent(ids.join(","))}`);
+      const res = await fetch(
+        `/api/assets?range=${range}&ids=${encodeURIComponent(ids.join(","))}`,
+      );
       if (!res.ok) throw new Error("Could not price your holdings.");
       return (await res.json()) as {assets: Asset[]};
     },
@@ -85,29 +151,36 @@ export function useBook() {
   const totalValue = positionsValue + book.cashUsd;
 
   /**
-   * Portfolio value across the last 24 hours.
+   * Portfolio value across the window.
    *
-   * Cash is flat, so only the positions move the line. Assets whose series is
-   * missing contribute their current value at every point rather than zero,
+   * Cash is flat, so only the positions move the line. A position whose series
+   * is missing contributes its current value at every point rather than zero,
    * which would draw a cliff that never happened.
    */
   const series = useMemo(() => {
     if (holdings.length === 0) return [];
-    const points = 24;
-    return Array.from({length: points}, (_, i) => {
+    const length = Math.max(
+      ...holdings.map((holding) => {
+        const asset = assets.get(`${holding.kind}:${holding.assetId}`);
+        return asset?.series?.length ?? 0;
+      }),
+      0,
+    );
+    if (length < 2) return [];
+
+    return Array.from({length}, (_, i) => {
       let value = book.cashUsd;
       for (const holding of holdings) {
         const asset = assets.get(`${holding.kind}:${holding.assetId}`);
-        const at = asset?.series?.[i];
-        value += holding.amount * (at ?? asset?.priceUsd ?? 0);
+        value += holding.amount * (asset?.series?.[i] ?? asset?.priceUsd ?? 0);
       }
       return value;
     });
   }, [holdings, assets, book.cashUsd]);
 
   const openValue = series[0] ?? totalValue;
-  const changePct =
-    openValue > 0 ? ((totalValue - openValue) / openValue) * 100 : 0;
+  const changeUsd = totalValue - openValue;
+  const changePct = openValue > 0 ? (changeUsd / openValue) * 100 : 0;
 
   const trade = useCallback(
     (input: FillInput) => {
@@ -129,6 +202,7 @@ export function useBook() {
     positionsValue,
     totalValue,
     series,
+    changeUsd,
     changePct,
     isLoading: ids.length > 0 && priced.isLoading,
     trade,

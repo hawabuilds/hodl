@@ -17,7 +17,7 @@ export function TradeBar({
   symbol: string;
 }) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-[calc(62px+env(safe-area-inset-bottom))] z-30 px-[22px]">
+    <div className="pointer-events-none absolute inset-x-0 bottom-[calc(84px+env(safe-area-inset-bottom))] z-30 px-[22px]">
       <div className="pointer-events-auto grid grid-cols-2 gap-2.5 rounded-[19px] border border-hairline bg-card/92 p-2 shadow-panel backdrop-blur-[16px]">
         <button
           type="button"

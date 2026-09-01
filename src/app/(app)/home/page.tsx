@@ -1,154 +1,162 @@
 "use client";
 
 import {useMemo, useState} from "react";
-import {AssetCard} from "@/components/AssetCard";
-import {SectorRail} from "@/components/SectorRail";
-import {SearchBar} from "@/components/ui/SearchBar";
-import {cn} from "@/lib/cn";
+import {AssetList} from "@/components/AssetRow";
+import {FilterRail, type FilterOption} from "@/components/FilterRail";
+import {HomeTabs, type HomeTab} from "@/components/HomeTabs";
+import {StarIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
-import {useSearch} from "@/hooks/useSearch";
+import {useWatchlistAssets} from "@/hooks/useWatchlist";
 import {SECTORS, type SectorId} from "@/lib/sectors";
+import {APP_NAME} from "@/config/app";
 import type {Asset} from "@/lib/types";
-import type {MarketSort} from "@/app/api/market/route";
 
-type Side = "tokens" | "rwas";
+type TokenSort = "new" | "trending" | "marketCap" | "rewards";
+type RwaSort = "marketCap" | "movers";
+type WatchFilter = "all" | "token" | "rwa";
 
-const SORTS: {value: MarketSort; label: string}[] = [
-  {value: "volume", label: "Volume"},
-  {value: "marketCap", label: "Cap"},
-  {value: "change", label: "Movers"},
+const TOKEN_SORTS: FilterOption<TokenSort>[] = [
+  {value: "trending", label: "Trending"},
   {value: "new", label: "New"},
+  {value: "marketCap", label: "Market cap"},
+  {value: "rewards", label: "Rewards", title: "Ranked by pool fees paid out over 24h"},
+];
+
+const RWA_SORTS: FilterOption<RwaSort>[] = [
+  {value: "marketCap", label: "Market cap"},
+  {value: "movers", label: "Movers", title: "Largest move in either direction"},
+];
+
+const WATCH_FILTERS: FilterOption<WatchFilter>[] = [
+  {value: "all", label: "All"},
+  {value: "token", label: "Tokens"},
+  {value: "rwa", label: "RWAs"},
 ];
 
 export default function HomePage() {
-  const [side, setSide] = useState<Side>("tokens");
-  const [sort, setSort] = useState<MarketSort>("volume");
-  const [query, setQuery] = useState("");
-  const [sector, setSector] = useState<SectorId | null>(null);
+  const [tab, setTab] = useState<HomeTab>("tokens");
+  const [tokenSort, setTokenSort] = useState<TokenSort>("trending");
+  const [rwaSort, setRwaSort] = useState<RwaSort>("marketCap");
+  const [sector, setSector] = useState<SectorId | "all">("all");
+  const [watchFilter, setWatchFilter] = useState<WatchFilter>("all");
 
-  const market = useMarket(sort);
-  const search = useSearch(query);
+  const market = useMarket();
+  const watchlist = useWatchlistAssets(tab === "watchlist");
 
-  const list: Asset[] = side === "tokens" ? market.tokens : market.rwas;
-
-  // Sector chips only mean anything on the RWA side, and their counts come from
-  // the list actually on screen.
-  const sectorCounts = useMemo(() => {
+  const sectorOptions: FilterOption<SectorId | "all">[] = useMemo(() => {
     const counts = new Map<SectorId, number>();
     for (const asset of market.rwas) {
       counts.set(asset.sector, (counts.get(asset.sector) ?? 0) + 1);
     }
-    return counts;
+    return [
+      {value: "all", label: "All", hint: String(market.rwas.length)},
+      ...SECTORS.map((entry) => ({
+        value: entry.id,
+        label: entry.label,
+        title: entry.description,
+        hint: String(counts.get(entry.id) ?? 0),
+        disabled: (counts.get(entry.id) ?? 0) === 0,
+      })),
+    ];
   }, [market.rwas]);
 
-  const filtered = useMemo(() => {
-    if (side !== "rwas" || !sector) return list;
-    return list.filter((asset) => asset.kind === "rwa" && asset.sector === sector);
-  }, [list, side, sector]);
+  const tokens = useMemo(() => {
+    const list = [...market.tokens];
+    switch (tokenSort) {
+      case "new":
+        return list.sort(
+          (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+        );
+      case "marketCap":
+        return list.sort((a, b) => b.marketCapUsd - a.marketCapUsd);
+      case "rewards":
+        return list.sort((a, b) => b.rewards24hUsd - a.rewards24hUsd);
+      default:
+        return list.sort((a, b) => b.volume24hUsd - a.volume24hUsd);
+    }
+  }, [market.tokens, tokenSort]);
 
-  const showing = search.active ? search.results : filtered;
+  const rwas = useMemo(() => {
+    const list =
+      sector === "all"
+        ? [...market.rwas]
+        : market.rwas.filter((asset) => asset.sector === sector);
+    // Movers ranks by the size of the move, not its direction — a stock down
+    // nine percent is as much of a mover as one up nine.
+    return rwaSort === "movers"
+      ? list.sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
+      : list.sort((a, b) => b.marketCapUsd - a.marketCapUsd);
+  }, [market.rwas, sector, rwaSort]);
+
+  const watched = useMemo(
+    () =>
+      watchlist.assets.filter(
+        (asset) => watchFilter === "all" || asset.kind === watchFilter,
+      ),
+    [watchlist.assets, watchFilter],
+  );
+
+  const showing: Asset[] =
+    tab === "tokens" ? tokens : tab === "rwas" ? rwas : watched;
+
+  const loading =
+    tab === "watchlist" ? watchlist.isLoading : market.isLoading;
 
   return (
     <div>
-      <h1 className="mx-0.5 mb-3.5 mt-0.5 text-[24px] font-extrabold tracking-[-0.03em]">
-        Trending
-      </h1>
+      <div className="mb-4 text-[21px] font-extrabold leading-none tracking-[-0.04em]">
+        {APP_NAME}
+      </div>
 
-      <SearchBar
-        value={query}
-        onChange={setQuery}
-        placeholder="Ticker, token or contract address"
-        className="mb-3"
-      />
+      <HomeTabs value={tab} onChange={setTab} />
 
-      {search.active ? null : (
-        <>
-          <div className="mb-3 flex gap-0.5 rounded-[12px] border border-hairline bg-wash p-[3px]">
-            {(
-              [
-                {value: "tokens", label: `Tokens ${market.tokens.length || ""}`},
-                {value: "rwas", label: `RWAs ${market.rwas.length || ""}`},
-              ] as const
-            ).map((option) => {
-              const active = option.value === side;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setSide(option.value)}
-                  className={cn(
-                    "flex-1 rounded-[9px] py-2 text-[13px] font-extrabold transition-all duration-150",
-                    active
-                      ? "bg-card text-ink shadow-[0_2px_6px_-3px_rgba(9,24,14,0.3)]"
-                      : "text-faint",
-                  )}
-                >
-                  {option.label.trim()}
-                </button>
-              );
-            })}
-          </div>
-
-          {side === "rwas" ? (
-            <SectorRail
-              counts={sectorCounts}
-              total={market.rwas.length}
+      <div className="py-3.5">
+        {tab === "tokens" ? (
+          <FilterRail
+            label="Sort tokens"
+            options={TOKEN_SORTS}
+            value={tokenSort}
+            onChange={setTokenSort}
+          />
+        ) : tab === "rwas" ? (
+          <div className="flex flex-col gap-2.5">
+            <FilterRail
+              label="Filter by sector"
+              options={sectorOptions}
               value={sector}
               onChange={setSector}
             />
-          ) : null}
-
-          <div className="rail mb-3 flex gap-1.5 overflow-x-auto pb-0.5">
-            {SORTS.map((option) => {
-              const active = option.value === sort;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setSort(option.value)}
-                  className={cn(
-                    "shrink-0 rounded-pill px-3 py-1.5 text-[12px] font-bold transition-colors duration-150",
-                    active
-                      ? "bg-[rgba(0,200,5,0.12)] text-green-deep"
-                      : "text-faint hover:text-muted",
-                  )}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
+            <FilterRail
+              label="Sort real-world assets"
+              options={RWA_SORTS}
+              value={rwaSort}
+              onChange={setRwaSort}
+            />
           </div>
-        </>
-      )}
+        ) : (
+          <FilterRail
+            label="Filter watchlist"
+            options={WATCH_FILTERS}
+            value={watchFilter}
+            onChange={setWatchFilter}
+          />
+        )}
+      </div>
 
-      {market.isLoading && !search.active ? (
+      {loading && showing.length === 0 ? (
         <FeedSkeleton />
-      ) : market.error && !search.active ? (
+      ) : market.error ? (
         <p className="py-8 text-center text-[13.5px] text-muted">
           {market.error.message}
         </p>
       ) : showing.length === 0 ? (
-        <EmptyFeed
-          query={query}
-          searching={search.active}
-          loading={search.isLoading}
-          sector={sector}
-          onClearSector={() => setSector(null)}
-        />
+        <EmptyFeed tab={tab} watching={watchlist.count > 0} />
       ) : (
-        <ul className="flex flex-col gap-2.5">
-          {showing.map((asset) => (
-            <li key={`${asset.kind}:${asset.id}`}>
-              <AssetCard asset={asset} />
-            </li>
-          ))}
-        </ul>
+        <AssetList assets={showing} />
       )}
 
       {market.seeded && !market.isLoading ? (
-        <p className="mt-6 px-0.5 text-[11.5px] leading-[1.5] text-faint">
+        <p className="mt-5 px-0.5 text-[11.5px] leading-[1.5] text-faint">
           Seeded market data. Prices, pools and trades are simulated until the
           registry and pool indexer are connected.
         </p>
@@ -157,52 +165,41 @@ export default function HomePage() {
   );
 }
 
-function EmptyFeed({
-  query,
-  searching,
-  loading,
-  sector,
-  onClearSector,
-}: {
-  query: string;
-  searching: boolean;
-  loading: boolean;
-  sector: SectorId | null;
-  onClearSector: () => void;
-}) {
-  if (searching) {
+function EmptyFeed({tab, watching}: {tab: HomeTab; watching: boolean}) {
+  if (tab === "watchlist" && !watching) {
     return (
-      <p className="py-8 text-center text-[13.5px] text-muted">
-        {loading ? "Searching" : `Nothing matches “${query.trim()}”`}
-      </p>
+      <div className="px-6 py-12 text-center">
+        <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-wash text-faint">
+          <StarIcon className="h-6 w-6" />
+        </span>
+        <p className="mt-4 text-[14px] font-bold">Nothing watched yet</p>
+        <p className="mx-auto mt-1.5 max-w-[30ch] text-[13px] leading-[1.5] text-muted">
+          Tap the star on any ticker or token to keep it here.
+        </p>
+      </div>
     );
   }
 
   return (
-    <div className="py-8 text-center">
-      <p className="text-[13.5px] text-muted">
-        Nothing in{" "}
-        {sector ? SECTORS.find((s) => s.id === sector)?.label : "this list"} right
-        now.
-      </p>
-      {sector ? (
-        <button
-          type="button"
-          onClick={onClearSector}
-          className="mt-3 rounded-pill border border-hairline bg-card px-3.5 py-2 text-[12.5px] font-bold text-ink"
-        >
-          Show all sectors
-        </button>
-      ) : null}
-    </div>
+    <p className="py-10 text-center text-[13.5px] text-muted">
+      Nothing to show here right now.
+    </p>
   );
 }
 
 function FeedSkeleton() {
   return (
-    <div className="flex flex-col gap-2.5">
-      {Array.from({length: 7}).map((_, i) => (
-        <div key={i} className="h-[76px] animate-pulse rounded-card bg-wash" />
+    <div className="-mx-[22px] divide-y divide-hairline">
+      {Array.from({length: 8}).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 px-[22px] py-[15px]">
+          <div className="h-10 w-10 animate-pulse rounded-full bg-wash" />
+          <div className="flex-1">
+            <div className="h-3.5 w-20 animate-pulse rounded bg-wash" />
+            <div className="mt-2 h-3 w-14 animate-pulse rounded bg-wash" />
+          </div>
+          <div className="h-7 w-[52px] animate-pulse rounded bg-wash" />
+          <div className="h-8 w-16 animate-pulse rounded bg-wash" />
+        </div>
       ))}
     </div>
   );

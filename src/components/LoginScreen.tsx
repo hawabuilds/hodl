@@ -2,19 +2,18 @@
 
 import {useEffect, useState} from "react";
 import {useRouter} from "next/navigation";
-import {APP_SUBTITLE} from "@/config/app";
 import {useUser} from "@/hooks/useUser";
 import {Button} from "./ui/Button";
-import {
-  ArrowRightIcon,
-  ArrowUpIcon,
-  MailIcon,
-  VerifiedIcon,
-  XIcon,
-} from "./ui/Icons";
-import {Logo} from "./ui/Logo";
+import {AppleIcon, ArrowRightIcon, MailIcon, XIcon} from "./ui/Icons";
 import {Modal} from "./ui/Modal";
 
+/**
+ * The landing page.
+ *
+ * One claim, one line of explanation, one thing to press. Everything that used
+ * to sit between them — a mark, a sample card, a paragraph of positioning —
+ * was competing with the only decision on the screen.
+ */
 export function LoginScreen() {
   const router = useRouter();
   const {ready, authenticated, login, isDemo} = useUser();
@@ -30,64 +29,38 @@ export function LoginScreen() {
   };
 
   return (
-    <div className="scroll-quiet flex h-full flex-col overflow-y-auto bg-premium px-[30px] pb-[30px] pt-[26px]">
-      <div className="flex items-center">
-        <Logo />
-      </div>
+    <div className="flex h-full flex-col justify-center bg-premium px-8 pb-[max(48px,env(safe-area-inset-bottom))]">
+      <h1 className="text-[clamp(38px,11vw,46px)] font-extrabold leading-[1.02] tracking-[-0.045em]">
+        RWA app for
+        <br />
+        <span className="text-green-deep">trenchers</span>
+      </h1>
 
-      <div className="flex flex-1 flex-col justify-center gap-7 pb-[22px] pt-1.5">
-        <div>
-          <h1 className="text-[clamp(28px,7.4vw,34px)] font-bold leading-[1.12] tracking-[-0.025em]">
-            Every tokenized stock, and everything trading{" "}
-            <span className="text-green-deep">against it</span>
-          </h1>
-          <p className="mt-3.5 max-w-[33ch] text-[16px] font-medium leading-[1.55] text-muted">
-            {APP_SUBTITLE}
-          </p>
-        </div>
+      <p className="mt-5 max-w-[24ch] text-[17px] font-medium leading-[1.45] text-muted">
+        Everything you need for Robinhood Chain.
+      </p>
 
-        <div
-          aria-hidden="true"
-          className="-rotate-[1.3deg] rounded-panel border border-hairline bg-card px-4 py-[15px] shadow-panel"
+      <div className="mt-11 flex flex-col gap-2.5">
+        <Button size="lg" fullWidth onClick={() => setModalOpen(true)}>
+          Join now
+          <ArrowRightIcon className="h-4 w-4" />
+        </Button>
+
+        <button
+          type="button"
+          disabled
+          aria-label="iOS app coming soon"
+          className="flex w-full items-center justify-center gap-2.5 rounded-[17px] border border-hairline bg-card px-5 py-[18px] text-[16px] font-bold tracking-[-0.01em] text-faint"
         >
-          <div className="flex items-center justify-between gap-2.5">
-            <div className="flex min-w-0 flex-col">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[15px] font-extrabold">NVDA</span>
-                <VerifiedIcon className="h-[15px] w-[15px] text-green" />
-              </div>
-              <div className="tnum mt-0.5 text-[12.5px] text-muted">
-                $184.20 · Official RWA
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 rounded-pill border border-[rgba(0,200,5,0.24)] bg-[rgba(0,200,5,0.11)] px-3 py-2 text-[12px] font-bold text-green-deep">
-              <ArrowUpIcon className="h-3 w-3" /> 2.14%
-            </div>
-          </div>
-          <div className="mt-3 flex items-center justify-between gap-2.5 border-t border-hairline pt-3">
-            <div className="flex min-w-0 flex-col">
-              <div className="text-[15px] font-extrabold">GPUCOIN</div>
-              <div className="tnum mt-0.5 text-[12.5px] text-muted">
-                $4.2M cap · paired NVDA
-              </div>
-            </div>
-            <div className="tnum rounded-pill border border-[rgba(0,200,5,0.24)] bg-[rgba(0,200,5,0.11)] px-3 py-2 text-[12px] font-bold text-green-deep">
-              +38.6%
-            </div>
-          </div>
-        </div>
+          <AppleIcon className="h-[19px] w-[19px]" />
+          Coming soon
+        </button>
 
-        <div>
-          <Button size="lg" fullWidth onClick={() => setModalOpen(true)}>
-            Get in
-            <ArrowRightIcon className="h-4 w-4" />
-          </Button>
-          {isDemo && (
-            <p className="mt-3 text-center text-[11.5px] font-medium text-faint">
-              Demo mode — set NEXT_PUBLIC_PRIVY_APP_ID for real login.
-            </p>
-          )}
-        </div>
+        {isDemo ? (
+          <p className="mt-2 text-center text-[11.5px] font-medium text-faint">
+            Demo mode — set NEXT_PUBLIC_PRIVY_APP_ID for real login.
+          </p>
+        ) : null}
       </div>
 
       <Modal

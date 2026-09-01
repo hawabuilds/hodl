@@ -62,10 +62,22 @@ export interface TokenAsset {
   volume24hUsd: number;
   marketCapUsd: number;
   liquidityUsd: number;
+  /**
+   * Pool fees earned over the last 24 hours and paid back to liquidity
+   * providers. Ranks the Rewards filter on the feed.
+   */
+  rewards24hUsd: number;
   holders: number;
   createdAt: string;
   /** Ticker of the RWA on the other side of the pool. */
   pairedTicker: string;
+  /**
+   * Transfer tax the token contract charges, in percent. Zero for most, and
+   * shown on the chart page either way — "no tax" is information a buyer wants
+   * as much as "5% tax" is.
+   */
+  buyTaxPct: number;
+  sellTaxPct: number;
   launchpad: Launchpad;
   socials: SocialLinks;
   description: string;
@@ -83,6 +95,10 @@ export interface ChartPoint {
 export const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
 
+/** Windows for the portfolio chart, which is read over months rather than hours. */
+export const RANGES = ["1D", "1W", "1M", "1Y", "ALL"] as const;
+export type Range = (typeof RANGES)[number];
+
 export interface Trade {
   id: string;
   side: "buy" | "sell";
@@ -92,6 +108,8 @@ export interface Trade {
   priceUsd: number;
   /** Wallet that traded. Rendered short, links to the explorer. */
   maker: string;
+  /** The transaction the fill settled in. Shown in the TXN column. */
+  txHash: string;
   /** Set when the maker is someone with a profile in the app. */
   makerHandle: string | null;
   at: string;
@@ -125,6 +143,41 @@ export interface NewsItem {
   publishedAt: string;
 }
 
+// ---------------------------------------------------------------------------
+// The news feed
+// ---------------------------------------------------------------------------
+
+export const NEWS_WINDOWS = ["24h", "7d", "30d", "all"] as const;
+export type NewsWindow = (typeof NEWS_WINDOWS)[number];
+
+export const NEWS_TOPICS = ["all", "rwa", "robinhood", "posts"] as const;
+export type NewsTopic = (typeof NEWS_TOPICS)[number];
+
+/**
+ * One entry in the news feed.
+ *
+ * Two shapes share it: a piece of coverage, and an account worth following.
+ * They are rendered differently but sorted and filtered together, because what
+ * someone wants from this tab is one chronological stream.
+ */
+export interface FeedItem {
+  id: string;
+  kind: "article" | "account";
+  /** Headline, or the account's standing line. */
+  body: string;
+  url: string;
+  /** Outlet name, or the account's display name. */
+  source: string;
+  /** X handle. Accounts only. */
+  handle: string | null;
+  publishedAt: string;
+  /** Tickers the item concerns; rendered as chips through to the RWA page. */
+  tickers: string[];
+  topic: "rwa" | "robinhood";
+  /** True while the item is a placeholder rather than something fetched. */
+  sample: boolean;
+}
+
 export interface Holding {
   kind: AssetKind;
   /** Matches Asset.id, so a row links straight to its chart page. */
@@ -135,6 +188,8 @@ export interface Holding {
   amount: number;
   valueUsd: number;
   changePct: number;
+  /** Total put in, so the row can show unrealised profit rather than a guess. */
+  costUsd: number;
 }
 
 export interface Profile {

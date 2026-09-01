@@ -426,3 +426,31 @@ export function SwapIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function UserIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="8" r="3.8" stroke="currentColor" strokeWidth={1.9} />
+      <path d="M4.5 20.2a7.5 7.5 0 0 1 15 0" {...stroke} strokeWidth={1.9} />
+    </Icon>
+  );
+}
+
+export function SortIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 7h16M7 12h10M10 17h4" {...stroke} strokeWidth={2} />
+    </Icon>
+  );
+}
+
+export function AppleIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path
+        d="M16.2 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.15-2.8.85-3.5.85-.7 0-1.85-.83-3.05-.8-1.55.02-3 .9-3.8 2.3-1.62 2.82-.41 7 1.17 9.28.77 1.12 1.7 2.37 2.9 2.33 1.16-.05 1.6-.75 3-.75s1.8.75 3.03.72c1.25-.02 2.04-1.14 2.8-2.26.88-1.3 1.25-2.55 1.27-2.62-.03-.01-2.43-.93-2.42-3.72zM14 5.9c.63-.77 1.06-1.83.94-2.9-.91.04-2.01.61-2.67 1.37-.59.68-1.1 1.76-.96 2.8 1.01.08 2.05-.51 2.69-1.27z"
+        fill="currentColor"
+      />
+    </Icon>
+  );
+}

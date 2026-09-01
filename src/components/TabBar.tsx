@@ -4,41 +4,63 @@ import Link from "next/link";
 import {usePathname} from "next/navigation";
 import {TABS, type TabKey} from "@/config/app";
 import {cn} from "@/lib/cn";
-import {HomeIcon, StarIcon, WalletIcon} from "./ui/Icons";
+import {HomeIcon, NewsIcon, SearchIcon, UserIcon} from "./ui/Icons";
 
 const ICONS: Record<TabKey, (props: {className?: string}) => JSX.Element> = {
   home: HomeIcon,
-  watchlist: StarIcon,
-  profile: WalletIcon,
+  search: SearchIcon,
+  news: NewsIcon,
+  profile: UserIcon,
 };
 
+/**
+ * The primary navigation.
+ *
+ * A floating bar rather than a full-width one: it reads as a control sitting
+ * over the feed instead of a frame around it, and the content scrolling
+ * visibly under its blurred edges is what makes the app feel like a surface
+ * rather than a page.
+ *
+ * Icons only. Four destinations, each with a shape nobody has to read, and the
+ * labels stay in `aria-label` for anyone who does need them.
+ */
 export function TabBar() {
   const pathname = usePathname();
 
   return (
     <nav
       aria-label="Primary"
-      className="absolute inset-x-0 bottom-0 z-40 flex border-t border-hairline bg-card/90 px-2 pt-[9px] backdrop-blur-[16px] pb-[calc(9px+env(safe-area-inset-bottom))]"
+      className="pointer-events-none absolute inset-x-0 z-40 flex justify-center px-[22px] bottom-[calc(14px+env(safe-area-inset-bottom))]"
     >
-      {TABS.map((tab) => {
-        const Icon = ICONS[tab.key];
-        const active =
-          pathname === tab.href || pathname.startsWith(`${tab.href}/`);
-        return (
-          <Link
-            key={tab.key}
-            href={tab.href}
-            aria-current={active ? "page" : undefined}
-            className={cn(
-              "flex flex-1 flex-col items-center gap-[5px] py-1.5 transition-colors duration-200",
-              active ? "text-green-deep" : "text-faint",
-            )}
-          >
-            <Icon className="h-[22px] w-[22px]" />
-            <span className="text-[10.5px] font-bold">{tab.label}</span>
-          </Link>
-        );
-      })}
+      <div
+        className={cn(
+          "pointer-events-auto flex items-center gap-1 rounded-full p-1.5",
+          "border border-hairline bg-card/80 shadow-menu backdrop-blur-[22px]",
+        )}
+      >
+        {TABS.map((tab) => {
+          const Icon = ICONS[tab.key];
+          const active =
+            pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+          return (
+            <Link
+              key={tab.key}
+              href={tab.href}
+              aria-label={tab.label}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "grid h-[46px] w-[54px] place-items-center rounded-full",
+                "transition-[background-color,color,box-shadow] duration-200",
+                active
+                  ? "bg-[var(--overlay-wash-hover)] text-ink shadow-[0_6px_18px_-10px_rgba(0,200,5,0.7)]"
+                  : "text-faint hover:text-muted",
+              )}
+            >
+              <Icon className="h-[21px] w-[21px]" />
+            </Link>
+          );
+        })}
+      </div>
     </nav>
   );
 }

@@ -103,7 +103,7 @@ export function WalletControls({onNavigate}: {onNavigate?: () => void}) {
           {external ? (wallet.walletName ?? "Imported wallet") : "Your wallet"}
         </div>
         <div className="mt-1 flex items-center gap-1.5">
-          <span className="tnum min-w-0 flex-1 truncate text-[12px] font-semibold text-muted">
+          <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-muted">
             {destination ? shortAddress(destination) : "Setting up…"}
           </span>
           {destination ? (
