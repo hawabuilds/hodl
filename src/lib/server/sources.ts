@@ -12,6 +12,7 @@ import type {
 } from "@/lib/types";
 import * as seeded from "./market";
 import * as live from "./live/market";
+import * as gecko from "./live/geckoterminal";
 import {feedFor, type FeedQuery} from "./newsfeed";
 import {searchPeople} from "./social";
 
@@ -96,24 +97,48 @@ export async function fetchAsset(
 }
 
 /**
- * TODO(live): candles from the pool's swap events, bucketed to the timeframe.
- * For RWAs, the on-chain oracle round history gives the same shape.
+ * Candles, from GeckoTerminal's index of this chain.
+ *
+ * Not scanned from `Swap` logs: the RPC plan in use caps `eth_getLogs` at a
+ * ten-block range, and a backfill would run to millions of requests. Their
+ * daily series reaches back to the chain's first day, so a chart is complete
+ * the first time it is opened.
  */
 export async function fetchChart(
   asset: Asset,
   timeframe: Timeframe,
 ): Promise<SourceResult<ChartPoint[]>> {
+  try {
+    const target = await live.poolFor(asset.kind, asset.id);
+    if (target) {
+      const points = await gecko.candles(target.pool, timeframe);
+      if (points.length > 1) return {data: points, seeded: false};
+    }
+  } catch (error) {
+    console.error("live chart failed", error);
+  }
   return {data: seeded.chartFor(asset, timeframe), seeded: true};
 }
 
 /**
- * TODO(live): decoded Swap logs for the pool, newest first, with the maker
- * resolved back to an app profile where one exists.
+ * Recent fills for the asset's deepest pool, newest first.
+ *
+ * Same source and the same reason as the chart. GeckoTerminal returns the last
+ * 300 swaps per pool, which is far more tape than the panel shows.
  */
 export async function fetchTrades(
   asset: Asset,
   limit?: number,
 ): Promise<SourceResult<Trade[]>> {
+  try {
+    const target = await live.poolFor(asset.kind, asset.id);
+    if (target) {
+      const rows = await gecko.trades(target.pool, target.token, limit ?? 40);
+      if (rows.length > 0) return {data: rows, seeded: false};
+    }
+  } catch (error) {
+    console.error("live trades failed", error);
+  }
   return {data: seeded.tradesFor(asset, limit), seeded: true};
 }
 

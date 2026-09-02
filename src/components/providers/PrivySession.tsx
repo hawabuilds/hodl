@@ -3,6 +3,7 @@
 import {useCallback, useMemo, type ReactNode} from "react";
 import {PrivyProvider, usePrivy, useWallets} from "@privy-io/react-auth";
 import {useTheme} from "@/hooks/useTheme";
+import {robinhoodMainnet} from "@/config/chain";
 import {PRIVY_APP_ID} from "@/lib/env";
 import {SessionContext, type AppUser, type Session} from "@/lib/session";
 
@@ -18,6 +19,10 @@ export function PrivySessionProvider({children}: {children: ReactNode}) {
         embeddedWallets: {
           ethereum: {createOnLogin: "users-without-wallets"},
         },
+        // Without these an embedded wallet defaults to Ethereum mainnet, and
+        // every transaction would be signed for the wrong chain.
+        defaultChain: robinhoodMainnet,
+        supportedChains: [robinhoodMainnet],
         appearance: {
           theme,
           accentColor: "#00C805",

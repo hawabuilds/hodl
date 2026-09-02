@@ -276,3 +276,51 @@ export async function searchAssets(query: string): Promise<Asset[]> {
     .slice(0, 40)
     .map((row) => row.asset);
 }
+
+/**
+ * The pool an asset's chart and tape should read from, plus the token address
+ * whose side of each swap we care about.
+ *
+ * Reuses the pair data already cached for the feed, so resolving this costs
+ * nothing extra. GeckoTerminal and DexScreener agree on pool identifiers —
+ * both use the pool address on v3 and the 32-byte pool id on v4 — so a pair
+ * address from one is a valid pool for the other.
+ */
+export async function poolFor(
+  kind: "rwa" | "token",
+  id: string,
+): Promise<{pool: string; token: string} | null> {
+  const wanted = id.toLowerCase();
+  const [rwaSide, chainSide] = await Promise.all([rwaPairs(), communityPairs()]);
+  const all = [...rwaSide, ...chainSide];
+
+  if (kind === "rwa") {
+    const entry = RWA_BY_TICKER.get(wanted.toUpperCase());
+    if (!entry) return null;
+    const deepest = deepestByTicker(all).get(entry.ticker);
+    return deepest
+      ? {pool: deepest.pairAddress, token: entry.address.toLowerCase()}
+      : null;
+  }
+
+  let best: {pool: string; liq: number} | null = null;
+  for (const pair of all) {
+    const side = community(pair);
+    if (!side) continue;
+    const address = side.token.address.toLowerCase();
+    if (address !== wanted && side.token.symbol.toLowerCase() !== wanted) continue;
+    const liq = pair.liquidity?.usd ?? 0;
+    if (!best || liq > best.liq) best = {pool: pair.pairAddress, liq};
+  }
+
+  if (!best) return null;
+  const token = all
+    .map(community)
+    .find(
+      (side) =>
+        side &&
+        (side.token.address.toLowerCase() === wanted ||
+          side.token.symbol.toLowerCase() === wanted),
+    );
+  return token ? {pool: best.pool, token: token.token.address.toLowerCase()} : null;
+}
