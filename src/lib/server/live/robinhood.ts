@@ -165,3 +165,13 @@ export async function quoteFor(ticker: string): Promise<Quote | null> {
   const all = await quotes();
   return all.get(ticker.toUpperCase()) ?? null;
 }
+
+/**
+ * Quotes already in memory, without triggering a fetch.
+ *
+ * For callers that want prices if they are to hand but must not pay two hundred
+ * requests to get them — the reward scan being the one that taught us that.
+ */
+export function cachedQuotes(): Map<string, Quote> {
+  return stale<Map<string, Quote>>("rh:quotes") ?? new Map();
+}

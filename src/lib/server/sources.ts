@@ -13,6 +13,7 @@ import type {
 import * as seeded from "./market";
 import * as live from "./live/market";
 import * as gecko from "./live/geckoterminal";
+import * as headlines from "./live/news";
 import {feedFor, type FeedQuery} from "./newsfeed";
 import {searchPeople} from "./social";
 
@@ -143,12 +144,31 @@ export async function fetchTrades(
 }
 
 /**
- * TODO(live): a headline provider keyed by ticker. Until then the route flags
- * the response as sample data and the UI says so.
+ * Coverage for one stock token, on its chart page.
+ *
+ * Real wire copy from Finnhub. `seeded` going false is what removes the
+ * "sample headlines" banner the panel shows.
  */
 export async function fetchNews(
   asset: RwaAsset,
 ): Promise<SourceResult<NewsItem[]>> {
+  try {
+    const items = await headlines.newsForTicker(asset.ticker);
+    if (items.length > 0) {
+      return {
+        data: items.map((item) => ({
+          id: item.id,
+          title: item.body,
+          url: item.url,
+          source: item.source,
+          publishedAt: item.publishedAt,
+        })),
+        seeded: false,
+      };
+    }
+  } catch (error) {
+    console.error("live news failed", error);
+  }
   return {data: seeded.newsFor(asset), seeded: true};
 }
 
@@ -184,12 +204,25 @@ export async function searchUsers(
 /**
  * The news tab.
  *
- * TODO(live): a headline provider keyed by ticker for the coverage, and the X
- * API for the Robinhood accounts. `seeded` is what the UI reads to decide
- * whether to caveat the feed.
+ * Company news per ticker for the RWA side, and HOOD's own coverage for the
+ * Robinhood side — a better filter than a keyword match, because it is what the
+ * wires already tag.
+ *
+ * TODO(live): the account cards still carry no post text. That is deliberate
+ * until the X API is wired: inventing words beside a real person's name and a
+ * verified tick would be a fabricated record however the feed is labelled.
  */
 export async function fetchFeed(
   query: FeedQuery,
 ): Promise<SourceResult<FeedItem[]>> {
+  try {
+    const items = await headlines.feed(query.window, query.topic);
+    // Accounts alone are not a feed — if only they came back, the wire failed.
+    if (items.some((item) => item.kind === "article")) {
+      return {data: items, seeded: false};
+    }
+  } catch (error) {
+    console.error("live feed failed", error);
+  }
   return {data: feedFor(query), seeded: true};
 }
