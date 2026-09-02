@@ -136,23 +136,33 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
           <>
             <PairMarket base={asset.symbol} quote={asset.pairedTicker} />
             <TaxChip buyPct={asset.buyTaxPct} sellPct={asset.sellTaxPct} />
-            <a
-              href={asset.launchpad.tokenUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={`View on ${asset.launchpad.name}`}
-              className="flex items-center gap-1.5 rounded-[8px] bg-[var(--overlay-wash)] py-1 pl-1 pr-2 text-[11.5px] font-extrabold transition-colors hover:bg-[var(--overlay-wash-hover)]"
-            >
-              <LaunchpadMark launchpad={asset.launchpad} size={16} />
-              {asset.launchpad.name}
-              <ArrowUpRightIcon className="h-3 w-3 text-faint" />
-            </a>
+            {asset.launchpad ? (
+              <a
+                href={asset.launchpad.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Launched on ${asset.launchpad.name}`}
+                className="flex items-center gap-1.5 rounded-[8px] bg-[var(--overlay-wash)] py-1 pl-1 pr-2 text-[11.5px] font-extrabold transition-colors hover:bg-[var(--overlay-wash-hover)]"
+              >
+                <LaunchpadMark launchpad={asset.launchpad} size={16} />
+                {asset.launchpad.name}
+              </a>
+            ) : null}
           </>
         )}
-        <ContractChip address={contractAddress} />
         {asset.kind === "token" ? (
           <SocialRow socials={asset.socials} className="-my-1" />
         ) : null}
+      </div>
+
+      {/*
+        The contract sits on its own line rather than in the rail above. It is
+        the longest chip by far and the only one people copy rather than read,
+        so sharing a wrapping row with the pair, tax and launchpad pushed those
+        around depending on address length.
+      */}
+      <div className="mt-2 flex">
+        <ContractChip address={contractAddress} />
       </div>
 
       {asset.kind === "rwa" ? (

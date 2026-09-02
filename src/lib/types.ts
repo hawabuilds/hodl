@@ -20,10 +20,12 @@ export interface SocialLinks {
 export interface Launchpad {
   id: string;
   name: string;
-  /** Brand colour used to draw the mark when no logo file is bundled. */
+  /** Brand colour, used to draw the mark when no logo file is bundled. */
   color: string;
-  /** Where the launchpad lists this specific token. */
-  tokenUrl: string;
+  /** Bundled brand mark, served from `/public`. Null falls back to the colour. */
+  logoUrl: string | null;
+  /** This token's page on the launchpad. */
+  url: string;
 }
 
 /** An official Robinhood tokenized real-world asset. */
@@ -64,25 +66,64 @@ export interface TokenAsset {
   liquidityUsd: number;
   /**
    * Pool fees earned over the last 24 hours and paid back to liquidity
-   * providers. Ranks the Rewards filter on the feed.
+   * providers.
    */
   rewards24hUsd: number;
+  /**
+   * Whether this token's trading fees are routed back to the people holding
+   * it, rather than to the creator's wallet. What the Rewards filter selects
+   * on — see `server/live/holderRewards.ts`.
+   */
+  rewardsToHolders: boolean;
+  /**
+   * Volume and price move over each window the feed offers, so a filter set to
+   * "1h" ranks on the hour rather than re-slicing a day's figure.
+   */
+  windows: Record<FeedWindow, {volumeUsd: number; changePct: number}>;
   holders: number;
   createdAt: string;
   /** Ticker of the RWA on the other side of the pool. */
   pairedTicker: string;
   /**
-   * Transfer tax the token contract charges, in percent. Zero for most, and
-   * shown on the chart page either way — "no tax" is information a buyer wants
-   * as much as "5% tax" is.
+   * Whether the other side of the pool is an actual tokenized stock rather than
+   * a plain quote asset like WETH or USDG. "RWA related" means this.
    */
-  buyTaxPct: number;
-  sellTaxPct: number;
-  launchpad: Launchpad;
+  rwaPaired: boolean;
+  /**
+   * What a trade costs beyond the price, in percent: the pool's swap fee plus
+   * any fee-on-transfer the token charges in that direction.
+   *
+   * Null means not measured, which is not the same as zero and must never be
+   * shown as "none" — see `server/live/taxes.ts`. Only populated on a single
+   * asset, since the figure is read on a chart page rather than in the feed.
+   */
+  buyTaxPct: number | null;
+  sellTaxPct: number | null;
+  /**
+   * Who receives that tax, when the launchpad records it on-chain.
+   *
+   * Null where nothing publishes a split. Note there is no holder share in it:
+   * see `server/live/taxes.ts`.
+   */
+  feeSplit: {
+    basePct: number;
+    creatorPct: number;
+    buybackEnabled: boolean;
+  } | null;
+  /**
+   * The launchpad the token was deployed from, or null when it came from one
+   * this app cannot prove. Null is the common case and is not a gap to fill
+   * with a guess — see `server/live/launchpads.ts`.
+   */
+  launchpad: Launchpad | null;
   socials: SocialLinks;
   description: string;
   series: number[];
 }
+
+/** Windows the feed can be ranked and filtered over. */
+export const FEED_WINDOWS = ["5m", "1h", "6h", "24h"] as const;
+export type FeedWindow = (typeof FEED_WINDOWS)[number];
 
 export type Asset = RwaAsset | TokenAsset;
 
@@ -174,6 +215,10 @@ export interface FeedItem {
   /** Tickers the item concerns; rendered as chips through to the RWA page. */
   tickers: string[];
   topic: "rwa" | "robinhood";
+  /** Artwork from the publisher, when the story carries one. */
+  imageUrl: string | null;
+  /** The account's profile picture. Accounts only. */
+  avatarUrl: string | null;
   /** True while the item is a placeholder rather than something fetched. */
   sample: boolean;
 }

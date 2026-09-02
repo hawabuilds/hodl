@@ -1,5 +1,6 @@
 "use client";
 
+import {useArrivals} from "@/hooks/useArrivals";
 import {RH_MAINNET_ID, txUrlForChain} from "@/config/chain";
 import {cn} from "@/lib/cn";
 import {
@@ -34,6 +35,8 @@ export function TradesPanel({
   symbol: string;
   isLoading: boolean;
 }) {
+  const arrivals = useArrivals(trades.map((trade) => trade.id));
+
   if (isLoading && trades.length === 0) {
     return <PanelNote>Loading trades</PanelNote>;
   }
@@ -58,12 +61,14 @@ export function TradesPanel({
       <ul>
         {trades.map((trade) => {
           const buy = trade.side === "buy";
+          const fresh = arrivals.has(trade.id);
           return (
             <li
               key={trade.id}
               className={cn(
                 COLUMNS,
                 "px-[22px] py-[9px] transition-colors duration-150 hover:bg-[var(--overlay-wash)]",
+                fresh && "trade-in",
               )}
             >
               <div className="min-w-0">

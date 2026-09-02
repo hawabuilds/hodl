@@ -119,26 +119,41 @@ export function TypeBadge({
 }
 
 /**
- * Transfer tax charged by a token contract.
+ * What a trade costs beyond the price: the pool's swap fee plus any
+ * fee-on-transfer the token charges.
  *
- * Always rendered, including at zero. "No tax" is the answer a buyer is looking
- * for, and a chip that only appears on taxed tokens makes its absence
- * ambiguous — untaxed, or not checked?
+ * Three states, not two. "None" is a measurement that came back zero;
+ * "Unknown" is a measurement that could not be made. The chip used to collapse
+ * those together and told every visitor "No transfer tax" about tokens nothing
+ * had ever checked, which is the one thing it must not do.
  */
 export function TaxChip({
   buyPct,
   sellPct,
   className,
 }: {
-  buyPct: number;
-  sellPct: number;
+  buyPct: number | null;
+  sellPct: number | null;
   className?: string;
 }) {
+  const unmeasured = buyPct === null && sellPct === null;
   const free = buyPct === 0 && sellPct === 0;
+
+  const label = unmeasured
+    ? "Unknown"
+    : free
+      ? "None"
+      : `${fmtPct(buyPct)} / ${fmtPct(sellPct)}`;
+
+  const title = unmeasured
+    ? "Trading cost could not be measured for this token"
+    : free
+      ? "No swap fee and no transfer tax"
+      : `Buy costs ${fmtPct(buyPct)}, sell costs ${fmtPct(sellPct)} — pool fee plus any transfer tax`;
 
   return (
     <span
-      title={free ? "No transfer tax" : `Buy tax ${buyPct}%, sell tax ${sellPct}%`}
+      title={title}
       className={cn(
         "inline-flex shrink-0 items-center gap-1 rounded-[8px] px-2 py-1",
         "text-[11.5px] font-extrabold leading-none",
@@ -151,7 +166,12 @@ export function TaxChip({
       <span className={free ? "text-green-deep opacity-70" : "text-faint"}>
         Tax
       </span>
-      {free ? "None" : `${buyPct}% / ${sellPct}%`}
+      {label}
     </span>
   );
+}
+
+/** A percent, or an em dash where there is no measurement to show. */
+export function fmtPct(value: number | null): string {
+  return value === null ? "—" : `${value}%`;
 }

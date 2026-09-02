@@ -135,11 +135,16 @@ export async function fetchTrades(
     const target = await live.poolFor(asset.kind, asset.id);
     if (target) {
       const rows = await gecko.trades(target.pool, target.token, limit ?? 40);
-      if (rows.length > 0) return {data: rows, seeded: false};
+      // A real pool with nothing to show is an answer, not a failure. Falling
+      // back here meant a rate-limited fetch quietly replaced a live pool's
+      // tape with simulated fills — SPY and GLD were showing invented trades
+      // on their own chart pages, marked as though they were the market.
+      return {data: rows, seeded: false};
     }
   } catch (error) {
     console.error("live trades failed", error);
   }
+  // Only when no live pool could be identified at all.
   return {data: seeded.tradesFor(asset, limit), seeded: true};
 }
 
@@ -217,10 +222,15 @@ export async function fetchFeed(
 ): Promise<SourceResult<FeedItem[]>> {
   try {
     const items = await headlines.feed(query.window, query.topic);
-    // Accounts alone are not a feed — if only they came back, the wire failed.
-    if (items.some((item) => item.kind === "article")) {
-      return {data: items, seeded: false};
-    }
+    // A wire failure shows up as a feed with no articles in it, so a result
+    // that should carry headlines but does not falls through to seeded. The
+    // Posts tab is the exception: it is account posts by definition, and
+    // demanding an article there sent every real post back to the seeded feed.
+    const wireOk =
+      query.topic === "posts"
+        ? items.length > 0
+        : items.some((item) => item.kind === "article");
+    if (wireOk) return {data: items, seeded: false};
   } catch (error) {
     console.error("live feed failed", error);
   }

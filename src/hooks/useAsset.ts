@@ -1,6 +1,6 @@
 "use client";
 
-import {useQuery} from "@tanstack/react-query";
+import {keepPreviousData, useQuery} from "@tanstack/react-query";
 import type {
   Asset,
   AssetKind,
@@ -51,12 +51,18 @@ export function useTrades(kind: AssetKind, id: string, enabled: boolean) {
   const query = useQuery({
     queryKey: ["trades", kind, id],
     enabled,
-    // Fills are the one thing on the page that should feel live.
-    refetchInterval: 20_000,
+    // Paced by the server, which knows the upstream plan. Asking faster than
+    // its cache window only re-serves the same rows.
+    refetchInterval: (query) => query.state.data?.pollMs ?? 12_000,
+    // Refetching pauses while the tab is hidden, which is the default and is
+    // left alone deliberately — a backgrounded page has nobody watching.
+    // New fills should slide in under the existing ones rather than blanking
+    // the panel on every poll.
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const res = await fetch(`/api/asset/${kind}/${id}/trades`);
       if (!res.ok) throw new Error("Could not load recent trades.");
-      return (await res.json()) as {trades: Trade[]};
+      return (await res.json()) as {trades: Trade[]; pollMs?: number};
     },
   });
 

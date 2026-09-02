@@ -110,6 +110,8 @@ function buildFeed(now: number): FeedItem[] {
       ).toISOString(),
       tickers: [seed.ticker],
       topic: "rwa",
+      imageUrl: null,
+      avatarUrl: null,
       sample: true,
     });
   }
@@ -127,6 +129,8 @@ function buildFeed(now: number): FeedItem[] {
       ).toISOString(),
       tickers: [],
       topic: "robinhood",
+      imageUrl: null,
+      avatarUrl: null,
       sample: true,
     });
   }
@@ -144,6 +148,8 @@ function buildFeed(now: number): FeedItem[] {
       publishedAt: new Date(now - (i + 1) * 40 * 60_000).toISOString(),
       tickers: [],
       topic: "robinhood",
+      imageUrl: null,
+      avatarUrl: null,
       sample: true,
     });
   }

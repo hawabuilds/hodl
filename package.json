@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node --max-http-header-size=65536 node_modules/next/dist/bin/next dev",
     "build": "next build",
     "verify": "node scripts/verify-build.mjs",
-    "start": "next start",
+    "start": "node --max-http-header-size=65536 node_modules/next/dist/bin/next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },

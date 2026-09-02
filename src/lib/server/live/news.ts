@@ -1,6 +1,8 @@
 import type {FeedItem, NewsWindow, NewsTopic} from "@/lib/types";
 import {cached, getJson, stale} from "./cache";
 import {RWA_REGISTRY} from "./robinhood";
+import {posts} from "./x";
+import {ogImages} from "./og";
 
 /**
  * Finnhub, for the news tab.
@@ -56,6 +58,10 @@ function toFeedItem(
     publishedAt,
     tickers,
     topic,
+    // Finnhub sends an empty string when a story has no artwork, which would
+    // render as a broken image rather than fall back to the drawn cover.
+    imageUrl: article.image?.trim() ? article.image : null,
+    avatarUrl: null,
     sample: false,
   };
 }
@@ -122,72 +128,82 @@ async function companyNews(
 }
 
 /**
- * The Robinhood accounts, carried through from the seeded feed.
+ * Stories that share one image are showing an outlet logo, not a photograph.
  *
- * They stay text-free on purpose: these are real accounts belonging to real
- * people, and putting invented words beside a verified name would be a
- * fabricated record. The X API replaces the standing line with real posts; the
- * card is the same either way.
+ * The wire sends a house placeholder whenever a story has no artwork of its
+ * own — Yahoo's accounts for two-thirds of a typical batch — and forty-eight
+ * identical logos down a news feed reads worse than no pictures at all. Any
+ * image used by more than a couple of stories is treated as branding and
+ * dropped, which sends those cards to the drawn cover instead.
+ *
+ * Frequency rather than a list of known URLs: outlets change their
+ * placeholders, and a hard-coded list silently stops working when they do.
  */
-const ACCOUNTS: FeedItem[] = [
-  {
-    id: "account-RobinhoodApp",
-    kind: "account",
-    body: "Product and listing announcements post here first.",
-    url: "https://x.com/RobinhoodApp",
-    source: "Robinhood",
-    handle: "RobinhoodApp",
-    publishedAt: new Date(Date.now() - 40 * 60_000).toISOString(),
-    tickers: [],
-    topic: "robinhood",
-    sample: true,
-  },
-  {
-    id: "account-RobinhoodCrypto",
-    kind: "account",
-    body: "Chain, token and custody updates.",
-    url: "https://x.com/RobinhoodCrypto",
-    source: "Robinhood Crypto",
-    handle: "RobinhoodCrypto",
-    publishedAt: new Date(Date.now() - 80 * 60_000).toISOString(),
-    tickers: [],
-    topic: "robinhood",
-    sample: true,
-  },
-  {
-    id: "account-vladtenev",
-    kind: "account",
-    body: "Co-founder and CEO. Long-form threads on tokenization.",
-    url: "https://x.com/vladtenev",
-    source: "Vlad Tenev",
-    handle: "vladtenev",
-    publishedAt: new Date(Date.now() - 120 * 60_000).toISOString(),
-    tickers: [],
-    topic: "robinhood",
-    sample: true,
-  },
-];
+const SHARED_IMAGE_LIMIT = 2;
+
+/**
+ * How many articles get their page fetched for a real lead image.
+ *
+ * Covers the whole feed rather than the first page of it: a reader scrolling
+ * past forty stories was hitting a wall of drawn covers. The cap only bites on
+ * the first build after a cold start — the day-long cache makes every later
+ * refresh free — and the fetches run eight at a time behind one request.
+ */
+const OG_LOOKUPS = 90;
+
+function stripOutletLogos(items: FeedItem[]): FeedItem[] {
+  const uses = new Map<string, number>();
+  for (const item of items) {
+    if (item.imageUrl) uses.set(item.imageUrl, (uses.get(item.imageUrl) ?? 0) + 1);
+  }
+
+  return items.map((item) =>
+    item.imageUrl && (uses.get(item.imageUrl) ?? 0) > SHARED_IMAGE_LIMIT
+      ? {...item, imageUrl: null}
+      : item,
+  );
+}
 
 async function buildFeed(): Promise<FeedItem[]> {
-  if (!process.env.NEWS_API_KEY) return [];
-
   // Coverage is finite, so spend it on the names people actually open.
-  const batches = await Promise.all([
-    companyNews("HOOD", "robinhood", []).catch(() => []),
-    ...RWA_REGISTRY.slice(0, COVERED).map((entry) =>
-      companyNews(entry.ticker, "rwa", [entry.ticker], entry.name)
-        .then((items) => items.slice(0, 4))
-        .catch(() => []),
-    ),
+  const [wire, accountPosts] = await Promise.all([
+    process.env.NEWS_API_KEY
+      ? Promise.all([
+          companyNews("HOOD", "robinhood", []).catch(() => []),
+          ...RWA_REGISTRY.slice(0, COVERED).map((entry) =>
+            companyNews(entry.ticker, "rwa", [entry.ticker], entry.name)
+              .then((items) => items.slice(0, 4))
+              .catch(() => []),
+          ),
+        ])
+      : Promise.resolve([] as FeedItem[][]),
+    // Cached on its own fifteen-minute window, so a headline refresh does not
+    // spend an X request it does not need.
+    posts().catch(() => [] as FeedItem[]),
   ]);
 
   const seen = new Map<string, FeedItem>();
-  for (const item of batches.flat()) {
+  for (const item of [...wire.flat(), ...accountPosts]) {
     if (!seen.has(item.id)) seen.set(item.id, item);
   }
 
-  return [...seen.values(), ...ACCOUNTS].sort(
+  const items = stripOutletLogos([...seen.values()]).sort(
     (a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt),
+  );
+
+  // The article's own lead image, read from its OpenGraph tags. Only for the
+  // newest stories: the rest are far down a feed nobody scrolls to, and each
+  // one costs a page fetch. Cached for a day, so a refresh pays nothing.
+  const wanted = items
+    .filter((item) => item.kind === "article")
+    .slice(0, OG_LOOKUPS)
+    .map((item) => item.url);
+
+  const images = await ogImages(wanted);
+  if (images.size === 0) return items;
+
+  return items.map((item) =>
+    images.has(item.url) ? {...item, imageUrl: images.get(item.url)!} : item,
   );
 }
 

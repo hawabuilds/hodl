@@ -174,3 +174,28 @@ body {
     animation-iteration-count: 1 !important;
   }
 }
+
+/*
+ * A fill landing on the tape.
+ *
+ * Movement only. A coloured wash was tried and read as flashing: the side is
+ * already coloured on the row itself, so tinting the whole line said the same
+ * thing twice and drew the eye harder than an arrival deserves.
+ *
+ * Reduced motion is handled globally above, which leaves the row to appear
+ * without the slide.
+ */
+@keyframes trade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.trade-in {
+  animation: trade-in 220ms ease-out;
+}

@@ -227,9 +227,19 @@ export async function scanRewards(maxBlocks = 300): Promise<RewardScan> {
     // Attribution to a specific token is the remaining gap — see the runbook.
     // Rows are written with the distributor in both columns so the evidence is
     // kept, and the Rewards ranking only reads rows whose token is listed.
-    await db()
+    const {error} = await db()
       .from("reward_distributions")
       .upsert(distributions, {onConflict: "tx_hash", ignoreDuplicates: true});
+
+    // Not swallowed. This write silently rejected every row for weeks —
+    // `token_address` carries a foreign key to `tokens`, which nothing
+    // populates, so each batch failed the constraint while the scan went on
+    // reporting how many distributions it had "written".
+    if (error) {
+      throw new Error(
+        `reward_distributions write failed (${error.code}): ${error.message}`,
+      );
+    }
   }
 
   await db()

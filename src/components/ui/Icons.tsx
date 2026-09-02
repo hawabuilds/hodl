@@ -23,6 +23,23 @@ const stroke = {
   strokeLinejoin: "round" as const,
 };
 
+/**
+ * Sliders, not a funnel.
+ *
+ * The feed's filters are ranges rather than a set of things to include, and a
+ * funnel reads as "narrow this list" where sliders read as "set the bounds" —
+ * which is what the sheet behind it actually offers.
+ */
+export function FilterIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 7h10M18 7h2M4 17h4M12 17h8" {...stroke} />
+      <circle cx="16" cy="7" r="2.2" {...stroke} />
+      <circle cx="10" cy="17" r="2.2" {...stroke} />
+    </Icon>
+  );
+}
+
 export function ArrowUpRightIcon(props: IconProps) {
   return (
     <Icon {...props}>

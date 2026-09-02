@@ -3,7 +3,6 @@
 import {useEffect, useState} from "react";
 import Link from "next/link";
 import {useQuery} from "@tanstack/react-query";
-import {CoverArt} from "@/components/CoverArt";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {Avatar} from "@/components/ui/Avatar";
 import {VerifiedTick} from "@/components/ui/Badges";
@@ -183,38 +182,82 @@ function TopicChip({topic}: {topic: FeedItem["topic"]}) {
   );
 }
 
+/**
+ * A story's picture, or nothing.
+ *
+ * Publishers' image URLs rot, so a load failure falls back to no picture
+ * rather than a broken one — and deliberately not to generated artwork. Around
+ * a third of stories have no photograph to show, and filling those with a
+ * coloured gradient made the feed look padded: the same abstract block over
+ * and over reads as a placeholder, because it is one. A headline on its own is
+ * what a news app does with a story that has no art.
+ */
+function StoryImage({
+  item,
+  className,
+}: {
+  item: FeedItem;
+  className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  if (!item.imageUrl || failed) return null;
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={item.imageUrl}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={cn("object-cover", className)}
+    />
+  );
+}
+
 /** The story at the top of the section, given the room a lead deserves. */
 function LeadStory({item}: {item: FeedItem}) {
   return (
-    <article className="overflow-hidden rounded-[20px] border border-hairline bg-card shadow-card">
-      <div className="relative">
-        <CoverArt
-          seed={item.id}
-          label={item.tickers[0]}
-          brand={item.topic === "robinhood"}
-          className="h-[176px] w-full"
-          labelClassName="text-[13px]"
-        />
-        <div className="absolute left-3.5 top-3.5">
-          <TopicChip topic={item.topic} />
+    <a
+      href={item.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block overflow-hidden rounded-[20px] border border-hairline bg-card shadow-card transition-colors hover:border-[var(--border-hover-strong)]"
+    >
+      {item.imageUrl ? (
+        <div className="relative">
+          <StoryImage item={item} className="h-[176px] w-full" />
+          <div className="absolute left-3.5 top-3.5">
+            <TopicChip topic={item.topic} />
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div className="p-4">
+        {item.imageUrl ? null : (
+          <div className="mb-2.5">
+            <TopicChip topic={item.topic} />
+          </div>
+        )}
         <h3 className="text-[19px] font-extrabold leading-[1.24] tracking-[-0.028em]">
           {item.body}
         </h3>
         <ByLine item={item} className="mt-2.5" />
         <TickerChips tickers={item.tickers} className="mt-3" />
       </div>
-    </article>
+    </a>
   );
 }
 
 function StoryRow({item}: {item: FeedItem}) {
   return (
     <li>
-      <article className="flex items-start gap-3.5 px-[22px] py-3.5 transition-colors duration-150 hover:bg-[var(--overlay-wash)]">
+      <a
+        href={item.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-start gap-3.5 px-[22px] py-3.5 transition-colors duration-150 hover:bg-[var(--overlay-wash)]"
+      >
         <div className="min-w-0 flex-1">
           <TopicChip topic={item.topic} />
           <h3 className="mt-2 line-clamp-3 text-[15px] font-bold leading-[1.34] tracking-[-0.018em]">
@@ -223,13 +266,11 @@ function StoryRow({item}: {item: FeedItem}) {
           <ByLine item={item} className="mt-2" />
         </div>
 
-        <CoverArt
-          seed={item.id}
-          label={item.tickers[0]}
-          brand={item.topic === "robinhood"}
+        <StoryImage
+          item={item}
           className="h-[78px] w-[78px] shrink-0 rounded-[14px]"
         />
-      </article>
+      </a>
     </li>
   );
 }
@@ -283,10 +324,10 @@ function TickerChips({
 /**
  * A primary source rather than a story.
  *
- * Carries no post text at all: these are real accounts belonging to real
- * people, and inventing something for them to have said would be a fabricated
- * record however clearly the rest of the feed is labelled. The card links out
- * so the actual account is one tap away in the meantime.
+ * Carries the account's most recent post, fetched from X, and links to that
+ * post rather than to the profile. Nothing here is written for them: these are
+ * real accounts belonging to real people, so the card shows what was actually
+ * said or it shows nothing at all.
  */
 function SourceCard({item}: {item: FeedItem}) {
   return (
@@ -301,7 +342,7 @@ function SourceCard({item}: {item: FeedItem}) {
       )}
     >
       <div className="flex items-center gap-2">
-        <Avatar name={item.source} size={32} />
+        <Avatar name={item.source} src={item.avatarUrl} size={32} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1">
             <span className="truncate text-[13px] font-extrabold tracking-[-0.015em]">

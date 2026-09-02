@@ -3,6 +3,12 @@
 import {useMemo, useState} from "react";
 import {AssetList} from "@/components/AssetRow";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
+import {
+  FeedFilterButton,
+  NO_FILTERS,
+  passesFilters,
+  type FeedFilterState,
+} from "@/components/FeedFilters";
 import {HomeTabs, type HomeTab} from "@/components/HomeTabs";
 import {StarIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
@@ -17,9 +23,17 @@ type WatchFilter = "all" | "token" | "rwa";
 
 const TOKEN_SORTS: FilterOption<TokenSort>[] = [
   {value: "trending", label: "Trending"},
-  {value: "new", label: "New"},
+  {
+    value: "new",
+    label: "New",
+    title: "Freshly graduated launchpad tokens trading against a stock token",
+  },
   {value: "marketCap", label: "Market cap"},
-  {value: "rewards", label: "Rewards", title: "Ranked by pool fees paid out over 24h"},
+  {
+    value: "rewards",
+    label: "Rewards",
+    title: "Tokens routing their trading fees back to holders",
+  },
 ];
 
 const RWA_SORTS: FilterOption<RwaSort>[] = [
@@ -39,6 +53,7 @@ export default function HomePage() {
   const [rwaSort, setRwaSort] = useState<RwaSort>("marketCap");
   const [sector, setSector] = useState<SectorId | "all">("all");
   const [watchFilter, setWatchFilter] = useState<WatchFilter>("all");
+  const [filters, setFilters] = useState<FeedFilterState>(NO_FILTERS);
 
   const market = useMarket();
   const watchlist = useWatchlistAssets(tab === "watchlist");
@@ -61,20 +76,39 @@ export default function HomePage() {
   }, [market.rwas]);
 
   const tokens = useMemo(() => {
-    const list = [...market.tokens];
+    const list = market.tokens.filter((token) => passesFilters(token, filters));
+
     switch (tokenSort) {
       case "new":
-        return list.sort(
-          (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
-        );
+        // Newest is not "every token, ordered by age". A token gets a pool at
+        // the moment it graduates off its launchpad's bonding curve, so its
+        // pool age IS its graduation time — and this view is only about
+        // graduations from a launchpad we can prove, into a stock-token pair.
+        // Everything else on the chain would bury them.
+        return list
+          .filter((token) => token.launchpad !== null && token.rwaPaired)
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       case "marketCap":
         return list.sort((a, b) => b.marketCapUsd - a.marketCapUsd);
       case "rewards":
-        return list.sort((a, b) => b.rewards24hUsd - a.rewards24hUsd);
+        // Tokens whose trading fees are routed back to holders, read from the
+        // launch's fee recipient. Ordered by volume, because that is what the
+        // fee is a share of — the payout amounts themselves are not indexed.
+        return list
+          .filter((token) => token.rewardsToHolders)
+          .sort(
+            (a, b) =>
+              b.windows[filters.window].volumeUsd -
+              a.windows[filters.window].volumeUsd,
+          );
       default:
-        return list.sort((a, b) => b.volume24hUsd - a.volume24hUsd);
+        return list.sort(
+          (a, b) =>
+            b.windows[filters.window].volumeUsd -
+            a.windows[filters.window].volumeUsd,
+        );
     }
-  }, [market.tokens, tokenSort]);
+  }, [market.tokens, tokenSort, filters]);
 
   const rwas = useMemo(() => {
     const list =
@@ -117,6 +151,9 @@ export default function HomePage() {
             options={TOKEN_SORTS}
             value={tokenSort}
             onChange={setTokenSort}
+            lead={
+              <FeedFilterButton state={filters} onChange={setFilters} />
+            }
           />
         ) : tab === "rwas" ? (
           <div className="flex flex-col gap-2.5">
@@ -150,9 +187,16 @@ export default function HomePage() {
           {market.error.message}
         </p>
       ) : showing.length === 0 ? (
-        <EmptyFeed tab={tab} watching={watchlist.count > 0} />
+        <EmptyFeed
+          tab={tab}
+          watching={watchlist.count > 0}
+          reason={tab === "tokens" ? tokenSort : undefined}
+        />
       ) : (
-        <AssetList assets={showing} />
+        <AssetList
+          assets={showing}
+          markArrivals={tab === "tokens" && tokenSort === "new"}
+        />
       )}
 
       {market.seeded && !market.isLoading ? (
@@ -165,7 +209,15 @@ export default function HomePage() {
   );
 }
 
-function EmptyFeed({tab, watching}: {tab: HomeTab; watching: boolean}) {
+function EmptyFeed({
+  tab,
+  watching,
+  reason,
+}: {
+  tab: HomeTab;
+  watching: boolean;
+  reason?: string;
+}) {
   if (tab === "watchlist" && !watching) {
     return (
       <div className="px-6 py-12 text-center">
@@ -175,6 +227,17 @@ function EmptyFeed({tab, watching}: {tab: HomeTab; watching: boolean}) {
         <p className="mt-4 text-[14px] font-bold">Nothing watched yet</p>
         <p className="mx-auto mt-1.5 max-w-[30ch] text-[13px] leading-[1.5] text-muted">
           Tap the star on any ticker or token to keep it here.
+        </p>
+      </div>
+    );
+  }
+
+  if (reason === "rewards") {
+    return (
+      <div className="px-6 py-12 text-center">
+        <p className="text-[14px] font-bold">No fee-sharing tokens here</p>
+        <p className="mx-auto mt-1.5 max-w-[34ch] text-[13px] leading-[1.5] text-muted">
+          Nothing in the current feed routes its trading fees back to holders.
         </p>
       </div>
     );

@@ -13,15 +13,57 @@ import {cached, stale} from "./cache";
  * chain reach back to 20 July 2026, which is as far back as the chain goes, so
  * charts are complete on the first render rather than filling in from empty.
  *
- * Free and unauthenticated, at roughly 30 calls a minute. Everything here is
- * cached hard and backs off on 429 rather than hammering it.
+ * Runs against the paid CoinGecko onchain API when a key is configured, and
+ * against the free GeckoTerminal endpoint when one is not. The two serve the
+ * same paths under different origins, so only the base and the auth header
+ * differ — everything below is written once.
+ *
+ * The key is what makes the tape watchable. Unauthenticated the ceiling is
+ * roughly thirty calls a minute for the whole app, which two open pools can
+ * exhaust on their own; the rejections that follow come back as an empty tape
+ * rather than an error, which is indistinguishable from a quiet pool.
  */
 
-const BASE = "https://api.geckoterminal.com/api/v2";
+/** Set to a CoinGecko API key to use the paid tier. */
+const API_KEY = process.env.COINGECKO_API_KEY?.trim();
+
+/**
+ * Demo keys live on a different host to paid ones and are rejected by the
+ * other, so the plan is explicit rather than guessed from the key's shape.
+ */
+const IS_DEMO = process.env.COINGECKO_API_PLAN?.trim().toLowerCase() === "demo";
+
+const BASE = API_KEY
+  ? IS_DEMO
+    ? "https://api.coingecko.com/api/v3/onchain"
+    : "https://pro-api.coingecko.com/api/v3/onchain"
+  : "https://api.geckoterminal.com/api/v2";
+
+function authHeaders(): Record<string, string> {
+  if (!API_KEY) return {};
+  return {[IS_DEMO ? "x-cg-demo-api-key" : "x-cg-pro-api-key"]: API_KEY};
+}
+
+/** Whether the paid tier is in use, which is what the cache windows key off. */
+export const AUTHENTICATED = Boolean(API_KEY);
+
 const NETWORK = "robinhood";
 
-const CANDLE_TTL_MS = 60_000;
-const TRADE_TTL_MS = 20_000;
+const CANDLE_TTL_MS = API_KEY ? 20_000 : 60_000;
+/**
+ * The tape's cache window.
+ *
+ * The trades panel is meant to be watched the way an explorer's is, so on a
+ * paid key this sits at two seconds — roughly thirty calls a minute for a pool
+ * someone has open, against a ceiling in the hundreds.
+ *
+ * Unauthenticated it has to be twelve: the free ceiling is about thirty calls a
+ * minute for the whole app, and this window is per pool, so anything faster
+ * starves every other pool that is open. The rejections that followed did not
+ * surface as errors — they returned an empty tape, indistinguishable from a
+ * quiet pool.
+ */
+const TRADE_TTL_MS = API_KEY ? 2_000 : 12_000;
 const POOL_TTL_MS = 30 * 60_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,12 +79,20 @@ async function get<T>(path: string, attempts = 3): Promise<T | null> {
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const res = await fetch(`${BASE}${path}`, {
-        headers: {accept: "application/json"},
+        headers: {accept: "application/json", ...authHeaders()},
         cache: "no-store",
       });
       if (res.status === 429) {
         await sleep(1200 * (attempt + 1));
         continue;
+      }
+      if (res.status === 401 || res.status === 403) {
+        // Worth saying out loud: a rejected key otherwise looks exactly like a
+        // quiet pool, and the app would run on the paid path returning nothing.
+        console.error(
+          `coingecko rejected the API key (${res.status}) — check COINGECKO_API_KEY and COINGECKO_API_PLAN`,
+        );
+        return null;
       }
       if (!res.ok) return null;
       return (await res.json()) as T;

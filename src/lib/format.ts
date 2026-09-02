@@ -67,18 +67,26 @@ export function shortAddress(address: string, lead = 6): string {
 }
 
 /** "3m ago" — used on trades, comments and news. */
+/**
+ * How long ago something happened.
+ *
+ * Floors every step. Rounding made this both wrong and unstable: a fill ninety
+ * seconds old read "2m ago", and as the clock advanced it flipped between "1m"
+ * and "2m" on every re-render. Elapsed time only ever counts what has fully
+ * passed, so ninety seconds is one minute until the second one completes.
+ */
 export function relativeTime(iso: string, now: number = Date.now()): string {
-  const seconds = Math.round((now - new Date(iso).getTime()) / 1000);
+  const seconds = Math.floor((now - new Date(iso).getTime()) / 1000);
   if (!Number.isFinite(seconds)) return "";
   if (seconds < 10) return "now";
   if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
+  const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
+  const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
+  const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
-  return `${Math.round(days / 30)}mo ago`;
+  return `${Math.floor(days / 30)}mo ago`;
 }
 
 /** Comments are theses, so they carry an absolute date and time, not "2h ago". */

@@ -1,7 +1,9 @@
 import type {SectorId} from "@/lib/sectors";
 import type {Asset, RwaAsset, TokenAsset} from "@/lib/types";
 import {
+  allRwaPairs,
   community,
+  pairsForToken,
   communityPairs,
   rwaPairs,
   seriesFrom,
@@ -9,7 +11,9 @@ import {
   type DexPair,
 } from "./dexscreener";
 import {quotes, RWA_BY_ADDRESS, RWA_BY_TICKER, RWA_REGISTRY} from "./robinhood";
-import {launchpadFor} from "../universe";
+import {launchpadsFor} from "./launchpads";
+import {holderRewardsFor} from "./holderRewards";
+import {taxesFor} from "./taxes";
 import {totalSupplies} from "./chain";
 
 /**
@@ -158,10 +162,18 @@ const TOKENS_REQUIRE_RWA_PAIR = false;
 const MIN_TOKEN_LIQUIDITY_USD = 1_000;
 
 export async function listTokens(): Promise<TokenAsset[]> {
-  const [rwaSide, chainSide] = await Promise.all([rwaPairs(), communityPairs()]);
+  // The sweep is the complete set; the other two are kept because they also
+  // surface tokens paired against a quote asset rather than a stock token.
+  const [sweep, rwaSide, chainSide] = await Promise.all([
+    allRwaPairs(),
+    rwaPairs(),
+    communityPairs(),
+  ]);
 
   const pairs = new Map<string, DexPair>();
-  for (const pair of [...rwaSide, ...chainSide]) pairs.set(pair.pairAddress, pair);
+  for (const pair of [...sweep, ...rwaSide, ...chainSide]) {
+    pairs.set(pair.pairAddress, pair);
+  }
 
   // One row per token, from its deepest pool.
   const best = new Map<string, ReturnType<typeof community>>();
@@ -178,6 +190,13 @@ export async function listTokens(): Promise<TokenAsset[]> {
     const held = best.get(address);
     if (!held || liq > (held.pair.liquidity?.usd ?? 0)) best.set(address, side);
   }
+
+  // One multicall each for the whole page rather than a lookup per row.
+  const addresses = [...best.keys()];
+  const [launchpads, payingHolders] = await Promise.all([
+    launchpadsFor(addresses),
+    holderRewardsFor(addresses),
+  ]);
 
   const out: TokenAsset[] = [];
 
@@ -201,18 +220,40 @@ export async function listTokens(): Promise<TokenAsset[]> {
       priceUsd: round(priceUsd, 10),
       changePct: round(pair.priceChange?.h24 ?? 0, 2),
       volume24hUsd: Math.round(pair.volume?.h24 ?? 0),
+      windows: {
+        "5m": {
+          volumeUsd: Math.round(pair.volume?.m5 ?? 0),
+          changePct: round(pair.priceChange?.m5 ?? 0, 2),
+        },
+        "1h": {
+          volumeUsd: Math.round(pair.volume?.h1 ?? 0),
+          changePct: round(pair.priceChange?.h1 ?? 0, 2),
+        },
+        "6h": {
+          volumeUsd: Math.round(pair.volume?.h6 ?? 0),
+          changePct: round(pair.priceChange?.h6 ?? 0, 2),
+        },
+        "24h": {
+          volumeUsd: Math.round(pair.volume?.h24 ?? 0),
+          changePct: round(pair.priceChange?.h24 ?? 0, 2),
+        },
+      },
       marketCapUsd: Math.round(pair.marketCap ?? pair.fdv ?? 0),
       liquidityUsd: Math.round(pair.liquidity?.usd ?? 0),
       // Real detection is Part 06 and needs an RPC. Zero means "not measured",
       // not "none" — the Rewards filter stays inert until that lands.
       rewards24hUsd: 0,
+      rewardsToHolders: payingHolders.has(address),
       holders: 0,
       createdAt: new Date(pair.pairCreatedAt ?? Date.now()).toISOString(),
       pairedTicker: quoteSymbol,
-      // Transfer taxes need simulation against an RPC. Part 05 step 4.
-      buyTaxPct: 0,
-      sellTaxPct: 0,
-      launchpad: launchpadFor(version === "v4" ? "rhpad" : "tickerhouse", address),
+      rwaPaired: side.rwaPaired,
+      // Measured per asset in `getAsset`, not here: it costs several calls a
+      // token and is only ever read on a chart page.
+      buyTaxPct: null,
+      sellTaxPct: null,
+      feeSplit: null,
+      launchpad: launchpads.get(address) ?? null,
       socials: socialsFrom(pair),
       description: `${token.name} trades against ${quoteSymbol} on Uniswap ${version}.`,
       series: series.map((v) => round(v, 10)),
@@ -235,13 +276,29 @@ export async function getAsset(
   }
 
   const all = await listTokens();
-  return (
+  const asset =
     all.find(
       (asset) =>
         asset.id.toLowerCase() === wanted ||
         asset.symbol.toLowerCase() === wanted,
-    ) ?? null
+    ) ?? null;
+
+  if (!asset) return null;
+
+  // Tax is resolved here rather than in the feed: it costs a few calls per
+  // token, and the figure is only ever read on this page. The pool is needed
+  // because a Pons launch carries its tax on the pool rather than the token.
+  const taxes = await taxesFor(
+    asset.address,
+    await poolIdsFor(asset.address),
+    asset.launchpad?.id ?? null,
   );
+  return {
+    ...asset,
+    buyTaxPct: taxes.buyPct,
+    sellTaxPct: taxes.sellPct,
+    feeSplit: taxes.split,
+  };
 }
 
 /** Same ranking as the seeded search, over the live sets. */
@@ -297,24 +354,34 @@ export async function poolFor(
   if (kind === "rwa") {
     const entry = RWA_BY_TICKER.get(wanted.toUpperCase());
     if (!entry) return null;
-    const deepest = deepestByTicker(all).get(entry.ticker);
-    return deepest
-      ? {pool: deepest.pairAddress, token: entry.address.toLowerCase()}
-      : null;
+    const address = entry.address.toLowerCase();
+
+    // The complete pool set for this stock token. The feed's discovery pass is
+    // capped, and picking from it sent whole tickers to the wrong pool or to
+    // no pool at all — AAPL and SPY had no live pool in it and fell all the
+    // way back to simulated trades on their own chart pages.
+    const pools = await pairsForToken(address);
+    const candidates = pools.length > 0 ? pools : all;
+
+    // Base side only. `priceUsd` and a trade's buy/sell sense describe the
+    // pair's base token, so reading a pool that quotes the other way round
+    // reports the counterparty's trade, inverted.
+    const deepest = candidates
+      .filter((pair) => pair.baseToken?.address?.toLowerCase() === address)
+      .reduce<DexPair | null>(
+        (best, pair) =>
+          !best || (pair.liquidity?.usd ?? 0) > (best.liquidity?.usd ?? 0)
+            ? pair
+            : best,
+        null,
+      );
+
+    return deepest ? {pool: deepest.pairAddress, token: address} : null;
   }
 
-  let best: {pool: string; liq: number} | null = null;
-  for (const pair of all) {
-    const side = community(pair);
-    if (!side) continue;
-    const address = side.token.address.toLowerCase();
-    if (address !== wanted && side.token.symbol.toLowerCase() !== wanted) continue;
-    const liq = pair.liquidity?.usd ?? 0;
-    if (!best || liq > best.liq) best = {pool: pair.pairAddress, liq};
-  }
-
-  if (!best) return null;
-  const token = all
+  // Resolve a symbol to its contract using the discovery pass, then ask
+  // DexScreener for that contract's pools directly.
+  const known = all
     .map(community)
     .find(
       (side) =>
@@ -322,5 +389,62 @@ export async function poolFor(
         (side.token.address.toLowerCase() === wanted ||
           side.token.symbol.toLowerCase() === wanted),
     );
-  return token ? {pool: best.pool, token: token.token.address.toLowerCase()} : null;
+  const address = known?.token.address.toLowerCase() ?? wanted;
+
+  // The complete pool set for this token, not the subset discovery returned.
+  // The deepest pool the feed pass happened to see is not always the deepest
+  // one, and trades and candles have to come from a real market.
+  const pools = await pairsForToken(address);
+  const candidates = pools.length > 0 ? pools : all;
+
+  const mine = candidates.filter((pair) => {
+    const base = pair.baseToken?.address?.toLowerCase();
+    const quote = pair.quoteToken?.address?.toLowerCase();
+    return base === address || quote === address;
+  });
+
+  const againstStock = (pair: DexPair): boolean => {
+    const base = pair.baseToken?.address?.toLowerCase();
+    const quote = pair.quoteToken?.address?.toLowerCase();
+    const other = base === address ? quote : base;
+    return other ? RWA_BY_ADDRESS.has(other) : false;
+  };
+
+  // A token paired against a stock token is here *for* that pairing, so its
+  // page shows that market even when a stablecoin pool is deeper. UBIK trades
+  // more against USDG than against GLD, but GLD is the pair it exists for.
+  // Tokens with no stock pair fall back to their deepest pool.
+  const stockPairs = mine.filter(againstStock);
+  const preferred = stockPairs.length > 0 ? stockPairs : mine;
+
+  const deepest = preferred.reduce<DexPair | null>(
+    (best, pair) =>
+      !best || (pair.liquidity?.usd ?? 0) > (best.liquidity?.usd ?? 0)
+        ? pair
+        : best,
+    null,
+  );
+
+  if (!deepest) return null;
+  return {pool: deepest.pairAddress, token: address};
+}
+
+/**
+ * Every pool id for a token, deepest first.
+ *
+ * The fee record for a launch lives on the pool the launchpad created, which
+ * is not always the pool a trader would call the main one, so anything reading
+ * launch config has to look across all of them.
+ */
+export async function poolIdsFor(address: string): Promise<string[]> {
+  const wanted = address.toLowerCase();
+  const pools = await pairsForToken(wanted);
+  return pools
+    .filter((pair) => {
+      const base = pair.baseToken?.address?.toLowerCase();
+      const quote = pair.quoteToken?.address?.toLowerCase();
+      return base === wanted || quote === wanted;
+    })
+    .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))
+    .map((pair) => pair.pairAddress);
 }

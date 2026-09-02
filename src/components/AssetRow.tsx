@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import {useArrivals} from "@/hooks/useArrivals";
 import {cn} from "@/lib/cn";
 import {compactMoney, percent, price as fmtPrice} from "@/lib/format";
 import {SECTORS} from "@/lib/sectors";
@@ -24,7 +25,7 @@ const SECTOR_LABEL = new Map(SECTORS.map((sector) => [sector.id, sector.label]))
  * the sector rather than pool volume, because that is what a stock is grouped
  * by.
  */
-export function AssetRow({asset}: {asset: Asset}) {
+export function AssetRow({asset, fresh}: {asset: Asset; fresh?: boolean}) {
   const positive = asset.changePct >= 0;
   const rwa = asset.kind === "rwa";
   const symbol = rwa ? asset.ticker : asset.symbol;
@@ -32,7 +33,10 @@ export function AssetRow({asset}: {asset: Asset}) {
   return (
     <Link
       href={assetHref(asset)}
-      className="flex items-center gap-3 px-[22px] py-[13px] transition-colors duration-150 hover:bg-[var(--overlay-wash)]"
+      className={cn(
+        "flex items-center gap-3 px-[22px] py-[13px] transition-colors duration-150 hover:bg-[var(--overlay-wash)]",
+        fresh && "trade-in",
+      )}
     >
       {rwa ? null : <Avatar name={symbol} src={asset.imageUrl} size={40} />}
 
@@ -80,13 +84,28 @@ export function AssetRow({asset}: {asset: Asset}) {
   );
 }
 
-/** A fluid list of rows — no boxes, no rules, just the tickers. */
-export function AssetList({assets}: {assets: Asset[]}) {
+/**
+ * A fluid list of rows — no boxes, no rules, just the tickers.
+ *
+ * With `markArrivals`, rows that were not in the previous update slide in. Used
+ * by the feed's newest-first views, where a token appearing at the top is the
+ * whole point of the view.
+ */
+export function AssetList({
+  assets,
+  markArrivals = false,
+}: {
+  assets: Asset[];
+  markArrivals?: boolean;
+}) {
+  const ids = assets.map((asset) => `${asset.kind}:${asset.id}`);
+  const arrivals = useArrivals(markArrivals ? ids : []);
+
   return (
     <ul className="-mx-[22px]">
-      {assets.map((asset) => (
-        <li key={`${asset.kind}:${asset.id}`}>
-          <AssetRow asset={asset} />
+      {assets.map((asset, i) => (
+        <li key={ids[i]}>
+          <AssetRow asset={asset} fresh={arrivals.has(ids[i])} />
         </li>
       ))}
     </ul>

@@ -1,4 +1,4 @@
-import type {Launchpad, SocialLinks, StockType} from "@/lib/types";
+import type {SocialLinks, StockType} from "@/lib/types";
 
 /**
  * The static half of the universe: what an asset *is*, as opposed to what it is
@@ -100,96 +100,62 @@ export const RWA_SEEDS: RwaSeed[] = RWA_ROWS.map(
   }),
 );
 
-interface LaunchpadSeed {
-  id: string;
-  name: string;
-  color: string;
-  host: string;
-}
-
-/**
- * Launchpads tokens are deployed from.
- *
- * The hosts sit on the reserved `.example` TLD until real launchpad
- * integrations exist — a link that visibly goes nowhere is easier to spot and
- * replace than one pointing at a plausible domain someone else owns.
- */
-const LAUNCHPAD_SEEDS: LaunchpadSeed[] = [
-  {id: "rhpad", name: "RHPad", color: "#00C805", host: "https://rhpad.example"},
-  {id: "tickerhouse", name: "Tickerhouse", color: "#7C5CFF", host: "https://tickerhouse.example"},
-  {id: "vaultstreet", name: "Vaultstreet", color: "#3DBBFF", host: "https://vaultstreet.example"},
-  {id: "cornerstone", name: "Cornerstone", color: "#FF8A3D", host: "https://cornerstone.example"},
-  {id: "floorplan", name: "Floorplan", color: "#FF5C93", host: "https://floorplan.example"},
-];
-
-export function launchpadFor(id: string, tokenAddress: string): Launchpad {
-  const seed = LAUNCHPAD_SEEDS.find((pad) => pad.id === id) ?? LAUNCHPAD_SEEDS[0];
-  return {
-    id: seed.id,
-    name: seed.name,
-    color: seed.color,
-    tokenUrl: `${seed.host}/token/${tokenAddress}`,
-  };
-}
-
 export interface TokenSeed {
   symbol: string;
   name: string;
   /** RWA on the other side of the pool. */
   pairedTicker: string;
-  launchpadId: string;
   description: string;
   socials: SocialLinks;
 }
 
-/** symbol, name, paired RWA, launchpad, description. */
-const TOKEN_ROWS: [string, string, string, string, string][] = [
-  ["GPUCOIN", "GPU Coin", "NVDA", "rhpad", "Community token for people who think compute is the only real asset."],
-  ["JENSEN", "Jensen", "NVDA", "tickerhouse", "Leather-jacket maximalism, pooled against NVDA."],
-  ["WAFER", "Wafer", "TSM", "vaultstreet", "A fab-cycle token paired to the foundry everyone depends on."],
-  ["EUV", "EUV", "ASML", "rhpad", "Lithography bulls, one machine at a time."],
-  ["SILICON", "Silicon", "AMD", "cornerstone", "Underdog chip token pooled against AMD."],
-  ["DRAM", "DRAM", "MU", "floorplan", "A memory-cycle token that only trades when prices move."],
-  ["GOTHAM", "Gotham", "PLTR", "tickerhouse", "Named for the platform, pooled against the ticker."],
-  ["RACKS", "Racks", "SMCI", "rhpad", "For people who count server racks instead of revenue."],
-  ["FLOPS", "Flops", "CRWV", "vaultstreet", "Rent-per-GPU-hour culture, tokenized."],
-  ["COOLANT", "Coolant", "VRT", "cornerstone", "Thermals are the bottleneck. This is that trade."],
-  ["AZURE", "Azure", "MSFT", "floorplan", "Cloud-share token pooled against Microsoft."],
-  ["LARRY", "Larry", "ORCL", "tickerhouse", "Late-cycle cloud believers, pooled against Oracle."],
-  ["FLAKE", "Flake", "SNOW", "rhpad", "Consumption-billing token for warehouse maximalists."],
-  ["ORANGE", "Orange", "NET", "vaultstreet", "Edge-network token with an orange problem."],
-  ["PRIME", "Prime", "AMZN", "cornerstone", "Two-day delivery as an ideology."],
-  ["GEMINI", "Gemini", "GOOGL", "rhpad", "Model-race token pooled against Alphabet."],
-  ["ZUCK", "Zuck", "META", "floorplan", "Open weights, closed feed, pooled against META."],
-  ["BINGE", "Binge", "NFLX", "tickerhouse", "Subscriber-count token for the streaming endgame."],
-  ["KARMA", "Karma", "RDDT", "rhpad", "The only token whose community is also its product."],
-  ["NEUTRON", "Neutron", "RKLB", "vaultstreet", "Launch-cadence token pooled against Rocket Lab."],
-  ["BARS", "Bars", "ASTS", "cornerstone", "Signal everywhere, eventually."],
-  ["FISSION", "Fission", "OKLO", "rhpad", "Small reactors, large convictions."],
-  ["MODULE", "Module", "SMR", "floorplan", "An SMR-cycle token paired against NuScale."],
-  ["BASELOAD", "Baseload", "CEG", "tickerhouse", "Nuclear power for data centres, tokenized."],
-  ["TURBINE", "Turbine", "GEV", "vaultstreet", "Grid-buildout token pooled against GE Vernova."],
-  ["SATS", "Sats", "COIN", "rhpad", "Exchange-volume token for the cycle."],
-  ["ORANGEPILL", "Orangepill", "MSTR", "cornerstone", "Leveraged conviction, once removed."],
-  ["PEGGED", "Pegged", "CRCL", "floorplan", "Stablecoin reserve income as a meme."],
-  ["QUBIT", "Qubit", "IONQ", "tickerhouse", "Decoherence is temporary, the pool is forever."],
-  ["ANNEAL", "Anneal", "QBTS", "rhpad", "Optimisation-problem token paired to D-Wave."],
-  ["GLP", "GLP", "LLY", "vaultstreet", "The appetite-suppression trade, pooled against Lilly."],
-  ["SCRIPT", "Script", "HIMS", "cornerstone", "Telehealth-volume token."],
-  ["CUPERTINO", "Cupertino", "AAPL", "floorplan", "The most patient token in the pool."],
-  ["FSD", "FSD", "TSLA", "rhpad", "An autonomy timeline as a tradeable asset."],
-  ["BULK", "Bulk", "COST", "tickerhouse", "Membership-renewal maximalism."],
-  ["SPYDER", "Spyder", "SPY", "vaultstreet", "Index beta with extra steps."],
-  ["BULLION", "Bullion", "GLD", "cornerstone", "Vaulted gold, unvaulted opinions."],
-  ["FOUNDRY", "Foundry", "SMH", "rhpad", "The whole chip basket, in one pool."],
+/** symbol, name, paired RWA, description. */
+const TOKEN_ROWS: [string, string, string, string][] = [
+  ["GPUCOIN", "GPU Coin", "NVDA", "Community token for people who think compute is the only real asset."],
+  ["JENSEN", "Jensen", "NVDA", "Leather-jacket maximalism, pooled against NVDA."],
+  ["WAFER", "Wafer", "TSM", "A fab-cycle token paired to the foundry everyone depends on."],
+  ["EUV", "EUV", "ASML", "Lithography bulls, one machine at a time."],
+  ["SILICON", "Silicon", "AMD", "Underdog chip token pooled against AMD."],
+  ["DRAM", "DRAM", "MU", "A memory-cycle token that only trades when prices move."],
+  ["GOTHAM", "Gotham", "PLTR", "Named for the platform, pooled against the ticker."],
+  ["RACKS", "Racks", "SMCI", "For people who count server racks instead of revenue."],
+  ["FLOPS", "Flops", "CRWV", "Rent-per-GPU-hour culture, tokenized."],
+  ["COOLANT", "Coolant", "VRT", "Thermals are the bottleneck. This is that trade."],
+  ["AZURE", "Azure", "MSFT", "Cloud-share token pooled against Microsoft."],
+  ["LARRY", "Larry", "ORCL", "Late-cycle cloud believers, pooled against Oracle."],
+  ["FLAKE", "Flake", "SNOW", "Consumption-billing token for warehouse maximalists."],
+  ["ORANGE", "Orange", "NET", "Edge-network token with an orange problem."],
+  ["PRIME", "Prime", "AMZN", "Two-day delivery as an ideology."],
+  ["GEMINI", "Gemini", "GOOGL", "Model-race token pooled against Alphabet."],
+  ["ZUCK", "Zuck", "META", "Open weights, closed feed, pooled against META."],
+  ["BINGE", "Binge", "NFLX", "Subscriber-count token for the streaming endgame."],
+  ["KARMA", "Karma", "RDDT", "The only token whose community is also its product."],
+  ["NEUTRON", "Neutron", "RKLB", "Launch-cadence token pooled against Rocket Lab."],
+  ["BARS", "Bars", "ASTS", "Signal everywhere, eventually."],
+  ["FISSION", "Fission", "OKLO", "Small reactors, large convictions."],
+  ["MODULE", "Module", "SMR", "An SMR-cycle token paired against NuScale."],
+  ["BASELOAD", "Baseload", "CEG", "Nuclear power for data centres, tokenized."],
+  ["TURBINE", "Turbine", "GEV", "Grid-buildout token pooled against GE Vernova."],
+  ["SATS", "Sats", "COIN", "Exchange-volume token for the cycle."],
+  ["ORANGEPILL", "Orangepill", "MSTR", "Leveraged conviction, once removed."],
+  ["PEGGED", "Pegged", "CRCL", "Stablecoin reserve income as a meme."],
+  ["QUBIT", "Qubit", "IONQ", "Decoherence is temporary, the pool is forever."],
+  ["ANNEAL", "Anneal", "QBTS", "Optimisation-problem token paired to D-Wave."],
+  ["GLP", "GLP", "LLY", "The appetite-suppression trade, pooled against Lilly."],
+  ["SCRIPT", "Script", "HIMS", "Telehealth-volume token."],
+  ["CUPERTINO", "Cupertino", "AAPL", "The most patient token in the pool."],
+  ["FSD", "FSD", "TSLA", "An autonomy timeline as a tradeable asset."],
+  ["BULK", "Bulk", "COST", "Membership-renewal maximalism."],
+  ["SPYDER", "Spyder", "SPY", "Index beta with extra steps."],
+  ["BULLION", "Bullion", "GLD", "Vaulted gold, unvaulted opinions."],
+  ["FOUNDRY", "Foundry", "SMH", "The whole chip basket, in one pool."],
 ];
 
 export const TOKEN_SEEDS: TokenSeed[] = TOKEN_ROWS.map(
-  ([symbol, name, pairedTicker, launchpadId, description]) => ({
+  ([symbol, name, pairedTicker, description]) => ({
     symbol,
     name,
     pairedTicker,
-    launchpadId,
     description,
     socials: {
       x: `https://x.com/${symbol.toLowerCase()}`,

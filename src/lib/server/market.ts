@@ -11,7 +11,7 @@ import type {
   Trade,
 } from "@/lib/types";
 import {between, fakeAddress, fakeHash, pick, rng} from "./rng";
-import {launchpadFor, RWA_SEEDS, TOKEN_SEEDS} from "./universe";
+import {RWA_SEEDS, TOKEN_SEEDS} from "./universe";
 
 /**
  * The seeded market.
@@ -185,6 +185,25 @@ export function listRwas(now: number = Date.now()): RwaAsset[] {
 // Tokens with an RWA pair
 // ---------------------------------------------------------------------------
 
+/**
+ * Shorter windows for the seeded feed.
+ *
+ * The seeded model only produces a daily figure, so the rest are divided out of
+ * it rather than generated separately — that keeps a token's windows consistent
+ * with each other, which is what the feed's filters compare.
+ */
+function seededWindows(
+  volume24hUsd: number,
+  changePct: number,
+): TokenAsset["windows"] {
+  return {
+    "5m": {volumeUsd: Math.round(volume24hUsd / 288), changePct: Number((changePct / 12).toFixed(2))},
+    "1h": {volumeUsd: Math.round(volume24hUsd / 24), changePct: Number((changePct / 6).toFixed(2))},
+    "6h": {volumeUsd: Math.round(volume24hUsd / 4), changePct: Number((changePct / 2).toFixed(2))},
+    "24h": {volumeUsd: volume24hUsd, changePct},
+  };
+}
+
 export function listTokens(now: number = Date.now()): TokenAsset[] {
   return TOKEN_SEEDS.map((seed) => {
     const key = `token:${seed.symbol}`;
@@ -210,18 +229,28 @@ export function listTokens(now: number = Date.now()): TokenAsset[] {
       priceUsd: roundPrice(price),
       changePct: Number(changeOver(key, basePrice, "token", 1440, now).toFixed(2)),
       volume24hUsd: volume,
+      windows: seededWindows(
+        volume,
+        Number(changeOver(key, basePrice, "token", 1440, now).toFixed(2)),
+      ),
       marketCapUsd: Math.round(marketCap),
       liquidityUsd: Math.round(marketCap * between(next, 0.03, 0.14)),
       rewards24hUsd: Math.round((volume * feeBps) / 10_000),
+      rewardsToHolders: false,
       holders: Math.round(between(next, 240, 41_000)),
       createdAt: new Date(
         now - between(next, 2, 240) * 24 * 60 * 60_000,
       ).toISOString(),
       pairedTicker: seed.pairedTicker,
-      // Most launches ship untaxed; a minority keep a small transfer fee.
-      buyTaxPct: taxed ? Number(between(next, 0.5, 5).toFixed(1)) : 0,
-      sellTaxPct: taxed ? Number(between(next, 0.5, 6).toFixed(1)) : 0,
-      launchpad: launchpadFor(seed.launchpadId, address),
+      rwaPaired: true,
+      // The seeded market has no contracts behind it, so there is nothing to
+      // measure and nothing is claimed.
+      buyTaxPct: null,
+      sellTaxPct: null,
+      feeSplit: null,
+      // The seeded market is a fallback, not a claim about the chain. It has
+      // no real deployments behind it, so it asserts no launchpad.
+      launchpad: null,
       socials: seed.socials,
       description: seed.description,
       series: cardSeries(key, basePrice, "token", now),

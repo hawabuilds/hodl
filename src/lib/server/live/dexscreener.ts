@@ -27,7 +27,7 @@ export interface DexPair {
   quoteToken: {address: string; name: string; symbol: string};
   priceUsd?: string;
   liquidity?: {usd?: number};
-  volume?: {h24?: number};
+  volume?: {m5?: number; h1?: number; h6?: number; h24?: number};
   priceChange?: {m5?: number; h1?: number; h6?: number; h24?: number};
   marketCap?: number;
   fdv?: number;
@@ -52,6 +52,94 @@ async function loadPairs(addresses: string[]): Promise<DexPair[]> {
   }
 
   return out;
+}
+
+/**
+ * Every pool DexScreener knows for one token.
+ *
+ * `tokens/v1` and the search both cap what they return, so the pool discovery
+ * that builds the feed sees only a subset — enough to list a token, but not
+ * enough to be sure which of its pools is deepest. This endpoint is per-token
+ * and complete: AI trades in thirty pools and the feed pass saw a handful.
+ *
+ * That gap was not theoretical. UBIK's deepest market is its USDG pool at
+ * $321k, and the app was reading trades and candles from its $282k GLD pool
+ * because that was the deepest one discovery happened to return.
+ */
+export async function pairsForToken(address: string): Promise<DexPair[]> {
+  const key = `ds:token:${address.toLowerCase()}`;
+  try {
+    const loaded = await cached(key, TTL_MS, async () => {
+      const body = await getJson<DexPair[] | {pairs?: DexPair[]}>(
+        `https://api.dexscreener.com/token-pairs/v1/robinhood/${address}`,
+      );
+      return Array.isArray(body) ? body : (body.pairs ?? []);
+    });
+    if (loaded.length > 0) return loaded;
+  } catch (error) {
+    console.error("token pairs failed", error);
+  }
+  return stale<DexPair[]>(key) ?? [];
+}
+
+/**
+ * Every pool of every stock token, enumerated one ticker at a time.
+ *
+ * The batched `tokens/v1` endpoint takes thirty addresses but caps the
+ * *response*, so asking it about the whole registry returns a fraction of what
+ * exists — and the fraction is not the deepest pools, just the first ones it
+ * felt like sending. Measured against the per-token endpoint, the feed built
+ * that way held 60 tokens while 40 stock tickers alone accounted for 224.
+ *
+ * So this walks the registry instead: one request per ticker, up to thirty
+ * pools each, which is complete enough that a new pair shows up on the next
+ * refresh rather than whenever discovery happens to notice it.
+ */
+const SWEEP_CONCURRENCY = 10;
+const SWEEP_TTL_MS = 5 * 60_000;
+
+export async function allRwaPairs(): Promise<DexPair[]> {
+  const key = "ds:sweep";
+
+  try {
+    const loaded = await cached(key, SWEEP_TTL_MS, async () => {
+      const addresses = RWA_REGISTRY.map((entry) => entry.address);
+      const seen = new Map<string, DexPair>();
+      let index = 0;
+
+      async function worker() {
+        while (index < addresses.length) {
+          const address = addresses[index++];
+          try {
+            const body = await getJson<DexPair[] | {pairs?: DexPair[]}>(
+              `https://api.dexscreener.com/token-pairs/v1/robinhood/${address}`,
+              9000,
+            );
+            const pairs = Array.isArray(body) ? body : (body.pairs ?? []);
+            for (const pair of pairs) {
+              if (pair?.pairAddress) seen.set(pair.pairAddress, pair);
+            }
+          } catch {
+            // One ticker failing costs its pools, not the sweep.
+          }
+        }
+      }
+
+      await Promise.all(
+        Array.from(
+          {length: Math.min(SWEEP_CONCURRENCY, addresses.length)},
+          worker,
+        ),
+      );
+
+      return [...seen.values()];
+    });
+    if (loaded.length > 0) return loaded;
+  } catch (error) {
+    console.error("rwa pair sweep failed", error);
+  }
+
+  return stale<DexPair[]>(key) ?? [];
 }
 
 /**
