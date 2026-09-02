@@ -11,6 +11,7 @@ import type {
   Trade,
 } from "@/lib/types";
 import * as seeded from "./market";
+import * as live from "./live/market";
 import {feedFor, type FeedQuery} from "./newsfeed";
 import {searchPeople} from "./social";
 
@@ -33,33 +34,64 @@ export interface SourceResult<T> {
 }
 
 /**
+ * Falls back to the seeded market when a live source is empty or throws.
+ *
+ * `seeded` on the result is what the UI reads to decide whether to caveat the
+ * numbers, so it has to stay honest: true means nothing on screen came from a
+ * real market.
+ */
+async function liveOr<T>(
+  load: () => Promise<T[]>,
+  fallback: () => T[],
+): Promise<SourceResult<T[]>> {
+  try {
+    const data = await load();
+    if (data.length > 0) return {data, seeded: false};
+  } catch (error) {
+    console.error("live source failed, falling back to seeded", error);
+  }
+  return {data: fallback(), seeded: true};
+}
+
+/**
  * Official Robinhood tokenized assets.
  *
- * TODO(live): Robinhood Chain publishes its asset registry at `/rhj/assets`;
- * pair it with Chainlink stock feeds on mainnet for price, exactly as the Pick
- * app does in `lib/server/universe.ts` and `lib/server/rhprices.ts`. Sector,
- * stock type and description are not in the registry and stay local.
+ * Live. `rwaRegistry.json` names them and Robinhood's own quote endpoint prices
+ * them. Deliberately not priced from pools: measured against these quotes, pool
+ * prices run a median 5.5% out, because two thirds of those pools hold under
+ * $10k.
+ *
+ * TODO(live): the registry is a snapshot in the repo, so a new listing needs a
+ * rebuild. Part 04 step 1 has the weekly refresh that removes that.
  */
 export async function fetchRwas(): Promise<SourceResult<RwaAsset[]>> {
-  return {data: seeded.listRwas(), seeded: true};
+  return liveOr(live.listRwas, seeded.listRwas);
 }
 
 /**
  * Tokens whose liquidity pool is paired against a tokenized RWA.
  *
- * TODO(live): enumerate pools on the chain's DEX factory, keep the ones whose
- * other side is a known RWA token address, then read reserves for price and
- * liquidity. Launchpad attribution comes from the deployer address; socials and
- * images come from whichever launchpad API owns the token.
+ * Live, from DexScreener, enumerated from the RWA side so the set is complete
+ * by construction — a token with an RWA pair cannot hide, because the pair is
+ * what makes it visible.
+ *
+ * TODO(live): holders, transfer taxes and honeypot detection all need an RPC
+ * and are still zero. Part 05 step 4.
  */
 export async function fetchTokens(): Promise<SourceResult<TokenAsset[]>> {
-  return {data: seeded.listTokens(), seeded: true};
+  return liveOr(live.listTokens, seeded.listTokens);
 }
 
 export async function fetchAsset(
   kind: AssetKind,
   id: string,
 ): Promise<SourceResult<Asset | null>> {
+  try {
+    const data = await live.getAsset(kind, id);
+    if (data) return {data, seeded: false};
+  } catch (error) {
+    console.error("live asset lookup failed", error);
+  }
   return {data: seeded.getAsset(kind, id), seeded: true};
 }
 
@@ -104,7 +136,14 @@ export async function fetchEthPrice(): Promise<SourceResult<number>> {
 }
 
 export async function search(query: string): Promise<SourceResult<Asset[]>> {
-  return {data: seeded.searchAssets(query), seeded: true};
+  try {
+    // An empty result is a real answer to a search, not a failure, so only a
+    // throw falls back to seeded data.
+    return {data: await live.searchAssets(query), seeded: false};
+  } catch (error) {
+    console.error("live search failed", error);
+    return {data: seeded.searchAssets(query), seeded: true};
+  }
 }
 
 /**
