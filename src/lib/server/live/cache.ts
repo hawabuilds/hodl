@@ -75,6 +75,17 @@ function refresh<T>(
 }
 
 /**
+ * Drops a key, so the next caller recomputes rather than reading a bad answer.
+ *
+ * For results that came back empty because an upstream was unreachable: those
+ * are indistinguishable from a real empty once stored, and a long TTL turns one
+ * failed call into half an hour of wrong data.
+ */
+export function forget(key: string): void {
+  store.delete(key);
+}
+
+/**
  * The last good value for a key, whatever its age.
  *
  * Used when an upstream call fails: stale prices are worse than fresh ones but

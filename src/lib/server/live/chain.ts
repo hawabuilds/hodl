@@ -137,3 +137,59 @@ export async function nativeBalance(wallet: string): Promise<number> {
   const wei = await rpc().getBalance({address: wallet as `0x${string}`});
   return Number(wei) / 1e18;
 }
+
+/**
+ * How many contracts go into one multicall.
+ *
+ * The feed asks about every token at once, which is around a thousand. Sent as
+ * a single aggregate that call is large enough to fail outright on a serverless
+ * function — and it failed silently, so production served a feed with no
+ * launchpads, no graduation and no reward routing while the DexScreener fields
+ * beside them looked fine.
+ */
+const BATCH = 120;
+
+/**
+ * A multicall split into batches, with failures surfaced rather than swallowed.
+ *
+ * Returns one entry per input, in order, so callers can index against their own
+ * array. A batch that fails contributes failures rather than shortening the
+ * result, which would silently misalign everything after it — and marks them
+ * `unreachable`, so a caller can tell "it said no" from "it never answered".
+ */
+export async function multicallChunked<T>(
+  contracts: readonly unknown[],
+  label: string,
+): Promise<
+  {status: "success" | "failure"; result?: T; unreachable?: boolean}[]
+> {
+  if (contracts.length === 0) return [];
+
+  const batches: unknown[][] = [];
+  for (let i = 0; i < contracts.length; i += BATCH) {
+    batches.push(contracts.slice(i, i + BATCH) as unknown[]);
+  }
+
+  const settled = await Promise.all(
+    batches.map(async (batch) => {
+      try {
+        return (await rpc().multicall({
+          contracts: batch as never,
+          allowFailure: true,
+        })) as {status: "success" | "failure"; result?: T}[];
+      } catch (error) {
+        // Flagged, because a batch that never ran is not the same as a call
+        // that reverted. A revert is the negative answer and worth caching; an
+        // unreachable batch is no answer at all, and caching it as "no" is how
+        // production ended up serving empty fields for half an hour.
+        console.error(`${label}: multicall batch failed`, error);
+        return batch.map(() => ({
+          status: "failure" as const,
+          unreachable: true,
+        }));
+      }
+    }),
+  );
+
+  return settled.flat();
+}

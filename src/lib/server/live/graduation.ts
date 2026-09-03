@@ -1,6 +1,6 @@
 import {parseAbi, type Abi} from "viem";
-import {rpc} from "./chain";
-import {cached} from "./cache";
+import {multicallChunked} from "./chain";
+import {cached, forget} from "./cache";
 
 /**
  * Which launchpad tokens have finished bonding.
@@ -62,47 +62,49 @@ export async function graduatedFrom(
   const wanted = [...new Set(addresses.map((a) => a.toLowerCase()))];
   if (wanted.length === 0) return new Set();
 
-  return cached(`grad:${wanted.length}:${wanted[0]}`, TTL_MS, async () => {
+  const key = `grad:${wanted.length}:${wanted[0]}:${wanted[wanted.length - 1]}`;
+
+  return cached(key, TTL_MS, async () => {
     const graduated = new Set<string>();
 
     const [launches, pools] = await Promise.all([
-      rpc()
-        .multicall({
-          contracts: wanted.map((address) => ({
-            address: PONS_V2_FACTORY,
-            abi: factoryAbi as Abi,
-            functionName: "getLaunchedToken",
-            args: [address as `0x${string}`],
-          })) as never,
-          allowFailure: true,
-        })
-        .catch(() => []),
-      rpc()
-        .multicall({
-          contracts: wanted.map((address) => ({
-            address: address as `0x${string}`,
-            abi: poolAbi as Abi,
-            functionName: "pool",
-          })) as never,
-          allowFailure: true,
-        })
-        .catch(() => []),
+      multicallChunked<{phase: number; exists: boolean}>(
+        wanted.map((address) => ({
+          address: PONS_V2_FACTORY,
+          abi: factoryAbi as Abi,
+          functionName: "getLaunchedToken",
+          args: [address as `0x${string}`],
+        })),
+        "graduation/pons",
+      ),
+      multicallChunked<string>(
+        wanted.map((address) => ({
+          address: address as `0x${string}`,
+          abi: poolAbi as Abi,
+          functionName: "pool",
+        })),
+        "graduation/long",
+      ),
     ]);
 
-    (launches as {status: string; result?: {phase: number; exists: boolean}}[])
-      .forEach((entry, i) => {
-        if (entry.status !== "success" || !entry.result?.exists) return;
-        if (Number(entry.result.phase) >= POOL_CREATED) {
-          graduated.add(wanted[i]);
-        }
-      });
+    launches.forEach((entry, i) => {
+      if (entry.status !== "success" || !entry.result?.exists) return;
+      if (Number(entry.result.phase) >= POOL_CREATED) graduated.add(wanted[i]);
+    });
 
-    (pools as {status: string; result?: string}[]).forEach((entry, i) => {
+    pools.forEach((entry, i) => {
       if (entry.status !== "success") return;
       const pool = String(entry.result).toLowerCase();
       if (pool === NOT_YET || pool === ZERO) return;
       graduated.add(wanted[i]);
     });
+
+    if (
+      launches.some((entry) => entry.unreachable) ||
+      pools.some((entry) => entry.unreachable)
+    ) {
+      forget(key);
+    }
 
     return graduated;
   });

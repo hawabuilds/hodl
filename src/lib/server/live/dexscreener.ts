@@ -136,15 +136,11 @@ export async function allRwaPairs(): Promise<DexPair[]> {
     }
   };
 
-  // Never the thing a first request waits on. Two hundred round trips take
-  // several seconds, and on a cold instance that was the whole of the delay
-  // before a feed appeared. Until the sweep has landed the feed is built from
-  // the faster sources and is merely smaller; once it has, every later request
-  // gets the complete set from cache.
-  if (stale<DexPair[]>(key) === null) {
-    void cached(key, SWEEP_TTL_MS, load).catch(() => {});
-    return [];
-  }
+  // Deliberately blocking on a cold cache. Returning early while the sweep ran
+  // behind the request made a cold instance publish a partial feed, and with
+  // the result now shared across instances that partial build is what everyone
+  // would read until it revalidated. One slow request is better than a feed
+  // that is missing most of the chain.
 
   try {
     const loaded = await cached(key, SWEEP_TTL_MS, load);

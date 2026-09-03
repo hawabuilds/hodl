@@ -1,5 +1,5 @@
 import type {Launchpad} from "@/lib/types";
-import {rpc} from "./chain";
+import {multicallChunked, rpc} from "./chain";
 import {getAddress, parseAbi, type Abi} from "viem";
 
 /**
@@ -165,25 +165,24 @@ async function readAddresses(
   addresses: string[],
   abi: Abi,
   functionName: string,
-): Promise<(string | null)[]> {
-  // The two ABIs differ, so viem cannot infer one return type across both
-  // calls. The shape is the same either way: an address, or a failure.
-  const multicall = rpc().multicall as (args: {
-    contracts: {address: `0x${string}`; abi: Abi; functionName: string}[];
-    allowFailure: true;
-  }) => Promise<{status: "success" | "failure"; result?: unknown}[]>;
-
-  const results = await multicall({
-    contracts: addresses.map((address) => ({
+): Promise<(string | null | undefined)[]> {
+  const results = await multicallChunked<unknown>(
+    addresses.map((address) => ({
       address: address as `0x${string}`,
       abi,
       functionName,
     })),
-    allowFailure: true,
-  });
+    `launchpads/${functionName}`,
+  );
 
   return results.map((result) =>
-    result.status === "success" ? String(result.result).toLowerCase() : null,
+    result.status === "success"
+      ? String(result.result).toLowerCase()
+      : // Undefined where the batch never ran, null where the call reverted.
+        // Only the second is an answer worth remembering.
+        result.unreachable
+        ? undefined
+        : null,
   );
 }
 
@@ -212,8 +211,8 @@ export async function launchpadsFor(
 
   if (wanted.length === 0) return out;
 
-  let factories: (string | null)[];
-  let owners: (string | null)[];
+  let factories: (string | null | undefined)[];
+  let owners: (string | null | undefined)[];
   try {
     [factories, owners] = await Promise.all([
       readAddresses(wanted, factoryAbi, "launchFactory"),
@@ -245,6 +244,9 @@ export async function launchpadsFor(
       return;
     }
 
+    // Unreachable on either read means no answer yet; leaving it unresolved
+    // keeps it out of the permanent map so the next pass asks again.
+    if (factory === undefined || owner === undefined) return;
     resolved.set(address, null);
   });
 

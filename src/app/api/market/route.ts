@@ -1,3 +1,4 @@
+import {unstable_cache} from "next/cache";
 import type {NextRequest} from "next/server";
 import {json} from "@/lib/server/http";
 import {fetchRwas, fetchTokens} from "@/lib/server/sources";
@@ -72,15 +73,42 @@ function trimmed(tokens: Asset[]): Asset[] {
  * filter is a client-side toggle, and refetching the list every time someone
  * flips between Tokens and RWAs would make the toggle feel slow.
  */
+/**
+ * The feed, cached where every instance can see it.
+ *
+ * The in-process cache each source keeps is per lambda, and a serverless
+ * deployment runs many. In production that showed as a feed whose size changed
+ * with whichever instance answered — 60 tokens on a cold one, 353 on a warm
+ * one, and a New tab that came back empty on one request and full on the next.
+ *
+ * This is the one place that has to be consistent, so the built payload goes
+ * through the shared data cache: the first request populates it, everyone else
+ * reads the same thing, and it revalidates behind them.
+ */
+const feed = unstable_cache(
+  async () => {
+    const [rwas, tokens] = await Promise.all([fetchRwas(), fetchTokens()]);
+    return {
+      rwas: rwas.data,
+      tokens: trimmed(tokens.data),
+      seeded: rwas.seeded || tokens.seeded,
+    };
+  },
+  ["market-feed"],
+  {revalidate: 60},
+);
+
 export async function GET(request: NextRequest) {
   const sort = (request.nextUrl.searchParams.get("sort") ??
     "volume") as MarketSort;
 
-  const [rwas, tokens] = await Promise.all([fetchRwas(), fetchTokens()]);
+  const {rwas, tokens, seeded} = await feed();
 
+  // Sorted per request rather than per cache entry, so the four orderings share
+  // one build instead of holding four copies of the same rows.
   return json({
-    rwas: sorted(rwas.data, sort),
-    tokens: sorted(trimmed(tokens.data), sort),
-    seeded: rwas.seeded || tokens.seeded,
+    rwas: sorted(rwas, sort),
+    tokens: sorted(tokens, sort),
+    seeded,
   });
 }

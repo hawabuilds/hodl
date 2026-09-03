@@ -1,6 +1,6 @@
 import {parseAbi, type Abi} from "viem";
-import {rpc} from "./chain";
-import {cached} from "./cache";
+import {multicallChunked} from "./chain";
+import {cached, forget} from "./cache";
 
 /**
  * Tokens whose trading fees are paid back to the people holding them.
@@ -64,25 +64,26 @@ export async function holderRewardsFor(
   const wanted = [...new Set(addresses.map((a) => a.toLowerCase()))];
   if (wanted.length === 0) return new Set();
 
-  return cached(`rewards:${wanted.join(",")}`, TTL_MS, async () => {
+  // Keyed on the shape of the set rather than every address in it: the join
+  // was a kilobyte-long key rebuilt on every call.
+  const key = `rewards:${wanted.length}:${wanted[0]}:${wanted[wanted.length - 1]}`;
+
+  return cached(key, TTL_MS, async () => {
     const paying = new Set<string>();
 
-    const launches = (await rpc()
-      .multicall({
-        contracts: wanted.map((address) => ({
-          address: PONS_V2_FACTORY,
-          abi: factoryAbi as Abi,
-          functionName: "getLaunchedToken",
-          args: [address as `0x${string}`],
-        })) as never,
-        allowFailure: true,
-      })
-      .catch(() => [])) as {
-      status: string;
-      result?: LaunchRecord;
-    }[];
+    const launches = await multicallChunked<LaunchRecord>(
+      wanted.map((address) => ({
+        address: PONS_V2_FACTORY,
+        abi: factoryAbi as Abi,
+        functionName: "getLaunchedToken",
+        args: [address as `0x${string}`],
+      })),
+      "holderRewards/launches",
+    );
 
     const recipients: {token: string; recipient: `0x${string}`}[] = [];
+
+    let unreachable = launches.some((entry) => entry.unreachable);
 
     launches.forEach((entry, i) => {
       if (entry.status !== "success" || !entry.result?.exists) return;
@@ -91,18 +92,21 @@ export async function holderRewardsFor(
       recipients.push({token: wanted[i], recipient});
     });
 
-    if (recipients.length === 0) return paying;
+    if (recipients.length === 0) {
+      if (unreachable) forget(key);
+      return paying;
+    }
 
-    const bound = (await rpc()
-      .multicall({
-        contracts: recipients.map((entry) => ({
-          address: entry.recipient,
-          abi: distributorAbi as Abi,
-          functionName: "token",
-        })) as never,
-        allowFailure: true,
-      })
-      .catch(() => [])) as {status: string; result?: string}[];
+    const bound = await multicallChunked<string>(
+      recipients.map((entry) => ({
+        address: entry.recipient,
+        abi: distributorAbi as Abi,
+        functionName: "token",
+      })),
+      "holderRewards/bound",
+    );
+
+    unreachable ||= bound.some((entry) => entry.unreachable);
 
     bound.forEach((entry, i) => {
       if (entry.status !== "success") return;
@@ -113,6 +117,10 @@ export async function holderRewardsFor(
       }
     });
 
+    // An answer assembled from calls that never ran is not an answer. Dropping
+    // it means the next request tries again instead of everyone reading an
+    // empty set for the next half hour.
+    if (unreachable) forget(key);
     return paying;
   });
 }
