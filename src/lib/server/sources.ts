@@ -13,6 +13,7 @@ import type {
 import * as seeded from "./market";
 import * as live from "./live/market";
 import * as gecko from "./live/geckoterminal";
+import * as swaps from "./live/swaps";
 import * as headlines from "./live/news";
 import {feedFor, type FeedQuery} from "./newsfeed";
 import {searchPeople} from "./social";
@@ -134,12 +135,43 @@ export async function fetchTrades(
   try {
     const target = await live.poolFor(asset.kind, asset.id);
     if (target) {
-      const rows = await gecko.trades(target.pool, target.token, limit ?? 40);
+      // Two sources for one tape. The indexer runs about eleven seconds behind
+      // the chain, so the last few seconds are read from the pool's own logs
+      // and laid on top; the indexer supplies everything older. Either can
+      // fail on its own without emptying the panel.
+      const [indexed, live_] = await Promise.all([
+        gecko.trades(target.pool, target.token, limit ?? 40),
+        target.quote
+          ? swaps
+              .recentSwaps(target.pool, target.token, target.quote, asset.priceUsd)
+              .catch(() => [] as Trade[])
+          : Promise.resolve([] as Trade[]),
+      ]);
+
+      const seen = new Set<string>();
+      const merged: Trade[] = [];
+
+      // Chain first, so a fill present in both keeps the copy that arrived
+      // sooner and the tape does not reorder itself when the indexer catches
+      // up.
+      //
+      // Both sources now identify a fill as transaction plus log index, which
+      // is what makes this exact: a transaction hash alone is not a trade here,
+      // because pools on this chain routinely settle ten swaps in one.
+      for (const trade of [...live_, ...indexed]) {
+        const key = trade.id.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(trade);
+      }
+
+      merged.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+
       // A real pool with nothing to show is an answer, not a failure. Falling
       // back here meant a rate-limited fetch quietly replaced a live pool's
       // tape with simulated fills — SPY and GLD were showing invented trades
       // on their own chart pages, marked as though they were the market.
-      return {data: rows, seeded: false};
+      return {data: merged.slice(0, limit ?? 40), seeded: false};
     }
   } catch (error) {
     console.error("live trades failed", error);

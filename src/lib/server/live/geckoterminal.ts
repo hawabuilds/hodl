@@ -195,6 +195,8 @@ export async function candles(
 
 interface TradesResponse {
   data?: {
+    /** `network_block_tx_logIndex_timestamp`. The log index makes a fill unique. */
+    id?: string;
     attributes?: {
       block_number?: number;
       tx_hash?: string;
@@ -251,8 +253,17 @@ export async function trades(
           fromIsOurs ? a.price_from_in_usd : a.price_to_in_usd,
         );
 
+        // The indexer's own id is `network_block_tx_logIndex_timestamp`, and
+        // that log index is what makes a fill unique: this chain has pools
+        // where a single transaction carries ten swaps, so a transaction hash
+        // identifies a batch rather than a trade. Keying on it lets the chain
+        // read and the indexer agree on which fill is which.
+        const logIndex = String(row.id ?? "").split("_")[3];
+
         return {
-          id: `${a.tx_hash}-${a.block_number ?? 0}`,
+          id: logIndex
+            ? `${a.tx_hash}-${logIndex}`
+            : `${a.tx_hash}-${a.block_number ?? 0}`,
           side: buy ? "buy" : "sell",
           amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
           amountUsd,

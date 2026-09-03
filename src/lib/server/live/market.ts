@@ -349,7 +349,7 @@ export async function searchAssets(query: string): Promise<Asset[]> {
 export async function poolFor(
   kind: "rwa" | "token",
   id: string,
-): Promise<{pool: string; token: string} | null> {
+): Promise<{pool: string; token: string; quote: string} | null> {
   const wanted = id.toLowerCase();
   const [rwaSide, chainSide] = await Promise.all([rwaPairs(), communityPairs()]);
   const all = [...rwaSide, ...chainSide];
@@ -379,7 +379,9 @@ export async function poolFor(
         null,
       );
 
-    return deepest ? {pool: deepest.pairAddress, token: address} : null;
+    if (!deepest) return null;
+    const quote = deepest.quoteToken?.address?.toLowerCase() ?? "";
+    return {pool: deepest.pairAddress, token: address, quote};
   }
 
   // Resolve a symbol to its contract using the discovery pass, then ask
@@ -429,7 +431,14 @@ export async function poolFor(
   );
 
   if (!deepest) return null;
-  return {pool: deepest.pairAddress, token: address};
+
+  // The other side of the pool, needed to work out which of a swap's two
+  // amounts belongs to this asset.
+  const base = deepest.baseToken?.address?.toLowerCase();
+  const quoteSide = deepest.quoteToken?.address?.toLowerCase();
+  const quote = (base === address ? quoteSide : base) ?? "";
+
+  return {pool: deepest.pairAddress, token: address, quote};
 }
 
 /**

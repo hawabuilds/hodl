@@ -95,7 +95,7 @@ export function FeedFilterButton({
           "relative grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[9px]",
           "transition-colors",
           count > 0
-            ? "bg-ink text-premium-bg"
+            ? "bg-[var(--overlay-wash-hover)] text-ink"
             : "bg-[var(--overlay-wash)] text-muted hover:text-ink",
         )}
       >
@@ -179,8 +179,13 @@ function FilterSheet({
                 aria-pressed={draft.window === window}
                 className={cn(
                   "flex-1 rounded-[9px] py-2 text-[12.5px] font-extrabold transition-colors",
+                  // `text-premium-bg` was not a real class — `premium` is
+                  // registered as a background image, not a colour — so the
+                  // label kept whatever colour it inherited and vanished
+                  // against the filled pill. This is the same active treatment
+                  // the sort rail uses, which is defined in both themes.
                   draft.window === window
-                    ? "bg-ink text-premium-bg"
+                    ? "bg-[var(--overlay-wash-hover)] font-extrabold text-ink"
                     : "bg-[var(--overlay-wash)] text-muted hover:text-ink",
                 )}
               >

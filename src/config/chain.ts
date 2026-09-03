@@ -28,9 +28,8 @@ export const robinhoodMainnet = defineChain({
   },
   blockExplorers: {
     default: {
-      name: "Blockscout",
-      url: "https://robinhoodchain.blockscout.com",
-      apiUrl: "https://robinhoodchain.blockscout.com/api",
+      name: "RobinScan",
+      url: "https://robinscan.io",
     },
   },
   contracts: {
@@ -67,7 +66,11 @@ export function explorerAddressUrl(address: string) {
   return `${EXPLORER}/address/${address}`;
 }
 
-const MAINNET_EXPLORER = "https://robinhoodchain.blockscout.com";
+/**
+ * Robinhood Chain's own explorer. `/tx/` and `/address/` both resolve; there is
+ * no separate `/token/` route, so a contract link uses the address path.
+ */
+const MAINNET_EXPLORER = "https://robinscan.io";
 
 /** Transactions, on whichever chain the fill settled. */
 export function txUrlForChain(hash: string, chainId: number) {
