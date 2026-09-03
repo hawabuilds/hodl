@@ -1,6 +1,7 @@
 "use client";
 
-import {useMemo, useState} from "react";
+import {Suspense, useEffect, useMemo, useState} from "react";
+import {usePathname, useRouter, useSearchParams} from "next/navigation";
 import {AssetList} from "@/components/AssetRow";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {
@@ -13,20 +14,25 @@ import {HomeTabs, type HomeTab} from "@/components/HomeTabs";
 import {StarIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
 import {useWatchlistAssets} from "@/hooks/useWatchlist";
+import {
+  homeQuery,
+  parseHomeView,
+  rememberHomeView,
+  type RwaSort,
+  type TokenSort,
+  type WatchFilter,
+} from "@/lib/homeState";
+import {qualifiesAsNewListing} from "@/lib/tokenUniverse";
 import {SECTORS, type SectorId} from "@/lib/sectors";
 import {APP_NAME} from "@/config/app";
 import type {Asset} from "@/lib/types";
-
-type TokenSort = "new" | "trending" | "marketCap" | "rewards";
-type RwaSort = "marketCap" | "movers";
-type WatchFilter = "all" | "token" | "rwa";
 
 const TOKEN_SORTS: FilterOption<TokenSort>[] = [
   {value: "trending", label: "Trending"},
   {
     value: "new",
     label: "New",
-    title: "Freshly graduated launchpad tokens trading against a stock token",
+    title: "Newest migrations — RWA-paired tokens and rewarded quote pairs",
   },
   {value: "marketCap", label: "Market cap"},
   {
@@ -48,12 +54,35 @@ const WATCH_FILTERS: FilterOption<WatchFilter>[] = [
 ];
 
 export default function HomePage() {
-  const [tab, setTab] = useState<HomeTab>("tokens");
-  const [tokenSort, setTokenSort] = useState<TokenSort>("trending");
-  const [rwaSort, setRwaSort] = useState<RwaSort>("marketCap");
-  const [sector, setSector] = useState<SectorId | "all">("all");
-  const [watchFilter, setWatchFilter] = useState<WatchFilter>("all");
+  return (
+    <Suspense fallback={<FeedSkeleton />}>
+      <HomeFeed />
+    </Suspense>
+  );
+}
+
+function HomeFeed() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const initial = parseHomeView(searchParams);
+
+  const [tab, setTab] = useState<HomeTab>(initial.tab);
+  const [tokenSort, setTokenSort] = useState<TokenSort>(initial.tokenSort);
+  const [rwaSort, setRwaSort] = useState<RwaSort>(initial.rwaSort);
+  const [sector, setSector] = useState<SectorId | "all">(initial.sector);
+  const [watchFilter, setWatchFilter] = useState<WatchFilter>(initial.watchFilter);
   const [filters, setFilters] = useState<FeedFilterState>(NO_FILTERS);
+
+  useEffect(() => {
+    const state = {tab, tokenSort, rwaSort, sector, watchFilter};
+    rememberHomeView(state);
+    const query = homeQuery(state);
+    const next = query.startsWith("?") ? query.slice(1) : "";
+    if (searchParams.toString() !== next) {
+      router.replace(`${pathname}${query}`, {scroll: false});
+    }
+  }, [tab, tokenSort, rwaSort, sector, watchFilter, pathname, router, searchParams]);
 
   const market = useMarket();
   const watchlist = useWatchlistAssets(tab === "watchlist");
@@ -80,16 +109,10 @@ export default function HomePage() {
 
     switch (tokenSort) {
       case "new":
-        // Newest is not "every token, ordered by age". A token gets a pool at
-        // the moment it graduates off its launchpad's bonding curve, so its
-        // pool age IS its graduation time — and this view is only about
-        // graduations from a launchpad we can prove, into a stock-token pair.
-        // Everything else on the chain would bury them.
+        // Graduated launchpad tokens with a real market behind them, newest
+        // first — not every token the app tracks.
         return list
-          .filter(
-            (token) =>
-              token.launchpad !== null && token.rwaPaired && token.graduated,
-          )
+          .filter(qualifiesAsNewListing)
           .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       case "marketCap":
         return list.sort((a, b) => b.marketCapUsd - a.marketCapUsd);
@@ -247,17 +270,12 @@ function EmptyFeed({
   }
 
   if (reason === "new") {
-    // Graduation status is resolved gradually off-chain and cached — a few
-    // hundred tokens per request, topped up by a background job — so right
-    // after a fresh deploy this can be briefly empty while that cache warms.
-    // Saying so beats the generic empty state, which reads as broken rather
-    // than as "check back in a moment."
     return (
       <div className="px-6 py-12 text-center">
-        <p className="text-[14px] font-bold">No new graduations right now</p>
-        <p className="mx-auto mt-1.5 max-w-[34ch] text-[13px] leading-[1.5] text-muted">
-          This refreshes as launchpad tokens finish bonding. If you just
-          reloaded the app, give it a moment and check again.
+        <p className="text-[14px] font-bold">No new graduations yet</p>
+        <p className="mx-auto mt-1.5 max-w-[36ch] text-[13px] leading-[1.5] text-muted">
+          This lists Pons and Long tokens that have fully bonded onto Uniswap
+          and are worth over $50k. Check back as launches graduate.
         </p>
       </div>
     );

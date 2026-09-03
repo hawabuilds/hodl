@@ -34,6 +34,8 @@ export interface Session {
    * where there is no real wallet to back up.
    */
   exportEmbeddedWallet: (() => Promise<void>) | null;
+  /** Returns a Privy access token for authenticated API calls, or null. */
+  getAccessToken: () => Promise<string | null>;
 }
 
 export const SessionContext = createContext<Session | null>(null);

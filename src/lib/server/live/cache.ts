@@ -13,6 +13,7 @@
  * instances. That is deliberate: it is a throttle, not a database.
  */
 import {readShared, SHARED_CACHE, writeShared} from "./shared";
+import {recordCacheHit, recordCacheMiss} from "./rpcMeter";
 
 interface Entry<T> {
   value: T;
@@ -33,7 +34,11 @@ export async function cached<T>(
   const pending = inflight.get(key) as Promise<T> | undefined;
 
   // Fresh enough to serve outright.
-  if (hit && hit.expires > Date.now()) return hit.value;
+  if (hit && hit.expires > Date.now()) {
+    recordCacheHit();
+    return hit.value;
+  }
+  recordCacheMiss();
 
   /**
    * Expired, but we have the last answer.
@@ -60,6 +65,53 @@ export async function cached<T>(
   }
 
   return refresh(key, ttlMs, load);
+}
+
+/**
+ * A short cache that never leaves this process.
+ *
+ * For data that is cheap to recompute, wanted very fresh, and asked for by
+ * many callers at once — the head of the trade tape being the case this exists
+ * for. `cached` would also write every answer to the shared cache, and at the
+ * tape's cadence that is a Redis write per token every couple of seconds,
+ * which is how a monthly command quota disappears in an afternoon.
+ *
+ * What it keeps from `cached` is the part that matters here: one in-flight
+ * load per key, so a hundred simultaneous readers of the same token produce
+ * one chain request between them rather than a hundred.
+ */
+export async function cachedLocal<T>(
+  key: string,
+  ttlMs: number,
+  load: () => Promise<T>,
+): Promise<T> {
+  const hit = store.get(key) as Entry<T> | undefined;
+  if (hit && hit.expires > Date.now()) {
+    recordCacheHit();
+    return hit.value;
+  }
+
+  const pending = inflight.get(key) as Promise<T> | undefined;
+  // A shared in-flight load is a hit too: it is a caller who will not be
+  // making a request of their own, which is the whole point of the dedup.
+  if (pending) {
+    recordCacheHit();
+    return pending;
+  }
+  recordCacheMiss();
+
+  const promise = load()
+    .then((value) => {
+      store.set(key, {value, expires: Date.now() + ttlMs});
+      return value;
+    })
+    .finally(() => {
+      inflight.delete(key);
+    });
+
+  inflight.set(key, promise);
+  promise.catch(() => {});
+  return promise;
 }
 
 /**

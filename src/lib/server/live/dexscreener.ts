@@ -1,6 +1,13 @@
 import {cached, getJson, stale} from "./cache";
 import {RWA_BY_ADDRESS, RWA_REGISTRY} from "./robinhood";
-import {poolsForToken} from "./geckoterminal";
+import {
+  AUTHENTICATED,
+  megafilterPools,
+  onchainPoolToDexPair,
+  poolsForTokenAllPages,
+  rwaRegistryPools,
+  type OnchainPool,
+} from "./geckoterminal";
 
 /**
  * DexScreener, for the community tokens only.
@@ -108,89 +115,94 @@ const SWEEP_TTL_MS = 5 * 60_000;
  */
 const PER_TOKEN_CAP = 30;
 
+function mergeGeckoPool(seen: Map<string, DexPair>, pool: OnchainPool): void {
+  if (!seen.has(pool.pairAddress)) {
+    seen.set(pool.pairAddress, onchainPoolToDexPair(pool));
+  }
+}
+
+/** Keep Gecko numbers but attach DexScreener profile metadata when we have it. */
+function mergeDexPair(seen: Map<string, DexPair>, pair: DexPair): void {
+  const existing = seen.get(pair.pairAddress);
+  if (!existing) {
+    seen.set(pair.pairAddress, pair);
+    return;
+  }
+  seen.set(pair.pairAddress, {
+    ...existing,
+    info: pair.info ?? existing.info,
+    priceUsd: existing.priceUsd ?? pair.priceUsd,
+    liquidity: existing.liquidity ?? pair.liquidity,
+    volume: existing.volume ?? pair.volume,
+    priceChange: existing.priceChange ?? pair.priceChange,
+    marketCap: existing.marketCap ?? pair.marketCap,
+    fdv: existing.fdv ?? pair.fdv,
+    pairCreatedAt: existing.pairCreatedAt ?? pair.pairCreatedAt,
+  });
+}
+
 export async function allRwaPairs(): Promise<DexPair[]> {
   const key = "ds:sweep";
 
   const load = async () => {
-    {
-      const addresses = RWA_REGISTRY.map((entry) => entry.address);
-      const seen = new Map<string, DexPair>();
-      const capped: string[] = [];
-      let index = 0;
+    const seen = new Map<string, DexPair>();
 
-      async function worker() {
-        while (index < addresses.length) {
-          const address = addresses[index++];
-          try {
-            const body = await getJson<DexPair[] | {pairs?: DexPair[]}>(
-              `https://api.dexscreener.com/token-pairs/v1/robinhood/${address}`,
-              9000,
-            );
-            const pairs = Array.isArray(body) ? body : (body.pairs ?? []);
-            for (const pair of pairs) {
-              if (pair?.pairAddress) seen.set(pair.pairAddress, pair);
-            }
-            if (pairs.length === PER_TOKEN_CAP) capped.push(address);
-          } catch {
-            // One ticker failing costs its pools, not the sweep.
-          }
-        }
+    if (AUTHENTICATED) {
+      for (const pool of await rwaRegistryPools()) {
+        mergeGeckoPool(seen, pool);
       }
-
-      await Promise.all(
-        Array.from(
-          {length: Math.min(SWEEP_CONCURRENCY, addresses.length)},
-          worker,
-        ),
-      );
-
-      // A capped ticker is missing an unknown number of pairs — that is what
-      // cost HARAM/BE its place in the feed, in search, and on the New tab,
-      // despite trading at a quarter-million dollars of liquidity: BE's own
-      // 30-pair page simply did not reach it.
-      //
-      // Recovered from CoinGecko's onchain API when a paid key is configured —
-      // measured as genuinely paginated, no cap found in practice, and it is
-      // what actually found HARAM/BE. DexScreener's own search was tried first
-      // and rejected: searching a short, generic ticker like "BE" ranks
-      // unrelated pairs above the one actually missing, so it recovered pairs
-      // for *some* capped tickers but not this one — the exact case this
-      // exists to fix. Skipped without a key: sweeping dozens of capped
-      // tickers at several pages each against the free, ~30-request-a-minute
-      // endpoint would exhaust it by itself.
-      let recovered = 0;
-      let capIndex = 0;
-
-      async function capWorker() {
-        while (capIndex < capped.length) {
-          const address = capped[capIndex++];
-          try {
-            const pools = await poolsForToken(address, 4);
-            for (const pool of pools) {
-              if (seen.has(pool.pairAddress)) continue;
-              seen.set(pool.pairAddress, pool);
-              recovered++;
-            }
-          } catch {
-            // Recovery is best-effort; the capped 30 already went in.
-          }
-        }
-      }
-
-      if (capped.length > 0) {
-        await Promise.all(
-          Array.from(
-            {length: Math.min(SWEEP_CONCURRENCY, capped.length)},
-            capWorker,
-          ),
-        );
-        console.info(
-          `rwa pair sweep: ${capped.length} tickers hit the ${PER_TOKEN_CAP}-pair cap, recovered ${recovered} additional pairs via CoinGecko`,
-        );
-      }
-
-      return [...seen.values()];
     }
+
+    const addresses = RWA_REGISTRY.map((entry) => entry.address);
+    let index = 0;
+
+    async function worker() {
+      while (index < addresses.length) {
+        const address = addresses[index++];
+        try {
+          const body = await getJson<DexPair[] | {pairs?: DexPair[]}>(
+            `https://api.dexscreener.com/token-pairs/v1/robinhood/${address}`,
+            9000,
+          );
+          const pairs = Array.isArray(body) ? body : (body.pairs ?? []);
+          for (const pair of pairs) {
+            if (pair?.pairAddress) mergeDexPair(seen, pair);
+          }
+        } catch {
+          // One ticker failing costs its pools, not the sweep.
+        }
+      }
+    }
+
+    await Promise.all(
+      Array.from(
+        {length: Math.min(SWEEP_CONCURRENCY, addresses.length)},
+        worker,
+      ),
+    );
+
+    if (AUTHENTICATED) {
+      console.info(
+        `rwa pair sweep: ${seen.size} pools (${addresses.length} stock tickers, Gecko-primary)`,
+      );
+    } else if (seen.size > 0) {
+      const capped = addresses.filter((address) => {
+        let count = 0;
+        for (const pair of seen.values()) {
+          const base = pair.baseToken?.address?.toLowerCase();
+          const quote = pair.quoteToken?.address?.toLowerCase();
+          if (base === address || quote === address) count++;
+        }
+        return count >= PER_TOKEN_CAP;
+      });
+      if (capped.length > 0) {
+        console.info(
+          `rwa pair sweep: ${capped.length} tickers may be capped at ${PER_TOKEN_CAP} pairs — configure COINGECKO_API_KEY for full coverage`,
+        );
+      }
+    }
+
+    return [...seen.values()];
   };
 
   // Deliberately blocking on a cold cache. Returning early while the sweep ran
@@ -206,6 +218,62 @@ export async function allRwaPairs(): Promise<DexPair[]> {
     console.error("rwa pair sweep failed", error);
   }
 
+  return stale<DexPair[]>(key) ?? [];
+}
+
+/** Below this a pool is dust and the row is noise rather than a market. */
+const MIN_TOKEN_LIQUIDITY_USD = 1_000;
+
+/** USDG/WETH community pools from CoinGecko megafilter. */
+export async function quotePairsFromMegafilter(): Promise<DexPair[]> {
+  if (!AUTHENTICATED) return [];
+
+  const key = "ds:quote-mega";
+  try {
+    const loaded = await cached(key, SWEEP_TTL_MS, async () => {
+      const out: DexPair[] = [];
+      for (const pool of await megafilterPools()) {
+        const pair = onchainPoolToDexPair(pool);
+        const side = community(pair);
+        if (side && !side.rwaPaired) out.push(pair);
+      }
+      return out;
+    });
+    return loaded;
+  } catch (error) {
+    console.error("quote megafilter failed", error);
+  }
+  return stale<DexPair[]>(key) ?? [];
+}
+
+/** Deepest Gecko pool for tokens the rewards indexer already knows about. */
+export async function poolsForKnownPayers(
+  addresses: ReadonlySet<string>,
+): Promise<DexPair[]> {
+  if (!AUTHENTICATED || addresses.size === 0) return [];
+
+  const key = `ds:payer-pools:${[...addresses].sort().join(",")}`;
+  try {
+    return await cached(key, TTL_MS, async () => {
+      const out: DexPair[] = [];
+      for (const address of addresses) {
+        const pools = await poolsForTokenAllPages(address);
+        let best: DexPair | null = null;
+        for (const pool of pools) {
+          const pair = onchainPoolToDexPair(pool);
+          const side = community(pair);
+          if (!side) continue;
+          const liq = pair.liquidity?.usd ?? 0;
+          if (liq < MIN_TOKEN_LIQUIDITY_USD) continue;
+          if (!best || liq > (best.liquidity?.usd ?? 0)) best = pair;
+        }
+        if (best) out.push(best);
+      }
+      return out;
+    });
+  } catch (error) {
+    console.error("payer pool lookup failed", error);
+  }
   return stale<DexPair[]>(key) ?? [];
 }
 
@@ -327,6 +395,33 @@ export const QUOTE_ASSETS = new Map<string, string>([
 const MAX_SYMBOL = 15;
 
 const SEARCH_QUERIES = ["robinhood USDG", "robinhood WETH", "robinhood chain token"];
+
+/**
+ * Pools DexScreener ranks for a free-text query, this chain only.
+ *
+ * Used when search has no hit in the already-built feed — a pasted address or
+ * a token that has not cleared the liquidity floor yet. Other chains are
+ * dropped so a short ticker does not surface Solana or BSC namesakes.
+ */
+export async function searchPairs(query: string): Promise<DexPair[]> {
+  const q = query.trim();
+  if (!q) return [];
+
+  const key = `ds:search:${q.toLowerCase()}`;
+  try {
+    const loaded = await cached(key, TTL_MS, async () => {
+      const body = await getJson<{pairs?: DexPair[]}>(
+        `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`,
+        8000,
+      );
+      return (body.pairs ?? []).filter((pair) => pair.chainId === "robinhood");
+    });
+    if (loaded.length > 0) return loaded;
+  } catch (error) {
+    console.error("dex search failed", error);
+  }
+  return stale<DexPair[]>(key) ?? [];
+}
 
 /**
  * Community tokens on the chain, found through search.

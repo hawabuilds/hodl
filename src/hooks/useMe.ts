@@ -7,6 +7,7 @@ import {
   type ProfileEdits,
 } from "@/lib/localStore";
 import type {SocialLinks} from "@/lib/types";
+import {useSession} from "@/lib/session";
 import {useLocalStore} from "./useLocalStore";
 import {useUser} from "./useUser";
 
@@ -21,6 +22,7 @@ const EMPTY: ProfileEdits = {displayName: null, bio: null, socials: {}};
  */
 export function useMe() {
   const user = useUser();
+  const session = useSession();
   const [edits] = useLocalStore<ProfileEdits>(readProfileEdits, EMPTY);
 
   const socials: SocialLinks = {
@@ -30,7 +32,30 @@ export function useMe() {
     discord: edits.socials.discord ?? null,
   };
 
-  const save = useCallback((next: ProfileEdits) => writeProfileEdits(next), []);
+  const save = useCallback(
+    (next: ProfileEdits) => {
+      writeProfileEdits(next);
+      void session.getAccessToken().then(async (token) => {
+        if (!token) return;
+        await fetch("/api/me/profile", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            handle: user.handle,
+            displayName: next.displayName ?? user.displayName,
+            pfpUrl: user.pfpUrl,
+            wallet: user.embeddedWallet,
+            bio: next.bio ?? null,
+            socials: next.socials,
+          }),
+        });
+      });
+    },
+    [session, user],
+  );
 
   return {
     handle: user.handle,

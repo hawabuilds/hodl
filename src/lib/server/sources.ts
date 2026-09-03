@@ -18,8 +18,11 @@ import * as swaps from "./live/swaps";
 import * as headlines from "./live/news";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {quotePriceUsd} from "@/lib/server/quotePrice";
+import {underFeature} from "./live/rpcMeter";
 import {feedFor, type FeedQuery} from "./newsfeed";
+import {hasDatabase} from "./db";
 import {searchPeople} from "./social";
+import {searchUsers as searchUsersLive} from "./social-live";
 
 const TRADES_LIMIT = 300;
 
@@ -87,7 +90,7 @@ export async function fetchRwas(): Promise<SourceResult<RwaAsset[]>> {
  * and are still zero. Part 05 step 4.
  */
 export async function fetchTokens(): Promise<SourceResult<TokenAsset[]>> {
-  return liveOr(live.listTokens, seeded.listTokens);
+  return underFeature("feed", () => liveOr(live.listTokens, seeded.listTokens));
 }
 
 export async function fetchAsset(
@@ -124,8 +127,8 @@ export async function fetchAssetPage(
   if (!assetResult.data) return {data: null, seeded: assetResult.seeded};
 
   const [chartResult, tradesResult] = await Promise.all([
-    fetchChart(assetResult.data, timeframe),
-    fetchTrades(assetResult.data, 300),
+    fetchChart(assetResult.data, timeframe, assetResult.seeded),
+    fetchTrades(assetResult.data, 300, assetResult.seeded),
   ]);
 
   const first = chartResult.data[0]?.price ?? 0;
@@ -163,16 +166,36 @@ export async function fetchAssetPage(
 export async function fetchChart(
   asset: Asset,
   timeframe: Timeframe,
+  /**
+   * Whether the asset itself is simulated. A real token must never be given a
+   * made-up history — see the note below.
+   */
+  assetIsSeeded = true,
 ): Promise<SourceResult<ChartPoint[]>> {
   try {
     const target = await live.poolFor(asset.kind, asset.id);
     if (target) {
-      const points = await gecko.candles(target.pool, timeframe);
+      const points = await gecko.candles(target.pool, timeframe, target.token);
       if (points.length > 1) return {data: points, seeded: false};
     }
   } catch (error) {
     console.error("live chart failed", error);
   }
+
+  /**
+   * A real token with no candles gets an empty chart, not an invented one.
+   *
+   * The simulated series is a random walk anchored to the current clock, so
+   * for a live token it did three wrong things at once: it drew prices in the
+   * wrong range entirely — a fifth of a cent against a real four ten-thousandths
+   * — it redrew itself on every poll, which is what made charts flicker between
+   * red and green, and scrubbing it multiplied a fictional price by the real
+   * supply and reported market caps in the billions. None of that is better
+   * than an honest empty chart, and a token that has actually traded now has
+   * candles to show since the bucket ladder above reaches its first minutes.
+   */
+  if (!assetIsSeeded) return {data: [], seeded: false};
+
   return {data: seeded.chartFor(asset, timeframe), seeded: true};
 }
 
@@ -185,6 +208,8 @@ export async function fetchChart(
 export async function fetchTrades(
   asset: Asset,
   limit?: number,
+  /** As with the chart: a real token gets an empty tape, never a fake one. */
+  assetIsSeeded = true,
 ): Promise<SourceResult<Trade[]>> {
   try {
     const target = await live.poolFor(asset.kind, asset.id);
@@ -226,6 +251,12 @@ export async function fetchTrades(
   } catch (error) {
     console.error("live trades failed", error);
   }
+
+  // Fabricated fills carry fake maker addresses and fake transaction hashes,
+  // which on a real token's page read as a record of trades that never
+  // happened. An empty tape is the truthful answer.
+  if (!assetIsSeeded) return {data: [], seeded: false};
+
   return {data: seeded.tradesFor(asset, limit), seeded: true};
 }
 
@@ -267,6 +298,7 @@ export async function fetchEthPrice(): Promise<SourceResult<number>> {
 }
 
 export async function search(query: string): Promise<SourceResult<Asset[]>> {
+  return underFeature("search", async () => {
   try {
     // An empty result is a real answer to a search, not a failure, so only a
     // throw falls back to seeded data.
@@ -275,15 +307,26 @@ export async function search(query: string): Promise<SourceResult<Asset[]>> {
     console.error("live search failed", error);
     return {data: seeded.searchAssets(query), seeded: true};
   }
+  });
 }
 
 /**
- * TODO(live): the same Supabase `users` table the profiles come from, matched
- * on handle and display name.
+ * People, from the same Supabase `users` table the profiles come from.
+ *
+ * Falls back to the seeded cast only when the database is unconfigured or the
+ * query throws — an empty live result is a real "nobody matches", not a reason
+ * to invent twelve personas.
  */
 export async function searchUsers(
   query: string,
 ): Promise<SourceResult<Profile[]>> {
+  if (hasDatabase) {
+    try {
+      return {data: await searchUsersLive(query), seeded: false};
+    } catch (error) {
+      console.error("live people search failed", error);
+    }
+  }
   return {data: searchPeople(query), seeded: true};
 }
 

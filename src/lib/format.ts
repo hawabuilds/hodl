@@ -121,3 +121,14 @@ export function ageSince(iso: string, now: number = Date.now()): string {
   if (days < 365) return `${Math.floor(days / 30)}mo`;
   return `${(days / 365).toFixed(1)}y`;
 }
+
+/** Compact token age for feed rows — "45m", "2h", or "5d". */
+export function tokenAge(iso: string, now: number = Date.now()): string {
+  const seconds = Math.floor((now - new Date(iso).getTime()) / 1000);
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${Math.max(1, minutes)}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}

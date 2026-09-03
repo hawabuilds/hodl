@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import {useState} from "react";
+import {useEffect, useState} from "react";
 import {cn} from "@/lib/cn";
 
 const GRADIENTS = [
@@ -30,6 +30,8 @@ interface AvatarProps {
   size?: number;
   className?: string;
   ring?: boolean;
+  /** Preload the image for feed rows where many avatars appear at once. */
+  eager?: boolean;
 }
 
 export function Avatar({
@@ -39,6 +41,7 @@ export function Avatar({
   size = 40,
   className,
   ring = false,
+  eager = false,
 }: AvatarProps) {
   const initial = (name?.trim()?.[0] ?? "?").toUpperCase();
   const style: React.CSSProperties = {
@@ -48,6 +51,11 @@ export function Avatar({
   };
   const [failedPrimary, setFailedPrimary] = useState(false);
   const [failedFallback, setFailedFallback] = useState(false);
+
+  useEffect(() => {
+    setFailedPrimary(false);
+    setFailedFallback(false);
+  }, [src, fallbackSrc]);
 
   const imgClass = cn(
     "shrink-0 rounded-full object-cover",
@@ -62,6 +70,8 @@ export function Avatar({
         alt={name ?? "Profile"}
         style={style}
         className={imgClass}
+        loading={eager ? "eager" : undefined}
+        fetchPriority={eager ? "high" : undefined}
         onError={() => setFailedPrimary(true)}
       />
     );

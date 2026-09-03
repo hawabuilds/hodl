@@ -1,5 +1,6 @@
-import {parseAbiItem} from "viem";
+import {parseAbi, parseAbiItem, type Abi} from "viem";
 import {db, hasDatabase} from "../db";
+import {multicallChunked} from "./chain";
 import {RWA_BY_ADDRESS, RWA_REGISTRY} from "./robinhood";
 import {cachedQuotes} from "./robinhood";
 
@@ -69,6 +70,10 @@ interface RawLog {
 }
 
 const topic0 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+const distributorAbi = parseAbi(["function token() view returns (address)"]);
+
+const ZERO = "0x0000000000000000000000000000000000000000";
 
 const addressFromTopic = (topic: string) => "0x" + topic.slice(26).toLowerCase();
 
@@ -195,11 +200,38 @@ export async function scanRewards(maxBlocks = 300): Promise<RewardScan> {
   const distributions: Record<string, unknown>[] = [];
   const tokensSeen = new Set<string>();
 
+  const qualifyingSenders: string[] = [];
+  for (const [sender, entry] of bySender) {
+    if (entry.recipients.size < MIN_RECIPIENTS) continue;
+    if (pools.has(sender)) continue;
+    qualifyingSenders.push(sender);
+  }
+
+  const linkedTokens = await multicallChunked<string>(
+    qualifyingSenders.map((address) => ({
+      address: address as `0x${string}`,
+      abi: distributorAbi as Abi,
+      functionName: "token",
+    })),
+    "rewards/token",
+  );
+
+  const senderToToken = new Map<string, string>();
+  for (let i = 0; i < qualifyingSenders.length; i++) {
+    const sender = qualifyingSenders[i]!;
+    const entry = linkedTokens[i];
+    if (entry?.status !== "success" || !entry.result) continue;
+    const linked = String(entry.result).toLowerCase();
+    if (linked && linked !== ZERO) senderToToken.set(sender, linked);
+  }
+
   for (const [sender, entry] of bySender) {
     if (distributions.length >= MAX_ROWS) break;
     if (entry.recipients.size < MIN_RECIPIENTS) continue;
-    // A pool pays many addresses all day and is not a reward distributor.
     if (pools.has(sender)) continue;
+
+    const communityToken = senderToToken.get(sender);
+    if (!communityToken) continue;
 
     for (const row of entry.rows) {
       const rwa = RWA_BY_ADDRESS.get(row.token);
@@ -209,9 +241,9 @@ export async function scanRewards(maxBlocks = 300): Promise<RewardScan> {
       if (!Number.isFinite(amount) || amount <= 0) continue;
 
       if (distributions.length >= MAX_ROWS) break;
-      tokensSeen.add(sender);
+      tokensSeen.add(communityToken);
       distributions.push({
-        token_address: sender,
+        token_address: communityToken,
         rwa_ticker: rwa.ticker,
         distributor: sender,
         amount,
@@ -224,9 +256,6 @@ export async function scanRewards(maxBlocks = 300): Promise<RewardScan> {
   }
 
   if (distributions.length > 0) {
-    // Attribution to a specific token is the remaining gap — see the runbook.
-    // Rows are written with the distributor in both columns so the evidence is
-    // kept, and the Rewards ranking only reads rows whose token is listed.
     const {error} = await db()
       .from("reward_distributions")
       .upsert(distributions, {onConflict: "tx_hash", ignoreDuplicates: true});
@@ -274,4 +303,70 @@ export async function refreshRewardTotals(): Promise<number> {
   }
 
   return totals.size;
+}
+
+/**
+ * Tokens that pay holders in RWA stock tokens, from the rewards indexer.
+ *
+ * Returns null when Supabase is not configured — callers fall back to
+ * `rewardsToHolders` (fee distributor routing) so the New tab is not empty
+ * before the cron warms.
+ */
+export async function rewardsFromDb(
+  addresses: string[],
+): Promise<Set<string> | null> {
+  if (!hasDatabase || addresses.length === 0) return null;
+
+  const wanted = new Set(addresses.map((a) => a.toLowerCase()));
+  const paying = new Set<string>();
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+
+  const [{data: tokens}, {data: dists}] = await Promise.all([
+    db()
+      .from("tokens")
+      .select("address")
+      .in("address", [...wanted])
+      .gt("rewards_24h_usd", 0),
+    db()
+      .from("reward_distributions")
+      .select("token_address")
+      .in("token_address", [...wanted])
+      .gte("occurred_at", since),
+  ]);
+
+  for (const row of tokens ?? []) {
+    const address = String(row.address).toLowerCase();
+    if (wanted.has(address)) paying.add(address);
+  }
+  for (const row of dists ?? []) {
+    const address = String(row.token_address).toLowerCase();
+    if (wanted.has(address)) paying.add(address);
+  }
+
+  return paying;
+}
+
+/** Every community token the rewards indexer has proven pays in RWA stock. */
+export async function allRewardPayingAddresses(): Promise<Set<string>> {
+  if (!hasDatabase) return new Set();
+
+  const paying = new Set<string>();
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+
+  const [{data: tokens}, {data: dists}] = await Promise.all([
+    db().from("tokens").select("address").gt("rewards_24h_usd", 0),
+    db()
+      .from("reward_distributions")
+      .select("token_address")
+      .gte("occurred_at", since),
+  ]);
+
+  for (const row of tokens ?? []) {
+    paying.add(String(row.address).toLowerCase());
+  }
+  for (const row of dists ?? []) {
+    paying.add(String(row.token_address).toLowerCase());
+  }
+
+  return paying;
 }

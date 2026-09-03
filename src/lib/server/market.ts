@@ -26,6 +26,7 @@ import {RWA_SEEDS, TOKEN_SEEDS} from "./universe";
 
 /** Minutes in each chart window, and how many points to draw across it. */
 const WINDOWS: Record<Timeframe, {minutes: number; points: number}> = {
+  "1m": {minutes: 60, points: 60},
   "5m": {minutes: 5 * 60, points: 90},
   "15m": {minutes: 15 * 60, points: 90},
   "1h": {minutes: 60 * 24, points: 96},
@@ -176,6 +177,7 @@ export function listRwas(now: number = Date.now()): RwaAsset[] {
       changePct: Number(changeOver(key, seed.basePrice, "rwa", 1440, now).toFixed(2)),
       volume24hUsd: Math.round(price * floatShares * between(next, 0.002, 0.03)),
       marketCapUsd: Math.round(price * floatShares),
+      circulatingSupply: floatShares,
       series: cardSeries(key, seed.basePrice, "rwa", now),
     };
   });
@@ -234,10 +236,17 @@ export function listTokens(now: number = Date.now()): TokenAsset[] {
         Number(changeOver(key, basePrice, "token", 1440, now).toFixed(2)),
       ),
       marketCapUsd: Math.round(marketCap),
+      // The sample set prices its cap off a supply it made up, so the same
+      // supply is carried through rather than left null — a sample asset should
+      // rescale on the client exactly the way a real one does.
+      circulatingSupply: price > 0 ? marketCap / price : null,
       liquidityUsd: Math.round(marketCap * between(next, 0.03, 0.14)),
       rewards24hUsd: Math.round((volume * feeBps) / 10_000),
       rewardsToHolders: false,
       graduated: true,
+      graduatedOnChain: true,
+      tradesOnUniswap: true,
+      paysRwaRewards: false,
       holders: Math.round(between(next, 240, 41_000)),
       createdAt: new Date(
         now - between(next, 2, 240) * 24 * 60 * 60_000,

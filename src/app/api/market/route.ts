@@ -1,7 +1,9 @@
 import {unstable_cache} from "next/cache";
 import type {NextRequest} from "next/server";
 import {json} from "@/lib/server/http";
-import {fetchRwas, fetchTokens} from "@/lib/server/sources";import type {Asset} from "@/lib/types";
+import {fetchRwas, fetchTokens} from "@/lib/server/sources";
+import {qualifiesAsNewListing, qualifiesForUniverse} from "@/lib/tokenUniverse";
+import type {Asset, TokenAsset} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -28,9 +30,6 @@ function sorted(assets: Asset[], sort: MarketSort): Asset[] {
 /** Busiest tokens, for every view that ranks by size. */
 const BY_VOLUME = 300;
 
-/** Newest graduations, for the feed's New tab. */
-const BY_AGE = 250;
-
 /**
  * What the feed carries.
  *
@@ -38,33 +37,24 @@ const BY_AGE = 250;
  * which is the right number to know about and the wrong number to send: a
  * megabyte on every refresh, most of it rows nobody scrolls to.
  *
- * So the response is the union of the two orderings the feed actually offers —
- * the busiest, and the most recently launched. Trimming by volume alone would
- * have cut exactly the tokens the New tab exists to show, since a pool minutes
- * old has no volume yet.
+ * The response is the union of the busiest tokens and the full RWA universe —
+ * every RWA-paired migration plus rewarded quote pairs since chain launch.
  */
 function trimmed(tokens: Asset[]): Asset[] {
-  const busiest = [...tokens]
+  const universe = tokens.filter(
+    (asset): asset is TokenAsset =>
+      asset.kind === "token" &&
+      // A proven launchpad listing counts too, even when it graduated into a
+      // plain quote pair and pays nobody: the New tab filters this payload
+      // client-side, so anything trimmed here can never appear there.
+      (qualifiesForUniverse(asset) || qualifiesAsNewListing(asset)),
+  );
+  const busiest = [...universe]
     .sort((a, b) => b.volume24hUsd - a.volume24hUsd)
     .slice(0, BY_VOLUME);
 
-  const newest = [...tokens]
-    .filter(
-      (asset) =>
-        asset.kind === "token" &&
-        asset.launchpad !== null &&
-        asset.rwaPaired &&
-        asset.graduated,
-    )
-    .sort((a, b) => {
-      const at = a.kind === "token" ? Date.parse(a.createdAt) : 0;
-      const bt = b.kind === "token" ? Date.parse(b.createdAt) : 0;
-      return bt - at;
-    })
-    .slice(0, BY_AGE);
-
   const keep = new Map<string, Asset>();
-  for (const asset of [...busiest, ...newest]) keep.set(asset.id, asset);
+  for (const asset of [...busiest, ...universe]) keep.set(asset.id, asset);
   return [...keep.values()];
 }
 
@@ -94,6 +84,11 @@ const feed = unstable_cache(
       rwas: rwas.data,
       tokens: trimmed(tokens.data),
       seeded: rwas.seeded || tokens.seeded,
+      // When these prices were true, not when a reader asked for them. This
+      // payload is cached and served for up to a minute, so stamping it on
+      // arrival would let a minute-old price outrank a fill from two seconds
+      // ago purely by being fetched later.
+      asOf: Date.now(),
     };
   },
   ["market-feed"],
@@ -110,7 +105,7 @@ export async function GET(request: NextRequest) {
   const sort = (request.nextUrl.searchParams.get("sort") ??
     "volume") as MarketSort;
 
-  const {rwas, tokens, seeded} = await feed();
+  const {rwas, tokens, seeded, asOf} = await feed();
 
   // Sorted per request rather than per cache entry, so the four orderings share
   // one build instead of holding four copies of the same rows.
@@ -118,5 +113,6 @@ export async function GET(request: NextRequest) {
     rwas: sorted(rwas, sort),
     tokens: sorted(tokens, sort),
     seeded,
+    asOf,
   });
 }

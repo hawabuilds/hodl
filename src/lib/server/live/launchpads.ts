@@ -1,5 +1,6 @@
 import type {Launchpad} from "@/lib/types";
 import {multicallChunked, rpc} from "./chain";
+import {readManyShared, writeManyShared} from "./shared";
 import {getAddress, parseAbi, type Abi} from "viem";
 
 /**
@@ -157,8 +158,32 @@ function toLaunchpad(spec: LaunchpadSpec, address: string): Launchpad {
  * A token's factory and its proxy target are both fixed at deployment, so an
  * answer is good for the life of the process — including `null`, which saves
  * re-asking the majority of the feed that came from no known launchpad.
+ *
+ * This map is per process, which on a serverless deployment means per instance,
+ * and that was not enough on its own. A cold instance knew nothing, had to
+ * re-derive every attribution from the chain, and reported `launchpad: null`
+ * across the whole feed whenever those reads did not all land — which emptied
+ * the New tab on one request and filled it on the next, depending on which
+ * instance answered. So answers are also kept in the shared cache below, the
+ * way graduation and reward routing already are.
  */
 const known = new Map<string, Launchpad | null>();
+
+const BY_ID = new Map<string, LaunchpadSpec>(
+  LAUNCHPADS.map((pad) => [pad.id, pad] as const),
+);
+
+/**
+ * How long a shared answer stands.
+ *
+ * Attribution is immutable — a deployed token cannot change the factory that
+ * made it or the implementation its proxy points at — so a positive is good
+ * effectively forever and is held for a week. A negative is held for a day:
+ * it is almost always genuine, but capping it means a launchpad added to this
+ * file later is picked up without anyone having to clear a cache.
+ */
+const SHARED_TTL_FOUND = 7 * 24 * 60 * 60;
+const SHARED_TTL_NONE = 24 * 60 * 60;
 
 /** One `eth_call` across many contracts, failures included as nulls. */
 async function readAddresses(
@@ -199,6 +224,8 @@ export async function launchpadsFor(
   const out = new Map<string, Launchpad>();
   const wanted: string[] = [];
 
+  const unseen: string[] = [];
+
   for (const raw of addresses) {
     const address = raw.toLowerCase();
     if (known.has(address)) {
@@ -206,7 +233,38 @@ export async function launchpadsFor(
       if (hit) out.set(address, hit);
       continue;
     }
-    if (!wanted.includes(address)) wanted.push(address);
+    if (!unseen.includes(address)) unseen.push(address);
+  }
+
+  if (unseen.length === 0) return out;
+
+  // Ask the shared cache before the chain. On a cold instance this is the
+  // difference between one round trip to Redis and two multicalls across the
+  // whole feed — and, when those multicalls fail, between a feed that knows
+  // where its tokens came from and one that claims none of them came from
+  // anywhere.
+  const cached = await readManyShared<string | null>(
+    unseen.map((address) => `lp:${address}`),
+  );
+
+  for (const address of unseen) {
+    const hit = cached.get(`lp:${address}`);
+    if (hit === undefined) {
+      wanted.push(address);
+      continue;
+    }
+
+    const spec = hit === null ? null : (BY_ID.get(hit) ?? null);
+    // A stored id this build no longer recognises is treated as unknown
+    // rather than as "no launchpad", so renaming one here re-resolves it.
+    if (hit !== null && spec === null) {
+      wanted.push(address);
+      continue;
+    }
+
+    const launchpad = spec ? toLaunchpad(spec, address) : null;
+    known.set(address, launchpad);
+    if (launchpad) out.set(address, launchpad);
   }
 
   if (wanted.length === 0) return out;
@@ -268,11 +326,24 @@ export async function launchpadsFor(
     }),
   );
 
+  const store: {key: string; value: string | null; ttlSeconds: number}[] = [];
+
   for (const [address, spec] of resolved) {
     const launchpad = spec ? toLaunchpad(spec, address) : null;
     known.set(address, launchpad);
     if (launchpad) out.set(address, launchpad);
+    // Only the id is stored: the rest of the badge is built from this file, so
+    // a colour or a logo changed here reaches tokens already attributed.
+    store.push({
+      key: `lp:${address}`,
+      value: spec ? spec.id : null,
+      ttlSeconds: spec ? SHARED_TTL_FOUND : SHARED_TTL_NONE,
+    });
   }
+
+  // Deliberately not awaited: the answers are already in hand, and a reader
+  // should not wait on the write that only saves the next one work.
+  void writeManyShared(store);
 
   return out;
 }

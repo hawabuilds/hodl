@@ -1,6 +1,6 @@
 "use client";
 
-import {useCallback, useMemo, type ReactNode} from "react";
+import {useCallback, useEffect, useMemo, useRef, type ReactNode} from "react";
 import {PrivyProvider, usePrivy, useWallets} from "@privy-io/react-auth";
 import {useTheme} from "@/hooks/useTheme";
 import {robinhoodMainnet} from "@/config/chain";
@@ -36,8 +36,10 @@ export function PrivySessionProvider({children}: {children: ReactNode}) {
 }
 
 function PrivyBridge({children}: {children: ReactNode}) {
-  const {ready, authenticated, user, login, logout, exportWallet} = usePrivy();
+  const {ready, authenticated, user, login, logout, exportWallet, getAccessToken} =
+    usePrivy();
   const {wallets} = useWallets();
+  const syncedRef = useRef<string | null>(null);
 
   const embeddedWallet =
     user?.wallet?.address ??
@@ -57,6 +59,32 @@ function PrivyBridge({children}: {children: ReactNode}) {
     };
   }, [user, embeddedWallet]);
 
+  useEffect(() => {
+    if (!authenticated || !appUser) {
+      syncedRef.current = null;
+      return;
+    }
+    if (syncedRef.current === appUser.id) return;
+    syncedRef.current = appUser.id;
+
+    void getAccessToken().then(async (token) => {
+      if (!token) return;
+      await fetch("/api/me/profile", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          handle: appUser.handle,
+          displayName: appUser.displayName,
+          pfpUrl: appUser.pfpUrl,
+          wallet: appUser.embeddedWallet,
+        }),
+      });
+    });
+  }, [authenticated, appUser, getAccessToken]);
+
   const privyWallet = wallets.find((w) => w.walletClientType === "privy");
 
   const getEmbeddedProvider = useCallback(async () => {
@@ -73,6 +101,14 @@ function PrivyBridge({children}: {children: ReactNode}) {
     await exportWallet();
   }, [exportWallet]);
 
+  const fetchAccessToken = useCallback(async () => {
+    try {
+      return await getAccessToken();
+    } catch {
+      return null;
+    }
+  }, [getAccessToken]);
+
   const value: Session = useMemo(
     () => ({
       ready,
@@ -83,6 +119,7 @@ function PrivyBridge({children}: {children: ReactNode}) {
       mode: "privy",
       getEmbeddedProvider,
       exportEmbeddedWallet,
+      getAccessToken: fetchAccessToken,
     }),
     [
       ready,
@@ -92,6 +129,7 @@ function PrivyBridge({children}: {children: ReactNode}) {
       logout,
       getEmbeddedProvider,
       exportEmbeddedWallet,
+      fetchAccessToken,
     ],
   );
 

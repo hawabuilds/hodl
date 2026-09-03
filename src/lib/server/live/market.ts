@@ -5,7 +5,10 @@ import {
   community,
   pairsForToken,
   communityPairs,
+  poolsForKnownPayers,
+  quotePairsFromMegafilter,
   rwaPairs,
+  searchPairs,
   seriesFrom,
   socialsFrom,
   type CommunityToken,
@@ -17,7 +20,17 @@ import {holderRewardsFor} from "./holderRewards";
 import {graduatedFrom, marketProvesGraduated} from "./graduation";
 import {taxesFor} from "./taxes";
 import {totalSupplies} from "./chain";
-import {cached} from "./cache";
+import {cached, stale} from "./cache";
+import {readShared} from "./shared";
+import {tokenImages as geckoTokenImages, holderCountFor} from "./geckoterminal";
+import {deployImagesFor} from "./deployImages";
+import {allRewardPayingAddresses, rewardsFromDb} from "./rewards";
+import {
+  matchesSearchCategory,
+  qualifiesForSearch,
+  searchCategory,
+} from "@/lib/searchable";
+import {qualifiesForUniverse} from "@/lib/tokenUniverse";
 
 /**
  * The live market, in the shapes the UI already consumes.
@@ -34,17 +47,194 @@ import {cached} from "./cache";
  * further than a day of real price action does.
  */
 const TRUSTED_POOL_LIQUIDITY_USD = 25_000;
+const PFP_TTL_MS = 6 * 60 * 60_000;
 
 function round(value: number, dp = 6): number {
   return Number(value.toFixed(dp));
 }
 
-/** DexScreener profile photo, or the launchpad brand mark until one exists. */
-function tokenImageUrl(
+async function readPersistedPfp(address: string): Promise<string | null> {
+  const key = `token-pfp:${address}`;
+  const local = stale<string>(key);
+  if (local) return local;
+  const shared = await readShared<string>(key);
+  if (shared) {
+    void cached(key, PFP_TTL_MS, async () => shared);
+    return shared;
+  }
+  return null;
+}
+
+async function persistPfp(address: string, url: string): Promise<void> {
+  await cached(`token-pfp:${address}`, PFP_TTL_MS, async () => url);
+}
+
+function isUniswapPool(pair: DexPair): boolean {
+  const dex = (pair.dexId ?? "").toLowerCase();
+  if (dex.includes("uniswap")) return true;
+  return (pair.labels ?? []).some((label) => /v2|v3|v4/i.test(label));
+}
+
+function marketCapForToken(
+  address: string,
+  priceUsd: number,
   pair: DexPair,
-  launchpad: TokenAsset["launchpad"],
-): string | null {
-  return pair.info?.imageUrl ?? launchpad?.logoUrl ?? null;
+  supplies: Map<string, number>,
+): number {
+  const supply = supplies.get(address);
+  if (supply && supply > 0 && Number.isFinite(priceUsd)) {
+    return Math.round(supply * priceUsd);
+  }
+  return Math.round(pair.marketCap ?? pair.fdv ?? 0);
+}
+
+function paysRwaRewardsFor(
+  address: string,
+  dbRewards: Set<string> | null,
+  payingHolders: Set<string>,
+): boolean {
+  if (dbRewards === null || dbRewards.size === 0) {
+    return payingHolders.has(address);
+  }
+  return dbRewards.has(address);
+}
+
+function wouldQualifyForUniverse(
+  address: string,
+  side: CommunityToken,
+  launchpads: Map<string, TokenAsset["launchpad"]>,
+  chainGraduated: Set<string>,
+  payingHolders: Set<string>,
+  dbRewards: Set<string> | null,
+): boolean {
+  const launchpad = launchpads.get(address) ?? null;
+  const onChain = chainGraduated.has(address);
+  const graduated =
+    onChain ||
+    (launchpad !== null &&
+      side.rwaPaired &&
+      marketProvesGraduated(side.pair, side.rwaPaired));
+  if (!graduated || !isUniswapPool(side.pair)) return false;
+  if (side.rwaPaired) return true;
+  return (
+    paysRwaRewardsFor(address, dbRewards, payingHolders) ||
+    payingHolders.has(address)
+  );
+}
+
+/**
+ * Fully resolve PFPs for New-tab candidates before the general feed pass.
+ */
+async function ensureNewTabImages(
+  candidates: string[],
+  launchpads: Map<string, TokenAsset["launchpad"]>,
+): Promise<void> {
+  if (candidates.length === 0) return;
+
+  const poolLists = await Promise.all(
+    candidates.map((address) =>
+      pairsForToken(address).catch(() => [] as DexPair[]),
+    ),
+  );
+
+  await resolveTokenImages(candidates, poolLists.flat(), launchpads);
+}
+
+/**
+ * DexScreener-updated profile from any pool of the token — not only the
+ * RWA-paired one we list, which often has no `info` while a USDG pool does.
+ */
+function dexImagesFromPairs(pairs: Iterable<DexPair>): Map<string, string> {
+  const images = new Map<string, string>();
+  for (const pair of pairs) {
+    const url = pair.info?.imageUrl?.trim();
+    if (!url) continue;
+    for (const raw of [pair.baseToken?.address, pair.quoteToken?.address]) {
+      const address = raw?.toLowerCase();
+      if (!address || RWA_BY_ADDRESS.has(address) || images.has(address)) {
+        continue;
+      }
+      images.set(address, url);
+    }
+  }
+  return images;
+}
+
+/**
+ * Token PFP: DexScreener profile, then GeckoTerminal metadata, then the
+ * image the creator uploaded at deploy. Never the launchpad's own brand mark.
+ */
+async function resolveTokenImages(
+  addresses: string[],
+  pairs: Iterable<DexPair>,
+  launchpads: Map<string, TokenAsset["launchpad"]>,
+): Promise<Map<string, string>> {
+  const images = new Map<string, string>();
+
+  const persisted = await Promise.all(
+    addresses.map(async (address) => {
+      const url = await readPersistedPfp(address);
+      return [address, url] as const;
+    }),
+  );
+  for (const [address, url] of persisted) {
+    if (url) images.set(address, url);
+  }
+
+  for (const [address, url] of dexImagesFromPairs(pairs)) {
+    images.set(address, url);
+  }
+
+  let missing = addresses.filter((address) => !images.has(address));
+  if (missing.length > 0) {
+    const gecko = await geckoTokenImages(missing).catch(
+      () => new Map<string, string>(),
+    );
+    for (const [address, url] of gecko) {
+      if (!images.has(address)) images.set(address, url);
+    }
+  }
+
+  let still = addresses.filter((address) => !images.has(address));
+  if (still.length > 0) {
+    const deploy = await deployImagesFor(still, launchpads).catch(
+      () => new Map<string, string>(),
+    );
+    for (const [address, url] of deploy) {
+      if (!images.has(address)) images.set(address, url);
+    }
+  }
+
+  still = addresses.filter((address) => !images.has(address));
+  const launchpadMissing = still.filter((address) => {
+    const id = launchpads.get(address)?.id;
+    return id === "pons" || id === "long";
+  });
+  if (launchpadMissing.length > 0) {
+    const poolLists = await Promise.all(
+      launchpadMissing.map((address) =>
+        pairsForToken(address).catch(() => [] as DexPair[]),
+      ),
+    );
+    for (const [address, url] of dexImagesFromPairs(poolLists.flat())) {
+      if (!images.has(address)) images.set(address, url);
+    }
+    const stillLaunchpad = launchpadMissing.filter((a) => !images.has(a));
+    if (stillLaunchpad.length > 0) {
+      const deploy = await deployImagesFor(stillLaunchpad, launchpads).catch(
+        () => new Map<string, string>(),
+      );
+      for (const [address, url] of deploy) {
+        if (!images.has(address)) images.set(address, url);
+      }
+    }
+  }
+
+  await Promise.all(
+    [...images.entries()].map(([address, url]) => persistPfp(address, url)),
+  );
+
+  return images;
 }
 
 /**
@@ -142,6 +332,7 @@ export async function listRwas(): Promise<RwaAsset[]> {
       marketCapUsd: Math.round(
         (supplies.get(entry.address.toLowerCase()) ?? 0) * quote.priceUsd,
       ),
+      circulatingSupply: supplies.get(entry.address.toLowerCase()) ?? null,
       series: series.map((v) => round(v, 4)),
     });
   }
@@ -204,16 +395,24 @@ function deepestPoolForToken(
 }
 
 export async function listTokens(): Promise<TokenAsset[]> {
-  // The sweep is the complete set; the other two are kept because they also
-  // surface tokens paired against a quote asset rather than a stock token.
-  const [sweep, rwaSide, chainSide] = await Promise.all([
+  const knownPayers = await allRewardPayingAddresses();
+
+  const [sweep, rwaSide, chainSide, quoteSide, payerPools] = await Promise.all([
     allRwaPairs(),
     rwaPairs(),
     communityPairs(),
+    quotePairsFromMegafilter(),
+    poolsForKnownPayers(knownPayers),
   ]);
 
   const pairs = new Map<string, DexPair>();
-  for (const pair of [...sweep, ...rwaSide, ...chainSide]) {
+  for (const pair of [
+    ...sweep,
+    ...rwaSide,
+    ...chainSide,
+    ...quoteSide,
+    ...payerPools,
+  ]) {
     pairs.set(pair.pairAddress, pair);
   }
 
@@ -247,10 +446,41 @@ export async function listTokens(): Promise<TokenAsset[]> {
 
   const addresses = [...best.keys()];
   const launchpads = await launchpadsFor(addresses);
-  const [payingHolders, chainGraduated] = await Promise.all([
+  const [payingHolders, chainGraduated, dbRewards] = await Promise.all([
     holderRewardsFor(addresses),
     graduatedFrom(addresses, new Set(launchpads.keys())),
+    rewardsFromDb(addresses),
   ]);
+
+  const universeCandidates = addresses.filter((address) => {
+    const side = best.get(address);
+    if (!side) return false;
+    return wouldQualifyForUniverse(
+      address,
+      side,
+      launchpads,
+      chainGraduated,
+      payingHolders,
+      dbRewards,
+    );
+  });
+
+  await ensureNewTabImages(universeCandidates, launchpads);
+
+  const images = await resolveTokenImages(
+    addresses,
+    pairs.values(),
+    launchpads,
+  );
+
+  let supplies = new Map<string, number>();
+  try {
+    supplies = await totalSupplies(
+      addresses.map((address) => ({address, decimals: 18})),
+    );
+  } catch (error) {
+    console.error("token supply read failed; falling back to pool FDV", error);
+  }
 
   const out: TokenAsset[] = [];
 
@@ -270,6 +500,7 @@ export async function listTokens(): Promise<TokenAsset[]> {
       (launchpad !== null &&
         side.rwaPaired &&
         marketProvesGraduated(pair, side.rwaPaired));
+    const paysRwa = paysRwaRewardsFor(address, dbRewards, payingHolders);
 
     out.push({
       kind: "token",
@@ -277,7 +508,7 @@ export async function listTokens(): Promise<TokenAsset[]> {
       address,
       symbol: token.symbol,
       name: token.name,
-      imageUrl: tokenImageUrl(pair, launchpad),
+      imageUrl: images.get(address) ?? null,
       priceUsd: round(priceUsd, 10),
       changePct: round(pair.priceChange?.h24 ?? 0, 2),
       volume24hUsd: Math.round(pair.volume?.h24 ?? 0),
@@ -299,13 +530,17 @@ export async function listTokens(): Promise<TokenAsset[]> {
           changePct: round(pair.priceChange?.h24 ?? 0, 2),
         },
       },
-      marketCapUsd: Math.round(pair.marketCap ?? pair.fdv ?? 0),
+      marketCapUsd: marketCapForToken(address, priceUsd, pair, supplies),
+      circulatingSupply: supplies.get(address) ?? null,
       liquidityUsd: Math.round(pair.liquidity?.usd ?? 0),
       // Real detection is Part 06 and needs an RPC. Zero means "not measured",
       // not "none" — the Rewards filter stays inert until that lands.
       rewards24hUsd: 0,
       rewardsToHolders: payingHolders.has(address),
       graduated,
+      graduatedOnChain: onChain,
+      tradesOnUniswap: isUniswapPool(pair),
+      paysRwaRewards: paysRwa,
       holders: 0,
       createdAt: new Date(pair.pairCreatedAt ?? Date.now()).toISOString(),
       pairedTicker: quoteSymbol,
@@ -322,7 +557,30 @@ export async function listTokens(): Promise<TokenAsset[]> {
     });
   }
 
-  return out.sort((a, b) => b.volume24hUsd - a.volume24hUsd);
+  const filtered = out
+    .filter(qualifiesForUniverse)
+    .sort((a, b) => b.volume24hUsd - a.volume24hUsd);
+
+  logDiscoveryStats(pairs.size, addresses.length, filtered);
+
+  return filtered;
+}
+
+function logDiscoveryStats(
+  pairCount: number,
+  addressCount: number,
+  tokens: TokenAsset[],
+): void {
+  const universe = tokens.filter(qualifiesForUniverse);
+  const rwaPaired = universe.filter((token) => token.rwaPaired).length;
+  const quoteReward = universe.filter(
+    (token) =>
+      !token.rwaPaired &&
+      (token.paysRwaRewards || token.rewardsToHolders),
+  ).length;
+  console.info(
+    `listTokens discovery: pairs=${pairCount} addresses=${addressCount} universe=${universe.length} rwaPaired=${rwaPaired} quoteReward=${quoteReward}`,
+  );
 }
 
 /** Builds one feed row from the deepest eligible pool for a token address. */
@@ -331,7 +589,10 @@ function tokenFromSide(
   side: CommunityToken,
   launchpads: Map<string, TokenAsset["launchpad"]>,
   payingHolders: Set<string>,
-  graduated: Set<string>,
+  chainGraduated: Set<string>,
+  dbRewards: Set<string> | null,
+  imageUrl: string | null,
+  supplies: Map<string, number>,
 ): TokenAsset | null {
   const {pair, token, quoteSymbol} = side;
 
@@ -341,6 +602,12 @@ function tokenFromSide(
   const series = seriesFrom(pair);
   const version = (pair.labels ?? [])[0] ?? pair.dexId;
   const launchpad = launchpads.get(address) ?? null;
+  const onChain = chainGraduated.has(address);
+  const graduated =
+    onChain ||
+    (launchpad !== null &&
+      side.rwaPaired &&
+      marketProvesGraduated(pair, side.rwaPaired));
 
   return {
     kind: "token",
@@ -348,7 +615,7 @@ function tokenFromSide(
     address,
     symbol: token.symbol,
     name: token.name,
-    imageUrl: tokenImageUrl(pair, launchpad),
+    imageUrl,
     priceUsd: round(priceUsd, 10),
     changePct: round(pair.priceChange?.h24 ?? 0, 2),
     volume24hUsd: Math.round(pair.volume?.h24 ?? 0),
@@ -370,11 +637,15 @@ function tokenFromSide(
         changePct: round(pair.priceChange?.h24 ?? 0, 2),
       },
     },
-    marketCapUsd: Math.round(pair.marketCap ?? pair.fdv ?? 0),
+    marketCapUsd: marketCapForToken(address, priceUsd, pair, supplies),
+    circulatingSupply: supplies.get(address) ?? null,
     liquidityUsd: Math.round(pair.liquidity?.usd ?? 0),
     rewards24hUsd: 0,
     rewardsToHolders: payingHolders.has(address),
-    graduated: graduated.has(address),
+    graduated,
+    graduatedOnChain: onChain,
+    tradesOnUniswap: isUniswapPool(pair),
+    paysRwaRewards: paysRwaRewardsFor(address, dbRewards, payingHolders),
     holders: 0,
     createdAt: new Date(pair.pairCreatedAt ?? Date.now()).toISOString(),
     pairedTicker: quoteSymbol,
@@ -472,6 +743,7 @@ async function buildRwaAsset(entry: RegistryEntry): Promise<RwaAsset | null> {
     marketCapUsd: Math.round(
       (supplies.get(address) ?? 0) * quote.priceUsd,
     ),
+    circulatingSupply: supplies.get(address) ?? null,
     series: series.map((v) => round(v, 4)),
   };
 }
@@ -480,7 +752,7 @@ async function buildTokenAsset(wanted: string): Promise<TokenAsset | null> {
   const address = await resolveTokenAddress(wanted);
   if (!address) return null;
 
-  const [pools, rwaSide, chainSide, launchpads, payingHolders, graduated] =
+  const [pools, rwaSide, chainSide, launchpads, payingHolders, chainGraduated, dbRewards, supplies] =
     await Promise.all([
       pairsForToken(address),
       rwaPairs(),
@@ -488,12 +760,37 @@ async function buildTokenAsset(wanted: string): Promise<TokenAsset | null> {
       launchpadsFor([address]),
       holderRewardsFor([address]),
       graduatedFrom([address]),
+      rewardsFromDb([address]),
+      totalSupplies([{address, decimals: 18}]).catch(() => new Map<string, number>()),
     ]);
 
   const side = bestPoolForToken(address, pools, [...rwaSide, ...chainSide]);
   if (!side) return null;
 
-  return tokenFromSide(address, side, launchpads, payingHolders, graduated);
+  const images = await resolveTokenImages(
+    [address],
+    [...pools, ...rwaSide, ...chainSide],
+    launchpads,
+  );
+
+  const [asset, holders] = await Promise.all([
+    Promise.resolve(
+      tokenFromSide(
+        address,
+        side,
+        launchpads,
+        payingHolders,
+        chainGraduated,
+        dbRewards,
+        images.get(address) ?? null,
+        supplies,
+      ),
+    ),
+    holderCountFor(address).catch(() => 0),
+  ]);
+
+  if (!asset) return null;
+  return {...asset, holders};
 }
 
 async function loadAsset(
@@ -536,37 +833,157 @@ export async function getAsset(
   );
 }
 
+const TOKEN_ADDRESS = /^0x[a-f0-9]{40}$/;
+const SEARCH_INDEX_TTL_MS = 60_000;
+
+/** RWA universe tokens for search. */
+export async function searchableTokens(): Promise<TokenAsset[]> {
+  return cached("market:search-index", SEARCH_INDEX_TTL_MS, async () => {
+    const tokens = await listTokens();
+    return tokens.filter(qualifiesForSearch);
+  });
+}
+
+function scoreAsset(asset: Asset, q: string): number {
+  const symbol = (asset.kind === "rwa" ? asset.ticker : asset.symbol).toLowerCase();
+  const address = (
+    asset.kind === "rwa" ? asset.contractAddress : asset.address
+  ).toLowerCase();
+  const name = asset.name.toLowerCase();
+
+  if (symbol === q) return 100;
+  if (address === q) return 98;
+  if (address.startsWith(q) && q.length >= 4) return 95;
+  if (symbol.startsWith(q)) return 80;
+  if (name.startsWith(q)) return 70;
+  if (asset.kind === "token") {
+    if (asset.launchpad?.id === q) return 75;
+    if (
+      (q === "rewards" || q === "reward") &&
+      (asset.paysRwaRewards || asset.rewardsToHolders)
+    ) {
+      return 70;
+    }
+    if (q === "rwa" && asset.rwaPaired && asset.graduated) return 65;
+    if (asset.pairedTicker.toLowerCase() === q) return 60;
+  }
+  if (symbol.includes(q)) return 50;
+  if (name.includes(q)) return 40;
+  return 0;
+}
+
+function rankAssets(assets: Asset[], q: string): Asset[] {
+  return assets
+    .map((asset) => ({asset, score: scoreAsset(asset, q)}))
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score || b.asset.volume24hUsd - a.asset.volume24hUsd)
+    .map((row) => row.asset);
+}
+
+function alreadyHas(assets: Asset[], id: string): boolean {
+  const wanted = id.toLowerCase();
+  return assets.some(
+    (asset) =>
+      asset.id.toLowerCase() === wanted ||
+      (asset.kind === "token" && asset.address === wanted) ||
+      (asset.kind === "rwa" && asset.contractAddress.toLowerCase() === wanted),
+  );
+}
+
+/**
+ * Tokens DexScreener knows that the feed lists never built — a pasted
+ * contract, or a name that sits under the liquidity floor.
+ *
+ * Address hits are always merged. A text query only goes to DexScreener when
+ * the scored feed list is empty, so a ticker that already matches NVDA does
+ * not also spend a search round trip.
+ */
+async function extraSearchHits(
+  q: string,
+  already: Asset[],
+  isAddress: boolean,
+): Promise<Asset[]> {
+  if (isAddress) {
+    if (alreadyHas(already, q)) return [];
+    const hit = await getAsset("token", q).catch(() => null);
+    return hit ? [hit] : [];
+  }
+
+  const pairs = await searchPairs(q);
+  const seen = new Set(
+    already
+      .filter((asset): asset is TokenAsset => asset.kind === "token")
+      .map((asset) => asset.address),
+  );
+  const wanted: string[] = [];
+  for (const pair of pairs) {
+    const side = community(pair);
+    if (!side) continue;
+    const address = side.token.address.toLowerCase();
+    if (seen.has(address) || wanted.includes(address)) continue;
+    wanted.push(address);
+    if (wanted.length >= 20) break;
+  }
+
+  const hits = await Promise.all(
+    wanted.map((id) => getAsset("token", id).catch(() => null)),
+  );
+  return hits.filter((hit): hit is TokenAsset => hit !== null);
+}
+
+function mergeUnique(assets: Asset[]): Asset[] {
+  const seen = new Set<string>();
+  const out: Asset[] = [];
+  for (const asset of assets) {
+    if (seen.has(asset.id)) continue;
+    seen.add(asset.id);
+    out.push(asset);
+  }
+  return out;
+}
+
 /** Same ranking as the seeded search, over the live sets. */
 export async function searchAssets(query: string): Promise<Asset[]> {
   const q = query.trim().toLowerCase();
   if (!q) return [];
 
-  const [rwas, tokens] = await Promise.all([listRwas(), listTokens()]);
-  const all: Asset[] = [...tokens, ...rwas];
+  const category = searchCategory(q);
+  const [rwas, tokens, searchable] = await Promise.all([
+    listRwas(),
+    listTokens(),
+    searchableTokens(),
+  ]);
 
-  const score = (asset: Asset): number => {
-    const symbol = (asset.kind === "rwa" ? asset.ticker : asset.symbol).toLowerCase();
-    const address = (
-      asset.kind === "rwa" ? asset.contractAddress : asset.address
-    ).toLowerCase();
-    const name = asset.name.toLowerCase();
+  let pool: Asset[] = [...tokens, ...rwas];
 
-    if (symbol === q) return 100;
-    if (address.startsWith(q) && q.length >= 4) return 95;
-    if (symbol.startsWith(q)) return 80;
-    if (name.startsWith(q)) return 70;
-    if (asset.kind === "token" && asset.pairedTicker.toLowerCase() === q) return 60;
-    if (symbol.includes(q)) return 50;
-    if (name.includes(q)) return 40;
-    return 0;
-  };
+  if (category) {
+    return searchable
+      .filter((token) => matchesSearchCategory(token, category))
+      .sort((a, b) => b.volume24hUsd - a.volume24hUsd)
+      .slice(0, 100);
+  }
 
-  return all
-    .map((asset) => ({asset, score: score(asset)}))
-    .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score || b.asset.volume24hUsd - a.asset.volume24hUsd)
-    .slice(0, 40)
-    .map((row) => row.asset);
+  const indexHits = searchable.filter((token) => scoreAsset(token, q) > 0);
+  pool = mergeUnique([...pool, ...indexHits]);
+
+  const scored = rankAssets(pool, q).slice(0, 40);
+  const isAddress = TOKEN_ADDRESS.test(q);
+  if (!isAddress && scored.length > 0) return scored;
+
+  const extras = await extraSearchHits(q, scored, isAddress);
+  if (extras.length === 0) return scored;
+
+  const merged = mergeUnique([...scored, ...extras]);
+  const ranked = rankAssets(merged, q);
+
+  if (isAddress) {
+    const hit = extras[0];
+    if (hit && !ranked.some((asset) => asset.id === hit.id)) {
+      return mergeUnique([hit, ...ranked]).slice(0, 40);
+    }
+    return ranked;
+  }
+  return ranked.slice(0, 40);
 }
 
 /**

@@ -1,13 +1,17 @@
 "use client";
 
-import {useMemo, useState} from "react";
+import {useMemo, useState, useEffect} from "react";
 import {changePctForPoints, mergeTradesIntoChart} from "@/lib/chartLive";
+import {marketCapAt} from "@/lib/marketCap";
+import {publishPrice} from "@/lib/livePrice";
+import {useLivePrice} from "@/hooks/useLivePrice";
 import dynamic from "next/dynamic";
 import {useRouter} from "next/navigation";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {useAsset, useChart, useNews, useTrades} from "@/hooks/useAsset";
 import {cn} from "@/lib/cn";
 import {clock, compactMoney, percent, price as fmtPrice, shortAddress} from "@/lib/format";
+import {lastHomePath} from "@/lib/homeState";
 import {sectorFor} from "@/lib/sectors";
 import type {AssetKind, ChartPoint, Timeframe} from "@/lib/types";
 import {TIMEFRAMES} from "@/lib/types";
@@ -69,6 +73,17 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
     () => mergeTradesIntoChart(chart.points, trades.trades),
     [chart.points, trades.trades],
   );
+
+  // The tape is the freshest thing this app has, so it publishes into the
+  // shared price. The feed row for this same asset reads it too, which is what
+  // keeps the two surfaces showing one number.
+  const newestFill = trades.trades[0];
+  useEffect(() => {
+    if (!newestFill) return;
+    publishPrice(id, newestFill.priceUsd, Date.parse(newestFill.at));
+  }, [id, newestFill]);
+
+  const livePrice = useLivePrice(id);
   const liveChange =
     changePctForPoints(livePoints) ??
     chart.changePct ??
@@ -89,7 +104,7 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
     if (isLoading) return <AssetSkeleton />;
     return (
       <div className="pt-6">
-        <BackButton onClick={() => router.push("/home")} />
+        <BackButton onClick={() => router.push(lastHomePath())} />
         <p className="mt-5 text-[14px] text-muted">
           {error?.message ?? "That asset is not listed here."}
         </p>
@@ -102,23 +117,17 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
   // the start of the visible window.
   const latestTrade = trades.trades[0];
   const shownPrice =
-    scrubbed?.price ?? latestTrade?.priceUsd ?? asset.priceUsd;
+    scrubbed?.price ?? livePrice ?? latestTrade?.priceUsd ?? asset.priceUsd;
   const openPrice = livePoints[0]?.price ?? asset.priceUsd;
   const shownChange =
     scrubbed && openPrice > 0
       ? ((scrubbed.price - openPrice) / openPrice) * 100
       : liveChange;
 
-  // Market cap is price times supply, and supply does not change between
-  // polls — only price does, every time a fill lands. `asset.marketCapUsd`
-  // was a snapshot from the last ten-second market poll, so a page open on a
-  // busy pool showed a cap that visibly lagged every trade in the tape right
-  // below it. Recomputed from the same live price the header already shows,
-  // against the supply implied by the last real snapshot.
-  const impliedSupply =
-    asset.priceUsd > 0 ? asset.marketCapUsd / asset.priceUsd : 0;
-  const shownMarketCap =
-    impliedSupply > 0 ? shownPrice * impliedSupply : asset.marketCapUsd;
+  // One calculation, one price. Both live in shared modules precisely so the
+  // feed row for this asset and the panel further down this page cannot end up
+  // showing a different number from the header.
+  const shownMarketCap = marketCapAt(asset, shownPrice);
 
   return (
     <div className="pb-[calc(84px+env(safe-area-inset-bottom))]">
@@ -145,7 +154,6 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
           <Avatar
             name={symbol}
             src={asset.imageUrl}
-            fallbackSrc={asset.launchpad?.logoUrl}
             size={44}
           />
           <div className="min-w-0 flex-1">

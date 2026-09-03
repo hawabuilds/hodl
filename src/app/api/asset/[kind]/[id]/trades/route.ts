@@ -15,10 +15,10 @@ export async function GET(
   const kind = parseKind(params.kind);
   if (!kind) return notFound("Unknown asset kind.");
 
-  const {data: asset} = await fetchAsset(kind, params.id);
+  const {data: asset, seeded: assetIsSeeded} = await fetchAsset(kind, params.id);
   if (!asset) return notFound("No asset with that id.");
 
-  const {data, seeded} = await fetchTrades(asset, 300);
+  const {data, seeded} = await fetchTrades(asset, 300, assetIsSeeded);
 
   // When RPC is configured the tape merges chain head fills every ~2s. Without
   // it, only the indexer runs and polling faster just hammers a stale cache.

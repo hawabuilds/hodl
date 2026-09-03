@@ -3,8 +3,10 @@
 import Link from "next/link";
 import {useArrivals} from "@/hooks/useArrivals";
 import {usePrefetchAsset} from "@/hooks/usePrefetchAsset";
+import {useLivePrice} from "@/hooks/useLivePrice";
+import {marketCapAt} from "@/lib/marketCap";
 import {cn} from "@/lib/cn";
-import {compactMoney, percent, price as fmtPrice} from "@/lib/format";
+import {compactMoney, percent, price as fmtPrice, tokenAge} from "@/lib/format";
 import {SECTORS} from "@/lib/sectors";
 import {assetHref} from "@/lib/routes";
 import type {Asset} from "@/lib/types";
@@ -28,6 +30,10 @@ const SECTOR_LABEL = new Map(SECTORS.map((sector) => [sector.id, sector.label]))
  */
 export function AssetRow({asset, fresh}: {asset: Asset; fresh?: boolean}) {
   const prefetch = usePrefetchAsset();
+  // The same shared price the chart page publishes into, so a row and the page
+  // it opens show one market cap rather than two.
+  const livePrice = useLivePrice(asset.id);
+  const shownPrice = livePrice ?? asset.priceUsd;
   const warm = () => prefetch(asset.kind, asset.id);
   const positive = asset.changePct >= 0;
   const rwa = asset.kind === "rwa";
@@ -52,8 +58,8 @@ export function AssetRow({asset, fresh}: {asset: Asset; fresh?: boolean}) {
         <Avatar
           name={symbol}
           src={asset.imageUrl}
-          fallbackSrc={asset.launchpad?.logoUrl}
           size={40}
+          eager
         />
       )}
 
@@ -68,10 +74,19 @@ export function AssetRow({asset, fresh}: {asset: Asset; fresh?: boolean}) {
             <PairTicker ticker={asset.pairedTicker} />
           )}
         </div>
-        <div className="tnum mt-[3px] truncate text-[12.5px] font-semibold text-faint">
-          {rwa
-            ? (SECTOR_LABEL.get(asset.sector) ?? asset.name)
-            : `${compactMoney(asset.volume24hUsd)} Vol`}
+        <div className="tnum mt-[3px] flex items-center gap-2.5 truncate text-[12.5px] font-semibold">
+          {rwa ? (
+            <span className="text-faint">
+              {SECTOR_LABEL.get(asset.sector) ?? asset.name}
+            </span>
+          ) : (
+            <>
+              <span className="text-faint">
+                {compactMoney(asset.volume24hUsd)} Vol
+              </span>
+              <span className="text-muted">{tokenAge(asset.createdAt)}</span>
+            </>
+          )}
         </div>
       </div>
 
@@ -83,7 +98,9 @@ export function AssetRow({asset, fresh}: {asset: Asset; fresh?: boolean}) {
 
       <div className="flex shrink-0 flex-col items-end gap-[3px] text-right">
         <span className="tnum text-[15px] font-extrabold tracking-[-0.02em]">
-          {rwa ? fmtPrice(asset.priceUsd) : compactMoney(asset.marketCapUsd)}
+          {rwa
+            ? fmtPrice(shownPrice)
+            : compactMoney(marketCapAt(asset, shownPrice))}
           {rwa ? null : (
             <span className="ml-1 text-[11px] font-bold text-faint">MC</span>
           )}

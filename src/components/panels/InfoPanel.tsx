@@ -1,5 +1,7 @@
 "use client";
 
+import {marketCapAt, supplyOf} from "@/lib/marketCap";
+import {useLivePrice} from "@/hooks/useLivePrice";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {
   ageSince,
@@ -22,7 +24,12 @@ import {fmtPct} from "../ui/Badges";
  * already at the top of the page.
  */
 export function InfoPanel({token}: {token: TokenAsset}) {
-  const supply = token.priceUsd > 0 ? token.marketCapUsd / token.priceUsd : 0;
+  // Reads the same shared price and the same calculation as the header above
+  // it. These two disagreed on the same screen before, because the header
+  // rescaled to the live tape and this did not.
+  const livePrice = useLivePrice(token.id);
+  const shownPrice = livePrice ?? token.priceUsd;
+  const supply = supplyOf(token) ?? 0;
   // Depth relative to daily flow is the one derived number worth showing: a
   // large cap over a thin pool is the failure mode this page should expose.
   const turnover =
@@ -37,8 +44,8 @@ export function InfoPanel({token}: {token: TokenAsset}) {
       <dl className="grid grid-cols-2 gap-x-3 gap-y-0 overflow-hidden rounded-panel border border-hairline bg-card">
         <Stat label="Liquidity" value={compactMoney(token.liquidityUsd)} />
         <Stat label="24h volume" value={compactMoney(token.volume24hUsd)} />
-        <Stat label="Market cap" value={compactMoney(token.marketCapUsd)} />
-        <Stat label="Price" value={fmtPrice(token.priceUsd)} />
+        <Stat label="Market cap" value={compactMoney(marketCapAt(token, shownPrice))} />
+        <Stat label="Price" value={fmtPrice(shownPrice)} />
         <Stat label="Supply" value={compact(supply)} />
         <Stat label="Holders" value={compact(token.holders)} />
         <Stat

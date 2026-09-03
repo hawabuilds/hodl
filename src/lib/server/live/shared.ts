@@ -34,7 +34,27 @@ export const SHARED_CACHE = Boolean(URL_ && TOKEN);
 /** Requests are bounded: a slow cache must not outlast the thing it saves. */
 const TIMEOUT_MS = 1_500;
 
-async function command<T>(body: unknown[]): Promise<T | null> {
+/**
+ * What a read may wait, as against a write.
+ *
+ * A second and a half was the same budget for both, and for the pair sweep —
+ * three and a half megabytes of pool data — that was far too little to ever
+ * finish. So every cold instance abandoned a cached copy it could have had and
+ * rebuilt the sweep from DexScreener instead, which takes two to four minutes
+ * and only partly succeeds inside a request. That is what made the feed answer
+ * 451 tokens on one instance and 213 on the next.
+ *
+ * Waiting is the cheap side of this trade by three orders of magnitude: the
+ * read either lands in a few seconds or it does not, and what it replaces is
+ * minutes of upstream work. A write keeps the short budget, because the value
+ * is already in hand and nobody is waiting on it.
+ */
+const READ_TIMEOUT_MS = 8_000;
+
+async function command<T>(
+  body: unknown[],
+  timeoutMs: number = TIMEOUT_MS,
+): Promise<T | null> {
   if (!URL_ || !TOKEN) return null;
 
   try {
@@ -46,7 +66,7 @@ async function command<T>(body: unknown[]): Promise<T | null> {
       },
       body: JSON.stringify(body),
       cache: "no-store",
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!res.ok) return null;
@@ -60,7 +80,7 @@ async function command<T>(body: unknown[]): Promise<T | null> {
 
 /** A previously stored value, or null if there is none or no cache at all. */
 export async function readShared<T>(key: string): Promise<T | null> {
-  const raw = await command<string>(["GET", key]);
+  const raw = await command<string>(["GET", key], READ_TIMEOUT_MS);
   if (raw === null) return null;
   try {
     return JSON.parse(raw) as T;
@@ -107,7 +127,7 @@ export async function readManyShared<T>(
       },
       body: JSON.stringify(keys.map((key) => ["GET", key])),
       cache: "no-store",
-      signal: AbortSignal.timeout(TIMEOUT_MS * 2),
+      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
     });
 
     if (!res.ok) return found;

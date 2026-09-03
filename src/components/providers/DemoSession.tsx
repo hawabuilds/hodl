@@ -47,6 +47,7 @@ export function DemoSessionProvider({children}: {children: ReactNode}) {
       mode: "demo",
       getEmbeddedProvider: async () => null,
       exportEmbeddedWallet: null,
+      getAccessToken: async () => null,
     }),
     [ready, authenticated, login, logout],
   );

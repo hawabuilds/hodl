@@ -20,11 +20,9 @@ export const dynamic = "force-dynamic";
  */
 const feed = unstable_cache(
   async () => fetchFeed({window: "all", topic: "all"}),
-  // Bumped from "news-feed": Vercel's Data Cache outlives a deploy, so an
-  // entry built under the old key kept serving the un-diversified feed this
-  // was meant to replace no matter how long the new code had been live.
-  // A new key mints a guaranteed-cold entry; the old one just ages out.
-  ["news-feed-v2"],
+  // Bumped whenever sort/source logic changes: Vercel's Data Cache outlives
+  // a deploy, so an old key would keep serving the previous feed.
+  ["news-feed-v3"],
   {revalidate: 300},
 );
 
@@ -45,12 +43,14 @@ export async function GET(request: NextRequest) {
   const {data, seeded} = await feed();
 
   const cutoff = Date.now() - WINDOW_MS[window];
-  const items = data.filter((item) => {
-    if (Date.parse(item.publishedAt) < cutoff) return false;
-    if (topic === "posts") return item.kind === "account";
-    if (topic === "all") return true;
-    return item.topic === topic;
-  });
+  const items = data
+    .filter((item) => {
+      if (Date.parse(item.publishedAt) < cutoff) return false;
+      if (topic === "posts") return item.kind === "account";
+      if (topic === "all") return true;
+      return item.topic === topic;
+    })
+    .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
 
   return publicJson({items, window, topic, seeded}, {maxAge: 120, swr: 900});
 }

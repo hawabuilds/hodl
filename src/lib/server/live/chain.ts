@@ -1,6 +1,7 @@
 import {createPublicClient, http, parseAbi, type PublicClient} from "viem";
 import {robinhoodMainnet} from "@/config/chain";
 import {cached} from "./cache";
+import {recordPayload, recordRetry} from "./rpcMeter";
 
 /**
  * Direct chain reads.
@@ -20,7 +21,20 @@ export function rpc(): PublicClient {
       chain: robinhoodMainnet,
       transport: http(process.env.ALCHEMY_RPC_URL, {
         batch: true,
-        retryCount: 2,
+        // Retries are handled one level up in `attempt`, which has the backoff
+        // and knows the difference between a revert and an unreachable batch.
+        // Leaving this at two nested them: three tries here inside two there
+        // meant a failing batch cost six requests, and since the provider
+        // limits on compute rather than requests, the response to being
+        // throttled was to spend five more attempts making it worse.
+        retryCount: 0,
+        onFetchRequest: async (request) => {
+          try {
+            recordPayload(await request.clone().json());
+          } catch {
+            // Counting must never be able to break a request.
+          }
+        },
       }),
       batch: {multicall: {wait: 20}},
     }) as PublicClient;
@@ -52,7 +66,7 @@ const SUPPLY_TTL_MS = 10 * 60_000;
 export async function totalSupplies(
   tokens: {address: string; decimals: number}[],
 ): Promise<Map<string, number>> {
-  const key = `supply:${tokens.length}`;
+  const key = `supply:${[...tokens.map((t) => t.address.toLowerCase())].sort().join(",")}`;
 
   return cached(key, SUPPLY_TTL_MS, async () => {
     const out = new Map<string, number>();
@@ -209,7 +223,7 @@ export async function multicallChunked<T>(
 async function attempt<T>(
   batch: unknown[],
   label: string,
-  tries = 2,
+  tries = 3,
 ): Promise<{status: "success" | "failure"; result?: T; unreachable?: boolean}[]> {
   for (let attemptNo = 0; attemptNo < tries; attemptNo++) {
     try {
@@ -229,7 +243,12 @@ async function attempt<T>(
           unreachable: true,
         }));
       }
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attemptNo + 1)));
+      recordRetry();
+      // Backs off rather than repeating immediately: the limit is on compute
+      // per unit time, so spacing the retries is what lets one succeed.
+      await new Promise((resolve) =>
+        setTimeout(resolve, 400 * 2 ** attemptNo),
+      );
     }
   }
 

@@ -19,8 +19,8 @@ import {ogImages} from "./og";
 const BASE = "https://finnhub.io/api/v1";
 const TTL_MS = 10 * 60_000;
 
-/** Tickers to pull company news for. More than this exhausts the tier. */
-const COVERED = 24;
+/** Tickers to pull company news for. Cached ten minutes, so 48 stays inside the free tier. */
+const COVERED = 48;
 
 interface FinnhubArticle {
   id?: number;
@@ -152,61 +152,38 @@ const SHARED_IMAGE_LIMIT = 2;
 const OG_LOOKUPS = 90;
 
 /**
- * How many of one outlet in a row before another gets a turn.
+ * Market-wide wire copy, not tied to one ticker.
  *
- * Two feels natural; one would break up a wire's own multi-part coverage of
- * the same story unnecessarily.
+ * Company-news is Yahoo-heavy because that is who syndicates most per-symbol
+ * stories. The general category is where Reuters, Bloomberg, MarketWatch and
+ * CNBC actually show up, so the tab is not one outlet all the way down.
  */
-const MAX_CONSECUTIVE_SAME_SOURCE = 2;
+async function marketNews(): Promise<FeedItem[]> {
+  const params = new URLSearchParams({
+    category: "general",
+    token: process.env.NEWS_API_KEY ?? "",
+  });
 
-/**
- * Breaks up long runs from one outlet without touching the sort otherwise.
- *
- * Finnhub's wire is dominated by one syndicator on this feed — seventy of the
- * newest ninety-one articles measured were all Yahoo, so a straight recency
- * sort put an unbroken wall of one source at the top and a visitor scrolling
- * from the newest saw nothing else, which is what "I can only see Yahoo
- * articles" actually meant: everything else was there, just never reached.
- *
- * Only ever swaps in a *later* item that is still by publication time — moving
- * something up in time would misdate the feed — so the story you would have
- * read next just moves a few places earlier rather than the order rewriting
- * itself. Account posts are untouched: they are a small, separately displayed
- * set, and stealing their turn from the wire is not what this is for.
- */
-function diversifySources(items: FeedItem[]): FeedItem[] {
-  const articles = items.filter((item) => item.kind === "article");
-  const rest = items.filter((item) => item.kind !== "article");
-  if (articles.length <= MAX_CONSECUTIVE_SAME_SOURCE) return items;
+  const body = await getJson<FinnhubArticle[]>(
+    `${BASE}/news?${params}`,
+    9000,
+  );
 
-  const pool = [...articles];
-  const out: FeedItem[] = [];
-  let run: string | null = null;
-  let runLength = 0;
-
-  while (pool.length > 0) {
-    let index = 0;
-
-    if (run !== null && runLength >= MAX_CONSECUTIVE_SAME_SOURCE) {
-      const alt = pool.findIndex((item) => item.source !== run);
-      if (alt !== -1) index = alt;
-    }
-
-    const [next] = pool.splice(index, 1);
-    out.push(next);
-
-    if (next.source === run) runLength++;
-    else {
-      run = next.source;
-      runLength = 1;
-    }
-  }
-
-  // Accounts were never part of the run-limiting pass; put them back exactly
-  // where recency already placed them relative to the reordered articles is
-  // not meaningful here since they render in their own section, so they are
-  // simply appended in their original relative order.
-  return [...out, ...rest];
+  return (Array.isArray(body) ? body : [])
+    .slice(0, 40)
+    .map((article) => {
+      const hay = `${article.headline ?? ""} ${article.summary ?? ""} ${article.related ?? ""}`;
+      const topic: "rwa" | "robinhood" = /\b(robinhood|hood)\b/i.test(hay)
+        ? "robinhood"
+        : "rwa";
+      const related = (article.related ?? "")
+        .split(",")
+        .map((ticker) => ticker.trim().toUpperCase())
+        .filter(Boolean)
+        .slice(0, 6);
+      return toFeedItem(article, topic, related);
+    })
+    .filter((item): item is FeedItem => item !== null);
 }
 
 function stripOutletLogos(items: FeedItem[]): FeedItem[] {
@@ -228,6 +205,7 @@ async function buildFeed(): Promise<FeedItem[]> {
     process.env.NEWS_API_KEY
       ? Promise.all([
           companyNews("HOOD", "robinhood", []).catch(() => []),
+          marketNews().catch(() => []),
           ...RWA_REGISTRY.slice(0, COVERED).map((entry) =>
             companyNews(entry.ticker, "rwa", [entry.ticker], entry.name)
               .then((items) => items.slice(0, 4))
@@ -245,10 +223,8 @@ async function buildFeed(): Promise<FeedItem[]> {
     if (!seen.has(item.id)) seen.set(item.id, item);
   }
 
-  const items = diversifySources(
-    stripOutletLogos([...seen.values()]).sort(
-      (a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt),
-    ),
+  const items = stripOutletLogos([...seen.values()]).sort(
+    (a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt),
   );
 
   // The article's own lead image, read from its OpenGraph tags. Only for the

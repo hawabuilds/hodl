@@ -46,6 +46,16 @@ export interface RwaAsset {
   changePct: number;
   volume24hUsd: number;
   marketCapUsd: number;
+  /**
+   * Units in circulation, read from the chain, or null when that read failed
+   * and `marketCapUsd` came from the indexer instead.
+   *
+   * Carried explicitly so a surface showing a cap at a fresher price multiplies
+   * the real supply rather than dividing the rounded cap back by the rounded
+   * price to guess at one — a round trip that loses precision and, when the
+   * cap never was supply times price, invents a supply that does not exist.
+   */
+  circulatingSupply: number | null;
   /** Card sparkline. The chart page fetches its own, denser series. */
   series: number[];
 }
@@ -63,6 +73,16 @@ export interface TokenAsset {
   changePct: number;
   volume24hUsd: number;
   marketCapUsd: number;
+  /**
+   * Units in circulation, read from the chain, or null when that read failed
+   * and `marketCapUsd` came from the indexer instead.
+   *
+   * Carried explicitly so a surface showing a cap at a fresher price multiplies
+   * the real supply rather than dividing the rounded cap back by the rounded
+   * price to guess at one — a round trip that loses precision and, when the
+   * cap never was supply times price, invents a supply that does not exist.
+   */
+  circulatingSupply: number | null;
   liquidityUsd: number;
   /**
    * Pool fees earned over the last 24 hours and paid back to liquidity
@@ -81,6 +101,15 @@ export interface TokenAsset {
    * is the curve's own reserve rather than a market.
    */
   graduated: boolean;
+  /** Graduation confirmed on-chain via Pons factory phase or Long pool(). */
+  graduatedOnChain: boolean;
+  /** Listed pool is on Uniswap (post-graduation AMM), not the bonding curve. */
+  tradesOnUniswap: boolean;
+  /**
+   * Pays holders in RWA stock tokens (indexed in Supabase). When the DB is
+   * unavailable the feed falls back to `rewardsToHolders`.
+   */
+  paysRwaRewards: boolean;
   /**
    * Volume and price move over each window the feed offers, so a filter set to
    * "1h" ranks on the hour rather than re-slicing a day's figure.
@@ -139,7 +168,7 @@ export interface ChartPoint {
   price: number;
 }
 
-export const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"] as const;
+export const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1D"] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
 
 /** Windows for the portfolio chart, which is read over months rather than hours. */

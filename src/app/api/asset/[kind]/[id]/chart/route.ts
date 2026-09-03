@@ -18,7 +18,7 @@ export async function GET(
   try {
     const target = await live.poolFor(kind, params.id);
     if (target) {
-      const points = await gecko.candles(target.pool, timeframe);
+      const points = await gecko.candles(target.pool, timeframe, target.token);
       if (points.length > 1) {
         const first = points[0]?.price ?? 0;
         const last = points[points.length - 1]?.price ?? 0;
@@ -38,6 +38,19 @@ export async function GET(
     }
   } catch (error) {
     console.error("live chart failed", error);
+  }
+
+  // A live asset with no candles yet gets an empty chart rather than the
+  // simulated walk: inventing a history for a real token is what drew prices
+  // in the wrong range, flickered red and green on every poll, and scrubbed
+  // out to market caps in the billions. Only a genuinely simulated asset —
+  // one the live sources do not know at all — still gets the sample series.
+  const live_ = await live.getAsset(kind, params.id).catch(() => null);
+  if (live_) {
+    return publicJson(
+      {timeframe, points: [], changePct: 0, seeded: false},
+      {maxAge: 30, swr: 300},
+    );
   }
 
   const asset = seeded.getAsset(kind, params.id);

@@ -1,4 +1,6 @@
 import type {ChartPoint, Timeframe, Trade} from "@/lib/types";
+import type {DexPair} from "./dexscreener";
+import {RWA_REGISTRY} from "./robinhood";
 import {cached, stale} from "./cache";
 
 /**
@@ -62,6 +64,13 @@ const CANDLE_TTL_MS = API_KEY ? 20_000 : 60_000;
  */
 const TRADE_TTL_MS = API_KEY ? 2_000 : 12_000;
 const POOL_TTL_MS = 30 * 60_000;
+const RWA_SWEEP_TTL_MS = 5 * 60_000;
+const MEGAFILTER_TTL_MS = 30 * 60_000;
+const SWEEP_CONCURRENCY = 10;
+const POOLS_PAGE_SIZE = 20;
+const POOLS_MAX_PAGES = 50;
+const MEGAFILTER_MAX_PAGES = 100;
+const MIN_POOL_LIQUIDITY_USD = 1_000;
 /** GeckoTerminal returns up to 300 fills per pool; cache the full page. */
 const TRADES_PAGE = 300;
 
@@ -189,6 +198,96 @@ function tokenIdToAddress(id: string | undefined): string {
   return (id ?? "").replace(`${NETWORK}_`, "").toLowerCase();
 }
 
+function num(value: string | undefined): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function poolRowToOnchain(
+  row: NonNullable<TokenPoolsResponse["data"]>[number],
+  tokens: Map<string, {address?: string; name?: string; symbol?: string}>,
+): OnchainPool | null {
+  const a = row.attributes;
+  if (!a?.address) return null;
+
+  const baseId = row.relationships?.base_token?.data?.id;
+  const quoteId = row.relationships?.quote_token?.data?.id;
+  const baseMeta = tokens.get(baseId ?? "");
+  const quoteMeta = tokens.get(quoteId ?? "");
+  const baseAddress = tokenIdToAddress(baseId);
+  const quoteAddress = tokenIdToAddress(quoteId);
+  if (!baseAddress || !quoteAddress) return null;
+
+  return {
+    chainId: NETWORK,
+    dexId: "uniswap",
+    labels: /^0x[0-9a-f]{64}$/i.test(a.address) ? ["v4"] : ["v3"],
+    pairAddress: a.address,
+    baseToken: {
+      address: baseAddress,
+      name: baseMeta?.name ?? "",
+      symbol: baseMeta?.symbol ?? "",
+    },
+    quoteToken: {
+      address: quoteAddress,
+      name: quoteMeta?.name ?? "",
+      symbol: quoteMeta?.symbol ?? "",
+    },
+    priceUsd: a.base_token_price_usd,
+    liquidity: {usd: num(a.reserve_in_usd)},
+    volume: {
+      m5: num(a.volume_usd?.m5),
+      h1: num(a.volume_usd?.h1),
+      h6: num(a.volume_usd?.h6),
+      h24: num(a.volume_usd?.h24),
+    },
+    priceChange: {
+      m5: num(a.price_change_percentage?.m5),
+      h1: num(a.price_change_percentage?.h1),
+      h6: num(a.price_change_percentage?.h6),
+      h24: num(a.price_change_percentage?.h24),
+    },
+    marketCap: num(a.market_cap_usd),
+    fdv: num(a.fdv_usd),
+    pairCreatedAt: a.pool_created_at ? Date.parse(a.pool_created_at) : undefined,
+  };
+}
+
+function parsePoolsBody(body: TokenPoolsResponse | null): OnchainPool[] {
+  const rows = body?.data ?? [];
+  if (rows.length === 0) return [];
+
+  const tokens = new Map(
+    (body?.included ?? []).map((entry) => [entry.id ?? "", entry.attributes ?? {}]),
+  );
+
+  const out: OnchainPool[] = [];
+  for (const row of rows) {
+    const pool = poolRowToOnchain(row, tokens);
+    if (pool) out.push(pool);
+  }
+  return out;
+}
+
+async function fetchPoolsPage(path: string): Promise<OnchainPool[]> {
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      headers: {accept: "application/json", ...authHeaders()},
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as TokenPoolsResponse;
+    return parsePoolsBody(body);
+  } catch {
+    return [];
+  }
+}
+
+/** CoinGecko pool rows in the shape the feed already consumes. */
+export function onchainPoolToDexPair(pool: OnchainPool): DexPair {
+  return {...pool};
+}
+
 /**
  * Every pool CoinGecko knows for one token, paginated.
  *
@@ -208,99 +307,123 @@ export async function poolsForToken(
   maxPages = 3,
 ): Promise<OnchainPool[]> {
   if (!API_KEY) return [];
+  return poolsForTokenAllPages(address, maxPages);
+}
+
+/** Full pagination — stops when a page is short or empty. */
+export async function poolsForTokenAllPages(
+  address: string,
+  maxPages = POOLS_MAX_PAGES,
+): Promise<OnchainPool[]> {
+  if (!API_KEY) return [];
 
   const out: OnchainPool[] = [];
+  const wanted = address.toLowerCase();
 
   for (let page = 1; page <= maxPages; page++) {
-    let body: TokenPoolsResponse | null;
-    try {
-      const res = await fetch(
-        `${BASE}/networks/${NETWORK}/tokens/${address}/pools?page=${page}&include=base_token,quote_token`,
-        {headers: {accept: "application/json", ...authHeaders()}, cache: "no-store"},
-      );
-      if (!res.ok) break;
-      body = (await res.json()) as TokenPoolsResponse;
-    } catch {
-      break;
-    }
-
-    const rows = body?.data ?? [];
-    if (rows.length === 0) break;
-
-    const tokens = new Map(
-      (body?.included ?? []).map((entry) => [
-        entry.id ?? "",
-        entry.attributes ?? {},
-      ]),
+    const pagePools = await fetchPoolsPage(
+      `/networks/${NETWORK}/tokens/${wanted}/pools?page=${page}&include=base_token,quote_token`,
     );
-
-    for (const row of rows) {
-      const a = row.attributes;
-      if (!a?.address) continue;
-
-      const baseId = row.relationships?.base_token?.data?.id;
-      const quoteId = row.relationships?.quote_token?.data?.id;
-      const baseMeta = tokens.get(baseId ?? "");
-      const quoteMeta = tokens.get(quoteId ?? "");
-      const baseAddress = tokenIdToAddress(baseId);
-      const quoteAddress = tokenIdToAddress(quoteId);
-      if (!baseAddress || !quoteAddress) continue;
-
-      const num = (value: string | undefined) => {
-        const n = Number(value);
-        return Number.isFinite(n) ? n : undefined;
-      };
-
-      out.push({
-        chainId: NETWORK,
-        dexId: "uniswap",
-        // Version detection elsewhere in the app goes by address shape — a
-        // 32-byte value is a v4 pool id, a 20-byte one a v3 pool address — so
-        // this only needs to match that same convention for the description
-        // string that reads it, not carry separate logic.
-        labels: /^0x[0-9a-f]{64}$/i.test(a.address) ? ["v4"] : ["v3"],
-        pairAddress: a.address,
-        baseToken: {
-          address: baseAddress,
-          name: baseMeta?.name ?? "",
-          symbol: baseMeta?.symbol ?? "",
-        },
-        quoteToken: {
-          address: quoteAddress,
-          name: quoteMeta?.name ?? "",
-          symbol: quoteMeta?.symbol ?? "",
-        },
-        priceUsd: a.base_token_price_usd,
-        liquidity: {usd: num(a.reserve_in_usd)},
-        volume: {
-          m5: num(a.volume_usd?.m5),
-          h1: num(a.volume_usd?.h1),
-          h6: num(a.volume_usd?.h6),
-          h24: num(a.volume_usd?.h24),
-        },
-        priceChange: {
-          m5: num(a.price_change_percentage?.m5),
-          h1: num(a.price_change_percentage?.h1),
-          h6: num(a.price_change_percentage?.h6),
-          h24: num(a.price_change_percentage?.h24),
-        },
-        marketCap: num(a.market_cap_usd),
-        fdv: num(a.fdv_usd),
-        pairCreatedAt: a.pool_created_at
-          ? Date.parse(a.pool_created_at)
-          : undefined,
-      });
-    }
-
-    // A page short of twenty is the last one; no point asking again.
-    if (rows.length < 20) break;
+    if (pagePools.length === 0) break;
+    out.push(...pagePools);
+    if (pagePools.length < POOLS_PAGE_SIZE) break;
   }
 
   return out;
 }
 
+/**
+ * Every pool for every stock token in the registry, via CoinGecko pagination.
+ *
+ * DexScreener caps at thirty pools per ticker; this is the complete index when
+ * a paid key is configured.
+ */
+export async function rwaRegistryPools(): Promise<OnchainPool[]> {
+  if (!AUTHENTICATED) return [];
+
+  const key = "gt:rwa-sweep";
+  const load = async () => {
+    const addresses = RWA_REGISTRY.map((entry) => entry.address);
+    const seen = new Map<string, OnchainPool>();
+    let index = 0;
+
+    async function worker() {
+      while (index < addresses.length) {
+        const address = addresses[index++];
+        try {
+          for (const pool of await poolsForTokenAllPages(address)) {
+            seen.set(pool.pairAddress, pool);
+          }
+        } catch {
+          // One ticker failing costs its pools, not the sweep.
+        }
+      }
+    }
+
+    await Promise.all(
+      Array.from(
+        {length: Math.min(SWEEP_CONCURRENCY, addresses.length)},
+        worker,
+      ),
+    );
+
+    return [...seen.values()];
+  };
+
+  try {
+    return await cached(key, RWA_SWEEP_TTL_MS, load);
+  } catch (error) {
+    console.error("gecko rwa sweep failed", error);
+  }
+
+  return stale<OnchainPool[]>(key) ?? [];
+}
+
+/**
+ * Every liquid Uniswap pool CoinGecko indexes on Robinhood, via megafilter.
+ *
+ * Used to find USDG/WETH community markets that never appear on an RWA ticker's
+ * pair page.
+ */
+export async function megafilterPools(): Promise<OnchainPool[]> {
+  if (!AUTHENTICATED) return [];
+
+  const key = "gt:megafilter:robinhood";
+  const load = async () => {
+    const seen = new Map<string, OnchainPool>();
+
+    for (let page = 1; page <= MEGAFILTER_MAX_PAGES; page++) {
+      const params = new URLSearchParams({
+        networks: NETWORK,
+        reserve_usd_min: String(MIN_POOL_LIQUIDITY_USD),
+        sort: "reserve_usd_desc",
+        page: String(page),
+      });
+      const pagePools = await fetchPoolsPage(
+        `/pools/megafilter?${params}&include=base_token,quote_token`,
+      );
+      if (pagePools.length === 0) break;
+      for (const pool of pagePools) {
+        seen.set(pool.pairAddress, pool);
+      }
+      if (pagePools.length < POOLS_PAGE_SIZE) break;
+    }
+
+    return [...seen.values()];
+  };
+
+  try {
+    return await cached(key, MEGAFILTER_TTL_MS, load);
+  } catch (error) {
+    console.error("gecko megafilter failed", error);
+  }
+
+  return stale<OnchainPool[]>(key) ?? [];
+}
+
 /** How each of the app's timeframes maps onto GeckoTerminal's buckets. */
 const BUCKETS: Record<Timeframe, {path: string; aggregate?: number}> = {
+  "1m": {path: "minute", aggregate: 1},
   "5m": {path: "minute", aggregate: 5},
   "15m": {path: "minute", aggregate: 15},
   "1h": {path: "hour"},
@@ -313,23 +436,38 @@ interface OhlcvResponse {
 }
 
 /**
- * Candles for a pool, oldest first, in the shape `PriceChart` already takes.
+ * Buckets from coarsest to finest.
  *
- * Only the close is used — the component draws a line, not a candlestick — but
- * the full OHLC is what the endpoint returns and what a candlestick chart would
- * need if one is ever added.
+ * A pool that opened an hour ago has exactly one hourly candle and no daily
+ * one, and a single point is not a chart — it used to send every freshly
+ * launched token to the simulated series instead, which is the whole of why
+ * new tokens charted a price history that never happened. Stepping down the
+ * ladder until a bucket actually has history is what puts a token's first
+ * minutes on screen, starting where its pool opened.
  */
-export async function candles(
+const BUCKET_LADDER: Timeframe[] = ["1D", "4h", "1h", "15m", "5m", "1m"];
+
+/** Points below which a finer bucket is worth asking for. */
+const ENOUGH_TO_DRAW = 12;
+
+/** One bucket's worth of closes, oldest first. Empty when the pool has none. */
+async function candlesAt(
   pool: string,
   timeframe: Timeframe,
-  limit = 120,
+  token: string | null,
+  limit: number,
 ): Promise<ChartPoint[]> {
   const bucket = BUCKETS[timeframe];
-  const key = `gt:ohlcv:${pool}:${timeframe}`;
+  const key = `gt:ohlcv:${pool}:${timeframe}:${token ?? "base"}`;
 
   const load = async (): Promise<ChartPoint[]> => {
     const params = new URLSearchParams({limit: String(limit)});
     if (bucket.aggregate) params.set("aggregate", String(bucket.aggregate));
+    // Without this the series describes the pool's base token. On a pool that
+    // quotes the other way round that is the counterparty — charting a stock
+    // worth hundreds of dollars as if it were a token worth a fraction of a
+    // cent, which then multiplied out to a market cap in the billions.
+    if (token) params.set("token", token);
 
     const body = await get<OhlcvResponse>(
       `/networks/${NETWORK}/pools/${pool}/ohlcv/${bucket.path}?${params}`,
@@ -350,6 +488,42 @@ export async function candles(
     // fall through
   }
   return stale<ChartPoint[]>(key) ?? [];
+}
+
+/**
+ * Candles for a pool, oldest first, in the shape `PriceChart` already takes.
+ *
+ * Only the close is used — the component draws a line, not a candlestick — but
+ * the full OHLC is what the endpoint returns and what a candlestick chart would
+ * need if one is ever added.
+ *
+ * A mature pool answers on the first request and costs exactly what it always
+ * did; only a pool too young to fill the asked-for bucket walks further down.
+ */
+export async function candles(
+  pool: string,
+  timeframe: Timeframe,
+  /** The asset whose price this is, so a quote-side pool still reads right. */
+  token: string | null = null,
+  limit = 120,
+): Promise<ChartPoint[]> {
+  const start = BUCKET_LADDER.indexOf(timeframe);
+  const ladder = start === -1 ? [timeframe] : BUCKET_LADDER.slice(start);
+
+  let best: ChartPoint[] = [];
+
+  for (const bucket of ladder) {
+    const points = await candlesAt(pool, bucket, token, limit);
+    if (points.length > best.length) best = points;
+    // Enough to read as a shape rather than a straight segment between two
+    // dots. A pool an hour old clears this on minutes where it could not on
+    // hours, which is exactly the case this ladder exists for.
+    if (best.length >= ENOUGH_TO_DRAW) break;
+  }
+
+  // Two points still beats none — it is a real open and a real close — but a
+  // lone candle is not a chart and must not be padded into one.
+  return best.length > 1 ? best : [];
 }
 
 interface TradesResponse {
@@ -458,4 +632,83 @@ export async function trades(
   const previous = stale<Trade[]>(key);
   if (previous && previous.length > 0) return previous.slice(0, limit);
   return [];
+}
+
+const TOKEN_IMAGE_TTL_MS = 6 * 60 * 60_000;
+const TOKEN_IMAGE_BATCH = 30;
+
+interface TokenImageRow {
+  attributes?: {address?: string; image_url?: string};
+}
+
+function usableTokenImage(url: string | undefined): string | null {
+  if (!url?.trim()) return null;
+  if (/missing|placeholder|default/i.test(url)) return null;
+  return url.trim();
+}
+
+/**
+ * Deploy-time / metadata art GeckoTerminal indexed for these tokens.
+ *
+ * DexScreener's pair `info.imageUrl` is the community-updated profile and
+ * wins when it exists. This is the fallback for tokens that have not had a
+ * profile takeover yet — usually the image uploaded at launch.
+ */
+export async function tokenImages(
+  addresses: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [
+    ...new Set(addresses.map((address) => address.toLowerCase())),
+  ].filter(Boolean);
+
+  for (let i = 0; i < unique.length; i += TOKEN_IMAGE_BATCH) {
+    const batch = unique.slice(i, i + TOKEN_IMAGE_BATCH);
+    const key = `gt:img:${batch.join(",")}`;
+    try {
+      const loaded = await cached(key, TOKEN_IMAGE_TTL_MS, async () => {
+        const body = await get<{data?: TokenImageRow[]}>(
+          `/networks/${NETWORK}/tokens/multi/${batch.join(",")}`,
+        );
+        const found: Record<string, string> = {};
+        for (const row of body?.data ?? []) {
+          const address = row.attributes?.address?.toLowerCase();
+          const image = usableTokenImage(row.attributes?.image_url);
+          if (address && image) found[address] = image;
+        }
+        return found;
+      });
+      for (const [address, image] of Object.entries(loaded)) {
+        out.set(address, image);
+      }
+    } catch {
+      // One batch failing costs those images, not the feed.
+    }
+  }
+
+  return out;
+}
+
+const HOLDER_TTL_MS = 30 * 60_000;
+
+interface TokenInfoRow {
+  attributes?: {holders?: {count?: number}};
+}
+
+/** Holder count from GeckoTerminal token info — chart page only. */
+export async function holderCountFor(address: string): Promise<number> {
+  const wanted = address.toLowerCase();
+  const key = `gt:holders:${wanted}`;
+  try {
+    const count = await cached(key, HOLDER_TTL_MS, async () => {
+      const body = await get<{data?: TokenInfoRow}>(
+        `/networks/${NETWORK}/tokens/${wanted}/info`,
+      );
+      const n = body?.data?.attributes?.holders?.count;
+      return typeof n === "number" && n >= 0 ? n : 0;
+    });
+    return count;
+  } catch {
+    return 0;
+  }
 }

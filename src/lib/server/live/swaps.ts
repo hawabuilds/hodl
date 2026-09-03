@@ -5,7 +5,8 @@ import {
 } from "viem";
 import type {Trade} from "@/lib/types";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
-import {cached} from "./cache";
+import {cachedLocal} from "./cache";
+import {recordCalls} from "./rpcMeter";
 import {QUOTE_ASSETS} from "./dexscreener";
 
 /**
@@ -47,8 +48,29 @@ const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951";
  */
 const BLOCKS = 9n;
 
-/** Each tape poll reads the chain fresh — caching here made fills feel stuck. */
-const TTL_MS = 0;
+/**
+ * How long one token's head-of-tape answer stands.
+ *
+ * Zero meant every reader of every token asked the chain directly, with no
+ * cache and — because the cache helper is also where in-flight requests are
+ * shared — no deduplication either. Ten people watching one token in the same
+ * second produced twenty chain requests, seventeen of them byte-identical.
+ * Measured, not inferred.
+ *
+ * Deliberately just under the two-second poll cadence: short enough that no
+ * reader is ever handed something older than their own refresh interval, long
+ * enough that simultaneous readers of a token collapse onto one request.
+ */
+const TTL_MS = 1_500;
+
+/**
+ * How long the chain head stands, shared by every token.
+ *
+ * Every tape read began by asking for the block number, so the cost scaled
+ * with viewers times tokens for a number that is the same for all of them and
+ * changes about once a second.
+ */
+const HEAD_TTL_MS = 1_000;
 
 interface RawLog {
   address: string;
@@ -63,6 +85,8 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T> {
   const url = process.env.ALCHEMY_RPC_URL;
   if (!url) throw new Error("no rpc configured");
 
+  recordCalls([method]);
+
   const res = await fetch(url, {
     method: "POST",
     headers: {"content-type": "application/json"},
@@ -74,6 +98,14 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T> {
   const body = (await res.json()) as {result?: T; error?: {message: string}};
   if (body.error) throw new Error(body.error.message);
   return body.result as T;
+}
+
+/** The chain head, read once a second for the whole process. */
+async function headBlock(): Promise<bigint> {
+  const hex = await cachedLocal("chain:head", HEAD_TTL_MS, () =>
+    rpc<string>("eth_blockNumber", []),
+  );
+  return BigInt(hex);
 }
 
 const isPoolId = (value: string) => /^0x[0-9a-fA-F]{64}$/.test(value);
@@ -103,7 +135,7 @@ export async function recentSwaps(
     // amounts is ours follows from comparing them — no need to ask the pool.
     const oursIsToken0 = ours < other;
 
-    const head = BigInt(await rpc<string>("eth_blockNumber", []));
+    const head = await headBlock();
     const from = "0x" + (head - BLOCKS).toString(16);
     const to = "0x" + head.toString(16);
 
@@ -213,13 +245,10 @@ export async function recentSwaps(
     return trades.sort(compareTradesNewestFirst);
   };
 
-  if (TTL_MS <= 0) {
-    try {
-      return await load();
-    } catch {
-      return [];
-    }
+  try {
+    return await cachedLocal(`swaps:${pool}:${ours}`, TTL_MS, load);
+  } catch {
+    // A tape that cannot be read costs freshness, never the page.
+    return [];
   }
-
-  return cached(`swaps:${pool}:${ours}`, TTL_MS, load);
 }
