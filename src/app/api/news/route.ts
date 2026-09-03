@@ -1,6 +1,6 @@
 import {unstable_cache} from "next/cache";
 import type {NextRequest} from "next/server";
-import {json} from "@/lib/server/http";
+import {json, publicJson} from "@/lib/server/http";
 import {fetchFeed} from "@/lib/server/sources";
 import {NEWS_TOPICS, NEWS_WINDOWS, type NewsTopic, type NewsWindow} from "@/lib/types";
 
@@ -48,5 +48,5 @@ export async function GET(request: NextRequest) {
     return item.topic === topic;
   });
 
-  return json({items, window, topic, seeded});
+  return publicJson({items, window, topic, seeded}, {maxAge: 120, swr: 900});
 }

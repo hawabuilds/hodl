@@ -12,5 +12,8 @@
       "path": "/api/news",
       "schedule": "*/5 * * * *"
     }
+  ],
+  "regions": [
+    "iad1"
   ]
 }

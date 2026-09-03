@@ -1,6 +1,6 @@
 import {unstable_cache} from "next/cache";
 import type {NextRequest} from "next/server";
-import {json} from "@/lib/server/http";
+import {json, publicJson} from "@/lib/server/http";
 import {fetchRwas, fetchTokens} from "@/lib/server/sources";
 import type {Asset} from "@/lib/types";
 
@@ -106,9 +106,9 @@ export async function GET(request: NextRequest) {
 
   // Sorted per request rather than per cache entry, so the four orderings share
   // one build instead of holding four copies of the same rows.
-  return json({
+  return publicJson({
     rwas: sorted(rwas, sort),
     tokens: sorted(tokens, sort),
     seeded,
-  });
+  }, {maxAge: 30, swr: 300});
 }

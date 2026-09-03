@@ -5,14 +5,45 @@ import {TIMEFRAMES} from "@/lib/types";
 /**
  * Shared route helpers.
  *
- * Every response is `no-store`: the whole market moves on a one-minute cadence,
- * and Next will happily cache a route handler's GET for the life of a
- * deployment otherwise.
+ * `json` is `no-store` by default, which is the right default for anything
+ * about a particular person — a wallet's holdings, a follower list — and the
+ * wrong one for market data, where it meant every reader in every country ran
+ * a function in Virginia to be told the same thing.
  */
 export function json<T>(data: T, status = 200) {
   return NextResponse.json(data, {
     status,
     headers: {"cache-control": "no-store"},
+  });
+}
+
+/**
+ * A response the CDN may hold and serve to anyone.
+ *
+ * `s-maxage` is how long an edge copy counts as fresh;
+ * `stale-while-revalidate` is how long past that it may still be served while a
+ * fresh one is fetched behind the reader. Between them a request from Sydney is
+ * answered by the nearest edge rather than by a round trip to the function
+ * region — and most requests never reach a function at all.
+ *
+ * Only for data that is identical for every reader. Anything keyed to a signed
+ * in account must stay on `json`, or one person's page is served to the next.
+ */
+export function publicJson<T>(
+  data: T,
+  {
+    /** Seconds an edge copy is fresh. */
+    maxAge,
+    /** Seconds it may be served stale while being refreshed. */
+    swr = maxAge * 10,
+    status = 200,
+  }: {maxAge: number; swr?: number; status?: number},
+) {
+  return NextResponse.json(data, {
+    status,
+    headers: {
+      "cache-control": `public, s-maxage=${maxAge}, stale-while-revalidate=${swr}`,
+    },
   });
 }
 

@@ -1,5 +1,5 @@
 import type {NextRequest} from "next/server";
-import {json, notFound, parseKind, parseTimeframe} from "@/lib/server/http";
+import {json, notFound, parseKind, parseTimeframe, publicJson} from "@/lib/server/http";
 import {fetchAsset, fetchChart} from "@/lib/server/sources";
 
 export const dynamic = "force-dynamic";
@@ -20,12 +20,12 @@ export async function GET(
   const first = points[0]?.price ?? 0;
   const last = points[points.length - 1]?.price ?? 0;
 
-  return json({
+  return publicJson({
     timeframe,
     points,
     // The header change follows the window on screen, not a fixed 24 hours —
     // a 5m chart showing a 24h percentage would be reading the wrong number.
     changePct: first > 0 ? Number((((last - first) / first) * 100).toFixed(2)) : 0,
     seeded,
-  });
+  }, {maxAge: 30, swr: 300});
 }

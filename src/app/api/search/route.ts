@@ -1,5 +1,5 @@
 import type {NextRequest} from "next/server";
-import {json} from "@/lib/server/http";
+import {json, publicJson} from "@/lib/server/http";
 import {search, searchUsers} from "@/lib/server/sources";
 
 export const dynamic = "force-dynamic";
@@ -25,10 +25,10 @@ export async function GET(request: NextRequest) {
     withPeople ? searchUsers(query) : Promise.resolve({data: [], seeded: true}),
   ]);
 
-  return json({
+  return publicJson({
     query,
     results: assets.data,
     people: people.data,
     seeded: assets.seeded,
-  });
+  }, {maxAge: 30, swr: 300});
 }

@@ -1,6 +1,6 @@
 import {parseAbi, type Abi} from "viem";
 import {multicallChunked} from "./chain";
-import {cached, forget} from "./cache";
+import {readManyShared, writeManyShared} from "./shared";
 
 /**
  * Tokens whose trading fees are paid back to the people holding them.
@@ -33,17 +33,19 @@ const factoryAbi = parseAbi([
  */
 const distributorAbi = parseAbi(["function token() view returns (address)"]);
 
+/**
+ * Tokens a single request will resolve when the cache does not know them.
+ *
+ * Reading a thousand tokens off the chain takes seconds however it is paced,
+ * and no visitor should ever wait for it. A request answers from cache and
+ * resolves at most this many unknowns, so the work spreads over successive
+ * calls — and the warming cron, which runs every five minutes, does most of it
+ * before anyone arrives. Whatever is not yet known is simply not claimed.
+ */
+const RESOLVE_PER_REQUEST = 240;
+
 const PONS_V2_FACTORY =
   "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e" as `0x${string}`;
-
-/**
- * Half an hour.
- *
- * A launch's fee recipient is set at creation and changes rarely, but it *can*
- * change — the factory exposes a setter — so this is not cached for the life of
- * the process the way an immutable factory address is.
- */
-const TTL_MS = 30 * 60_000;
 
 interface LaunchRecord {
   creatorFeeRecipient: `0x${string}`;
@@ -64,39 +66,58 @@ export async function holderRewardsFor(
   const wanted = [...new Set(addresses.map((a) => a.toLowerCase()))];
   if (wanted.length === 0) return new Set();
 
-  // Keyed on the shape of the set rather than every address in it: the join
-  // was a kilobyte-long key rebuilt on every call.
-  const key = `rewards:${wanted.length}:${wanted[0]}:${wanted[wanted.length - 1]}`;
+  const paying = new Set<string>();
 
-  return cached(key, TTL_MS, async () => {
-    const paying = new Set<string>();
+  // Per token, for the same reason as graduation: keyed on the set, one token
+  // moving invalidated every other answer in it.
+  const known = await readManyShared<boolean>(
+    wanted.map((a) => `rewards:${a}`),
+  );
+  const unknown: string[] = [];
 
-    const launches = await multicallChunked<LaunchRecord>(
-      wanted.map((address) => ({
-        address: PONS_V2_FACTORY,
-        abi: factoryAbi as Abi,
-        functionName: "getLaunchedToken",
-        args: [address as `0x${string}`],
-      })),
-      "holderRewards/launches",
-    );
+  for (const address of wanted) {
+    const hit = known.get(`rewards:${address}`);
+    if (hit === undefined) unknown.push(address);
+    else if (hit) paying.add(address);
+  }
 
-    const recipients: {token: string; recipient: `0x${string}`}[] = [];
+  if (unknown.length === 0) return paying;
 
-    let unreachable = launches.some((entry) => entry.unreachable);
+  const batch = unknown.slice(0, RESOLVE_PER_REQUEST);
 
-    launches.forEach((entry, i) => {
-      if (entry.status !== "success" || !entry.result?.exists) return;
-      const recipient = entry.result.creatorFeeRecipient;
-      if (!recipient || /^0x0+$/.test(recipient)) return;
-      recipients.push({token: wanted[i], recipient});
-    });
+  const launches = await multicallChunked<LaunchRecord>(
+    batch.map((address) => ({
+      address: PONS_V2_FACTORY,
+      abi: factoryAbi as Abi,
+      functionName: "getLaunchedToken",
+      args: [address as `0x${string}`],
+    })),
+    "holderRewards/launches",
+  );
 
-    if (recipients.length === 0) {
-      if (unreachable) forget(key);
-      return paying;
+  const answered = new Map<string, boolean>();
+  const recipients: {token: string; recipient: `0x${string}`}[] = [];
+
+  launches.forEach((entry, i) => {
+    const address = batch[i];
+    // No answer is not a no.
+    if (entry.unreachable) return;
+
+    if (entry.status !== "success" || !entry.result?.exists) {
+      answered.set(address, false);
+      return;
     }
 
+    const recipient = entry.result.creatorFeeRecipient;
+    if (!recipient || /^0x0+$/.test(recipient)) {
+      answered.set(address, false);
+      return;
+    }
+
+    recipients.push({token: address, recipient});
+  });
+
+  if (recipients.length > 0) {
     const bound = await multicallChunked<string>(
       recipients.map((entry) => ({
         address: entry.recipient,
@@ -106,21 +127,29 @@ export async function holderRewardsFor(
       "holderRewards/bound",
     );
 
-    unreachable ||= bound.some((entry) => entry.unreachable);
-
     bound.forEach((entry, i) => {
-      if (entry.status !== "success") return;
+      const {token} = recipients[i];
+      if (entry.unreachable) return;
+
       // The recipient has to name *this* token. A contract that names another
       // is somebody else's distributor that happens to collect the fee.
-      if (String(entry.result).toLowerCase() === recipients[i].token) {
-        paying.add(recipients[i].token);
-      }
-    });
+      const routes =
+        entry.status === "success" &&
+        String(entry.result).toLowerCase() === token;
 
-    // An answer assembled from calls that never ran is not an answer. Dropping
-    // it means the next request tries again instead of everyone reading an
-    // empty set for the next half hour.
-    if (unreachable) forget(key);
-    return paying;
-  });
+      answered.set(token, routes);
+      if (routes) paying.add(token);
+    });
+  }
+
+  void writeManyShared(
+    [...answered].map(([address, value]) => ({
+      key: `rewards:${address}`,
+      value,
+      // A creator can repoint their fee, so this expires either way.
+      ttlSeconds: 30 * 60,
+    })),
+  );
+
+  return paying;
 }

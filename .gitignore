@@ -6,3 +6,4 @@ out
 next-env.d.ts
 .next-verify
 .vercel
+.env*

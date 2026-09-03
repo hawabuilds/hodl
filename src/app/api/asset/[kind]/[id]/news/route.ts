@@ -1,4 +1,4 @@
-import {badRequest, json, notFound, parseKind} from "@/lib/server/http";
+import {badRequest, json, notFound, parseKind, publicJson} from "@/lib/server/http";
 import {fetchAsset, fetchNews} from "@/lib/server/sources";
 
 export const dynamic = "force-dynamic";
@@ -18,5 +18,5 @@ export async function GET(
   const {data, seeded} = await fetchNews(asset);
   // `seeded` is what the UI reads to label these as samples rather than
   // reporting. Do not drop it when a real provider is wired in.
-  return json({items: data, seeded});
+  return publicJson({items: data, seeded}, {maxAge: 300, swr: 1800});
 }

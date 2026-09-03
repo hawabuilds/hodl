@@ -150,6 +150,15 @@ export async function nativeBalance(wallet: string): Promise<number> {
 const BATCH = 120;
 
 /**
+ * Batches in flight at once.
+ *
+ * The whole set used to go out together, which is a burst of thirty large
+ * `eth_call`s and reliably drew rate limiting. Three at a time is slower on a
+ * cold cache and gives the same answer every time, which matters more.
+ */
+const LANES = 3;
+
+/**
  * A multicall split into batches, with failures surfaced rather than swallowed.
  *
  * Returns one entry per input, in order, so callers can index against their own
@@ -170,14 +179,46 @@ export async function multicallChunked<T>(
     batches.push(contracts.slice(i, i + BATCH) as unknown[]);
   }
 
-  const settled = await Promise.all(
-    batches.map(async (batch) => {
-      try {
-        return (await rpc().multicall({
-          contracts: batch as never,
-          allowFailure: true,
-        })) as {status: "success" | "failure"; result?: T}[];
-      } catch (error) {
+  const results: {status: "success" | "failure"; result?: T; unreachable?: boolean}[][] =
+    new Array(batches.length);
+  let next = 0;
+
+  async function worker() {
+    while (next < batches.length) {
+      const index = next++;
+      results[index] = await attempt(batches[index], label);
+    }
+  }
+
+  await Promise.all(
+    Array.from({length: Math.min(LANES, batches.length)}, worker),
+  );
+
+  return results.flat();
+}
+
+/**
+ * One batch, with a retry.
+ *
+ * The provider rate-limits on compute rather than requests, so a burst of
+ * batches gets some of them rejected — and a rejected batch used to read as a
+ * definitive answer for every token in it. That is what made the feed's own
+ * figures swing between runs: a hundred and fifty-five graduated tokens on one
+ * build, sixty-seven on the next, from identical data.
+ */
+async function attempt<T>(
+  batch: unknown[],
+  label: string,
+  tries = 2,
+): Promise<{status: "success" | "failure"; result?: T; unreachable?: boolean}[]> {
+  for (let attemptNo = 0; attemptNo < tries; attemptNo++) {
+    try {
+      return (await rpc().multicall({
+        contracts: batch as never,
+        allowFailure: true,
+      })) as {status: "success" | "failure"; result?: T}[];
+    } catch (error) {
+      if (attemptNo === tries - 1) {
         // Flagged, because a batch that never ran is not the same as a call
         // that reverted. A revert is the negative answer and worth caching; an
         // unreachable batch is no answer at all, and caching it as "no" is how
@@ -188,8 +229,9 @@ export async function multicallChunked<T>(
           unreachable: true,
         }));
       }
-    }),
-  );
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attemptNo + 1)));
+    }
+  }
 
-  return settled.flat();
+  return batch.map(() => ({status: "failure" as const, unreachable: true}));
 }

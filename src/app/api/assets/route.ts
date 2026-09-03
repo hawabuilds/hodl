@@ -1,5 +1,5 @@
 import type {NextRequest} from "next/server";
-import {badRequest, json, parseKind} from "@/lib/server/http";
+import {badRequest, json, parseKind, publicJson} from "@/lib/server/http";
 import {seriesFor} from "@/lib/server/market";
 import {fetchAsset} from "@/lib/server/sources";
 import type {Asset, Range} from "@/lib/types";
@@ -39,5 +39,5 @@ export async function GET(request: NextRequest) {
     }),
   );
 
-  return json({assets: assets.filter((asset): asset is Asset => asset !== null)});
+  return publicJson({assets: assets.filter((asset): asset is Asset => asset !== null)}, {maxAge: 30, swr: 300});
 }

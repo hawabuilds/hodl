@@ -12,6 +12,8 @@
  * In-process, so it resets on a cold start and is not shared between serverless
  * instances. That is deliberate: it is a throttle, not a database.
  */
+import {readShared, SHARED_CACHE, writeShared} from "./shared";
+
 interface Entry<T> {
   value: T;
   expires: number;
@@ -49,7 +51,39 @@ export async function cached<T>(
 
   // Nothing to serve, so this caller does have to wait — but only one does.
   if (pending) return pending;
+
+  // On a cold instance, ask the shared cache before doing the work. This is the
+  // difference between a first visitor paying for two hundred quotes and a
+  // pool sweep, and one paying for a single round trip to Redis.
+  if (SHARED_CACHE) {
+    return refreshVia(key, ttlMs, load);
+  }
+
   return refresh(key, ttlMs, load);
+}
+
+/**
+ * Tries the shared cache first, then falls back to computing.
+ *
+ * Deliberately does not register in `inflight`: `refresh` owns that marker, and
+ * having both manage it meant this one's cleanup deleted the other's, letting a
+ * second caller start the expensive load that was already running. Concurrent
+ * cold callers each make a Redis read, which is a round trip rather than a
+ * rebuild, and they still share the one load underneath.
+ */
+async function refreshVia<T>(
+  key: string,
+  ttlMs: number,
+  load: () => Promise<T>,
+): Promise<T> {
+  const shared = await readShared<T>(key);
+  if (shared === null) return refresh(key, ttlMs, load);
+
+  // Warm this instance from it, then refresh behind the caller so the shared
+  // copy does not go stale for everyone at once.
+  store.set(key, {value: shared, expires: Date.now() + ttlMs});
+  void refresh(key, ttlMs, load).catch(() => {});
+  return shared;
 }
 
 /** Loads, stores, and clears its own in-flight marker. */
@@ -61,6 +95,12 @@ function refresh<T>(
   const promise = load()
     .then((value) => {
       store.set(key, {value, expires: Date.now() + ttlMs});
+      // Written behind the caller, and kept a good deal longer than the local
+      // copy: its job is to spare the *next* cold instance the rebuild, so it
+      // needs to outlive the freshness window rather than match it.
+      if (SHARED_CACHE) {
+        void writeShared(key, value, Math.ceil((ttlMs * 10) / 1000));
+      }
       return value;
     })
     .finally(() => {

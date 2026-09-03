@@ -1,6 +1,6 @@
 import {parseAbi, type Abi} from "viem";
 import {multicallChunked} from "./chain";
-import {cached, forget} from "./cache";
+import {readManyShared, writeManyShared} from "./shared";
 
 /**
  * Which launchpad tokens have finished bonding.
@@ -39,13 +39,15 @@ const POOL_CREATED = 2;
 const NOT_YET = "0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead";
 
 /**
- * A minute.
+ * Tokens a single request will resolve when the cache does not know them.
  *
- * Unlike a factory address this genuinely changes — it is the moment a token
- * becomes tradeable, and a feed sorted by newest is exactly where someone
- * would notice the delay.
+ * Reading a thousand tokens off the chain takes seconds however it is paced,
+ * and no visitor should ever wait for it. A request answers from cache and
+ * resolves at most this many unknowns, so the work spreads over successive
+ * calls — and the warming cron, which runs every five minutes, does most of it
+ * before anyone arrives. Whatever is not yet known is simply not claimed.
  */
-const TTL_MS = 60_000;
+const RESOLVE_PER_REQUEST = 240;
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 
@@ -62,50 +64,88 @@ export async function graduatedFrom(
   const wanted = [...new Set(addresses.map((a) => a.toLowerCase()))];
   if (wanted.length === 0) return new Set();
 
-  const key = `grad:${wanted.length}:${wanted[0]}:${wanted[wanted.length - 1]}`;
+  const graduated = new Set<string>();
 
-  return cached(key, TTL_MS, async () => {
-    const graduated = new Set<string>();
+  // Cached per token rather than per request. Keying on the shape of the set
+  // meant a single token joining or leaving threw away the answer for all
+  // thousand of them, which on a cold instance is most of the wait.
+  const known = await readManyShared<boolean>(wanted.map((a) => `grad:${a}`));
+  const unknown: string[] = [];
 
-    const [launches, pools] = await Promise.all([
-      multicallChunked<{phase: number; exists: boolean}>(
-        wanted.map((address) => ({
-          address: PONS_V2_FACTORY,
-          abi: factoryAbi as Abi,
-          functionName: "getLaunchedToken",
-          args: [address as `0x${string}`],
-        })),
-        "graduation/pons",
-      ),
-      multicallChunked<string>(
-        wanted.map((address) => ({
-          address: address as `0x${string}`,
-          abi: poolAbi as Abi,
-          functionName: "pool",
-        })),
-        "graduation/long",
-      ),
-    ]);
+  for (const address of wanted) {
+    const hit = known.get(`grad:${address}`);
+    if (hit === undefined) unknown.push(address);
+    else if (hit) graduated.add(address);
+  }
 
-    launches.forEach((entry, i) => {
-      if (entry.status !== "success" || !entry.result?.exists) return;
-      if (Number(entry.result.phase) >= POOL_CREATED) graduated.add(wanted[i]);
-    });
+  if (unknown.length === 0) return graduated;
 
-    pools.forEach((entry, i) => {
-      if (entry.status !== "success") return;
-      const pool = String(entry.result).toLowerCase();
-      if (pool === NOT_YET || pool === ZERO) return;
-      graduated.add(wanted[i]);
-    });
+  const batch = unknown.slice(0, RESOLVE_PER_REQUEST);
 
-    if (
-      launches.some((entry) => entry.unreachable) ||
-      pools.some((entry) => entry.unreachable)
-    ) {
-      forget(key);
+  const [launches, pools] = await Promise.all([
+    multicallChunked<{phase: number; exists: boolean}>(
+      batch.map((address) => ({
+        address: PONS_V2_FACTORY,
+        abi: factoryAbi as Abi,
+        functionName: "getLaunchedToken",
+        args: [address as `0x${string}`],
+      })),
+      "graduation/pons",
+    ),
+    multicallChunked<string>(
+      batch.map((address) => ({
+        address: address as `0x${string}`,
+        abi: poolAbi as Abi,
+        functionName: "pool",
+      })),
+      "graduation/long",
+    ),
+  ]);
+
+  const answered = new Map<string, boolean>();
+
+  batch.forEach((address, i) => {
+    const launch = launches[i];
+    const pool = pools[i];
+
+    let isGraduated = false;
+
+    if (launch?.status === "success" && launch.result?.exists) {
+      isGraduated = Number(launch.result.phase) >= POOL_CREATED;
     }
 
-    return graduated;
+    if (!isGraduated && pool?.status === "success") {
+      const value = String(pool.result).toLowerCase();
+      isGraduated = value !== NOT_YET && value !== ZERO;
+    }
+
+    if (isGraduated) {
+      graduated.add(address);
+      answered.set(address, true);
+      return;
+    }
+
+    // A no is only a no when both contracts actually answered. Either one
+    // being unreachable leaves the question open, and caching it as "not
+    // graduated" is how a batch failure turned into a day of wrong answers —
+    // it took the New tab from a hundred and fifty tokens to nineteen.
+    if (launch?.unreachable || pool?.unreachable) return;
+
+    answered.set(address, false);
   });
+
+  // Graduation happens once and never reverses, so a yes is kept for a day.
+  // A no has to expire, but not quickly: at a minute the nine hundred tokens
+  // still bonding were re-read every minute, which is sixteen multicall
+  // batches a minute to learn nothing. Five minutes is well inside what
+  // "freshly graduated" means on a feed.
+  void writeManyShared(
+    [...answered].map(([address, value]) => ({
+      key: `grad:${address}`,
+      value,
+      ttlSeconds: value ? 24 * 60 * 60 : 5 * 60,
+    })),
+  );
+
+  return graduated;
 }
