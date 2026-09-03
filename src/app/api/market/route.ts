@@ -1,8 +1,7 @@
 import {unstable_cache} from "next/cache";
 import type {NextRequest} from "next/server";
-import {json, publicJson} from "@/lib/server/http";
-import {fetchRwas, fetchTokens} from "@/lib/server/sources";
-import type {Asset} from "@/lib/types";
+import {json} from "@/lib/server/http";
+import {fetchRwas, fetchTokens} from "@/lib/server/sources";import type {Asset} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -52,7 +51,10 @@ function trimmed(tokens: Asset[]): Asset[] {
   const newest = [...tokens]
     .filter(
       (asset) =>
-        asset.kind === "token" && asset.launchpad !== null && asset.graduated,
+        asset.kind === "token" &&
+        asset.launchpad !== null &&
+        asset.rwaPaired &&
+        asset.graduated,
     )
     .sort((a, b) => {
       const at = a.kind === "token" ? Date.parse(a.createdAt) : 0;
@@ -95,6 +97,12 @@ const feed = unstable_cache(
     };
   },
   ["market-feed"],
+  // Ten seconds sent one read-modify-write pipeline over every tracked
+  // token's graduation and reward-routing status to the shared cache on every
+  // revalidation — well over a thousand commands, every ten seconds, under any
+  // real traffic. That alone was enough to exhaust a free-tier monthly quota
+  // in hours. Sixty seconds is still well inside "the market moves on a
+  // roughly one-minute cadence" and cuts that volume by six times.
   {revalidate: 60},
 );
 
@@ -106,9 +114,9 @@ export async function GET(request: NextRequest) {
 
   // Sorted per request rather than per cache entry, so the four orderings share
   // one build instead of holding four copies of the same rows.
-  return publicJson({
+  return json({
     rwas: sorted(rwas, sort),
     tokens: sorted(tokens, sort),
     seeded,
-  }, {maxAge: 30, swr: 300});
+  });
 }

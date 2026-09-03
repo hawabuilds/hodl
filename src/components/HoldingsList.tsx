@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import {AssetLink} from "@/components/AssetLink";
 import {cn} from "@/lib/cn";
 import {money, percent, units} from "@/lib/format";
-import {assetPath} from "@/lib/routes";
 import type {Holding} from "@/lib/types";
 import {Avatar} from "./ui/Avatar";
 import {VerifiedTick} from "./ui/Badges";
@@ -47,8 +47,9 @@ export function HoldingsList({
 
         return (
           <li key={`${holding.kind}:${holding.assetId}`}>
-            <Link
-              href={assetPath(holding.kind, holding.assetId)}
+            <AssetLink
+              kind={holding.kind}
+              id={holding.assetId}
               className="flex items-center gap-3 px-[22px] py-[13px] transition-colors hover:bg-[var(--overlay-wash)]"
             >
               {holding.kind === "rwa" ? null : (
@@ -96,7 +97,7 @@ export function HoldingsList({
                   )}
                 </div>
               </div>
-            </Link>
+            </AssetLink>
           </li>
         );
       })}

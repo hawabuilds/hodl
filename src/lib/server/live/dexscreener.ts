@@ -1,5 +1,6 @@
 import {cached, getJson, stale} from "./cache";
 import {RWA_BY_ADDRESS, RWA_REGISTRY} from "./robinhood";
+import {poolsForToken} from "./geckoterminal";
 
 /**
  * DexScreener, for the community tokens only.
@@ -16,7 +17,7 @@ import {RWA_BY_ADDRESS, RWA_REGISTRY} from "./robinhood";
 
 const BASE = "https://api.dexscreener.com/tokens/v1/robinhood";
 const BATCH = 30;
-const TTL_MS = 60_000;
+const TTL_MS = 15_000;
 
 export interface DexPair {
   chainId: string;
@@ -98,6 +99,15 @@ export async function pairsForToken(address: string): Promise<DexPair[]> {
 const SWEEP_CONCURRENCY = 10;
 const SWEEP_TTL_MS = 5 * 60_000;
 
+/**
+ * `token-pairs/v1/robinhood/<address>` caps at exactly this many pairs and
+ * gives no pagination — silently, with no error or truncation flag. Measured
+ * against real RWAs: roughly a quarter of them have more community pairs than
+ * this and lose the rest. A count that lands exactly here is the only signal
+ * that pairs were cut.
+ */
+const PER_TOKEN_CAP = 30;
+
 export async function allRwaPairs(): Promise<DexPair[]> {
   const key = "ds:sweep";
 
@@ -105,6 +115,7 @@ export async function allRwaPairs(): Promise<DexPair[]> {
     {
       const addresses = RWA_REGISTRY.map((entry) => entry.address);
       const seen = new Map<string, DexPair>();
+      const capped: string[] = [];
       let index = 0;
 
       async function worker() {
@@ -119,6 +130,7 @@ export async function allRwaPairs(): Promise<DexPair[]> {
             for (const pair of pairs) {
               if (pair?.pairAddress) seen.set(pair.pairAddress, pair);
             }
+            if (pairs.length === PER_TOKEN_CAP) capped.push(address);
           } catch {
             // One ticker failing costs its pools, not the sweep.
           }
@@ -131,6 +143,51 @@ export async function allRwaPairs(): Promise<DexPair[]> {
           worker,
         ),
       );
+
+      // A capped ticker is missing an unknown number of pairs — that is what
+      // cost HARAM/BE its place in the feed, in search, and on the New tab,
+      // despite trading at a quarter-million dollars of liquidity: BE's own
+      // 30-pair page simply did not reach it.
+      //
+      // Recovered from CoinGecko's onchain API when a paid key is configured —
+      // measured as genuinely paginated, no cap found in practice, and it is
+      // what actually found HARAM/BE. DexScreener's own search was tried first
+      // and rejected: searching a short, generic ticker like "BE" ranks
+      // unrelated pairs above the one actually missing, so it recovered pairs
+      // for *some* capped tickers but not this one — the exact case this
+      // exists to fix. Skipped without a key: sweeping dozens of capped
+      // tickers at several pages each against the free, ~30-request-a-minute
+      // endpoint would exhaust it by itself.
+      let recovered = 0;
+      let capIndex = 0;
+
+      async function capWorker() {
+        while (capIndex < capped.length) {
+          const address = capped[capIndex++];
+          try {
+            const pools = await poolsForToken(address, 4);
+            for (const pool of pools) {
+              if (seen.has(pool.pairAddress)) continue;
+              seen.set(pool.pairAddress, pool);
+              recovered++;
+            }
+          } catch {
+            // Recovery is best-effort; the capped 30 already went in.
+          }
+        }
+      }
+
+      if (capped.length > 0) {
+        await Promise.all(
+          Array.from(
+            {length: Math.min(SWEEP_CONCURRENCY, capped.length)},
+            capWorker,
+          ),
+        );
+        console.info(
+          `rwa pair sweep: ${capped.length} tickers hit the ${PER_TOKEN_CAP}-pair cap, recovered ${recovered} additional pairs via CoinGecko`,
+        );
+      }
 
       return [...seen.values()];
     }

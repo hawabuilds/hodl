@@ -1,15 +1,14 @@
 "use client";
 
 import {useEffect, useState} from "react";
-import Link from "next/link";
 import {useQuery} from "@tanstack/react-query";
+import {AssetLink} from "@/components/AssetLink";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {Avatar} from "@/components/ui/Avatar";
 import {VerifiedTick} from "@/components/ui/Badges";
 import {ArrowUpRightIcon, NewsIcon} from "@/components/ui/Icons";
 import {cn} from "@/lib/cn";
 import {relativeTime} from "@/lib/format";
-import {assetPath} from "@/lib/routes";
 import type {FeedItem, NewsTopic, NewsWindow} from "@/lib/types";
 
 const WINDOWS: FilterOption<NewsWindow>[] = [
@@ -102,8 +101,8 @@ export default function NewsPage() {
                 note={`${articles.length} in view`}
               />
               <ul className="-mx-[22px]">
-                {rest.map((item) => (
-                  <StoryRow key={item.id} item={item} />
+                {rest.map((item, i) => (
+                  <StoryRow key={item.id} item={item} priority={i < 2} />
                 ))}
               </ul>
             </section>
@@ -195,23 +194,39 @@ function TopicChip({topic}: {topic: FeedItem["topic"]}) {
 function StoryImage({
   item,
   className,
+  priority = false,
 }: {
   item: FeedItem;
   className?: string;
+  /** Skips lazy-loading for art that is on screen the moment the tab opens. */
+  priority?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   if (!item.imageUrl || failed) return null;
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={item.imageUrl}
-      alt=""
-      loading="lazy"
-      onError={() => setFailed(true)}
-      className={cn("object-cover", className)}
-    />
+    // A muted panel fills this box the instant the story renders, so a slow
+    // photo never leaves a flash of empty card behind the headline — it just
+    // fades in over what was already there. `loading="lazy"` is right for
+    // art below the fold, but the lead story's photo is the first thing on
+    // screen, so deferring it the same way only added a wait nothing needed.
+    <div className={cn("overflow-hidden bg-[var(--overlay-wash)]", className)}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={item.imageUrl}
+        alt=""
+        loading={priority ? "eager" : "lazy"}
+        fetchPriority={priority ? "high" : "auto"}
+        onLoad={() => setLoaded(true)}
+        onError={() => setFailed(true)}
+        className={cn(
+          "h-full w-full object-cover transition-opacity duration-300",
+          loaded ? "opacity-100" : "opacity-0",
+        )}
+      />
+    </div>
   );
 }
 
@@ -226,7 +241,7 @@ function LeadStory({item}: {item: FeedItem}) {
     >
       {item.imageUrl ? (
         <div className="relative">
-          <StoryImage item={item} className="h-[176px] w-full" />
+          <StoryImage item={item} className="h-[176px] w-full" priority />
           <div className="absolute left-3.5 top-3.5">
             <TopicChip topic={item.topic} />
           </div>
@@ -249,7 +264,7 @@ function LeadStory({item}: {item: FeedItem}) {
   );
 }
 
-function StoryRow({item}: {item: FeedItem}) {
+function StoryRow({item, priority = false}: {item: FeedItem; priority?: boolean}) {
   return (
     <li>
       <a
@@ -269,6 +284,7 @@ function StoryRow({item}: {item: FeedItem}) {
         <StoryImage
           item={item}
           className="h-[78px] w-[78px] shrink-0 rounded-[14px]"
+          priority={priority}
         />
       </a>
     </li>
@@ -308,14 +324,15 @@ function TickerChips({
   return (
     <div className={cn("flex flex-wrap gap-1.5", className)}>
       {tickers.map((ticker) => (
-        <Link
+        <AssetLink
           key={ticker}
-          href={assetPath("rwa", ticker)}
+          kind="rwa"
+          id={ticker}
           className="flex items-center gap-1 rounded-[7px] bg-[var(--overlay-wash)] px-2 py-1 text-[11.5px] font-extrabold text-ink transition-colors hover:bg-[var(--overlay-wash-hover)]"
         >
           {ticker}
           <VerifiedTick size={12} />
-        </Link>
+        </AssetLink>
       ))}
     </div>
   );

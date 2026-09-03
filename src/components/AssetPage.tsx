@@ -1,6 +1,8 @@
 "use client";
 
 import {useMemo, useState} from "react";
+import {changePctForPoints, mergeTradesIntoChart} from "@/lib/chartLive";
+import dynamic from "next/dynamic";
 import {useRouter} from "next/navigation";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {useAsset, useChart, useNews, useTrades} from "@/hooks/useAsset";
@@ -9,21 +11,34 @@ import {clock, compactMoney, percent, price as fmtPrice, shortAddress} from "@/l
 import {sectorFor} from "@/lib/sectors";
 import type {AssetKind, ChartPoint, Timeframe} from "@/lib/types";
 import {TIMEFRAMES} from "@/lib/types";
+import {AssetSkeleton} from "./AssetPageSkeleton";
 import {LaunchpadMark} from "./LaunchpadMark";
-import {OrderModal} from "./OrderModal";
 import {PanelTabs, type PanelTab} from "./PanelTabs";
 import {PriceChart} from "./PriceChart";
 import {SocialRow} from "./SocialRow";
 import {PillRail} from "./PillRail";
 import {TradeBar} from "./TradeBar";
 import {WatchStar} from "./WatchStar";
-import {CommentsPanel} from "./panels/CommentsPanel";
-import {InfoPanel} from "./panels/InfoPanel";
-import {NewsPanel} from "./panels/NewsPanel";
-import {TradesPanel} from "./panels/TradesPanel";
 import {Avatar} from "./ui/Avatar";
 import {PairMarket, TaxChip, TypeBadge, VerifiedTick} from "./ui/Badges";
 import {ArrowUpRightIcon, ChevronLeftIcon, CopyIcon} from "./ui/Icons";
+
+const OrderModal = dynamic(
+  () => import("./OrderModal").then((m) => ({default: m.OrderModal})),
+  {ssr: false},
+);
+const CommentsPanel = dynamic(() =>
+  import("./panels/CommentsPanel").then((m) => ({default: m.CommentsPanel})),
+);
+const InfoPanel = dynamic(() =>
+  import("./panels/InfoPanel").then((m) => ({default: m.InfoPanel})),
+);
+const NewsPanel = dynamic(() =>
+  import("./panels/NewsPanel").then((m) => ({default: m.NewsPanel})),
+);
+const TradesPanel = dynamic(() =>
+  import("./panels/TradesPanel").then((m) => ({default: m.TradesPanel})),
+);
 
 type PanelKey = "trades" | "comments" | "detail";
 
@@ -43,15 +58,23 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
   const [orderSide, setOrderSide] = useState<"buy" | "sell" | null>(null);
 
   const chart = useChart(kind, id, timeframe);
-  const trades = useTrades(kind, id, panel === "trades");
+  const trades = useTrades(kind, id, true);
   const news = useNews(id, kind === "rwa" && panel === "detail");
 
   const symbol = asset?.kind === "rwa" ? asset.ticker : (asset?.symbol ?? "");
   const contractAddress =
     asset?.kind === "rwa" ? asset.contractAddress : (asset?.address ?? "");
 
-  const windowChange = chart.changePct ?? asset?.changePct ?? 0;
-  const positive = windowChange >= 0;
+  const livePoints = useMemo(
+    () => mergeTradesIntoChart(chart.points, trades.trades),
+    [chart.points, trades.trades],
+  );
+  const liveChange =
+    changePctForPoints(livePoints) ??
+    chart.changePct ??
+    asset?.changePct ??
+    0;
+  const positive = liveChange >= 0;
 
   const tabs: PanelTab<PanelKey>[] = useMemo(
     () => [
@@ -62,9 +85,8 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
     [kind],
   );
 
-  if (isLoading) return <AssetSkeleton />;
-
-  if (error || !asset) {
+  if (!asset) {
+    if (isLoading) return <AssetSkeleton />;
     return (
       <div className="pt-6">
         <BackButton onClick={() => router.push("/home")} />
@@ -78,12 +100,25 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
   // While scrubbing, the header reports the point under the finger; otherwise
   // it reports the live price. The change follows the same rule, measured from
   // the start of the visible window.
-  const shownPrice = scrubbed?.price ?? asset.priceUsd;
-  const openPrice = chart.points[0]?.price ?? asset.priceUsd;
+  const latestTrade = trades.trades[0];
+  const shownPrice =
+    scrubbed?.price ?? latestTrade?.priceUsd ?? asset.priceUsd;
+  const openPrice = livePoints[0]?.price ?? asset.priceUsd;
   const shownChange =
     scrubbed && openPrice > 0
       ? ((scrubbed.price - openPrice) / openPrice) * 100
-      : windowChange;
+      : liveChange;
+
+  // Market cap is price times supply, and supply does not change between
+  // polls — only price does, every time a fill lands. `asset.marketCapUsd`
+  // was a snapshot from the last ten-second market poll, so a page open on a
+  // busy pool showed a cap that visibly lagged every trade in the tape right
+  // below it. Recomputed from the same live price the header already shows,
+  // against the supply implied by the last real snapshot.
+  const impliedSupply =
+    asset.priceUsd > 0 ? asset.marketCapUsd / asset.priceUsd : 0;
+  const shownMarketCap =
+    impliedSupply > 0 ? shownPrice * impliedSupply : asset.marketCapUsd;
 
   return (
     <div className="pb-[calc(84px+env(safe-area-inset-bottom))]">
@@ -107,7 +142,12 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
         </div>
       ) : (
         <div className="mt-3 flex items-start gap-3">
-          <Avatar name={symbol} src={asset.imageUrl} size={44} />
+          <Avatar
+            name={symbol}
+            src={asset.imageUrl}
+            fallbackSrc={asset.launchpad?.logoUrl}
+            size={44}
+          />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1">
               <h1 className="truncate text-[20px] font-extrabold tracking-[-0.03em]">
@@ -194,7 +234,7 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
             Market cap
           </div>
           <div className="tnum text-[15px] font-extrabold tracking-[-0.02em]">
-            {compactMoney(asset.marketCapUsd)}
+            {compactMoney(shownMarketCap)}
           </div>
           {asset.kind === "token" ? (
             <div className="tnum mt-0.5 inline-flex items-center gap-1 rounded-[6px] bg-[var(--overlay-wash)] px-1.5 py-[3px] text-[11px] font-bold">
@@ -208,7 +248,7 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
       </div>
 
       <PriceChart
-        points={chart.points}
+        points={livePoints}
         positive={positive}
         onScrub={setScrubbed}
         className="mt-3"
@@ -309,23 +349,5 @@ function ContractChip({address}: {address: string}) {
         <ArrowUpRightIcon className="h-3 w-3" />
       </a>
     </span>
-  );
-}
-
-function AssetSkeleton() {
-  return (
-    <div className="pt-2">
-      <div className="h-9 w-9 animate-pulse rounded-full bg-wash" />
-      <div className="mt-3 flex items-center gap-3">
-        <div className="h-11 w-11 animate-pulse rounded-full bg-wash" />
-        <div className="flex-1">
-          <div className="h-4 w-24 animate-pulse rounded bg-wash" />
-          <div className="mt-2 h-3 w-36 animate-pulse rounded bg-wash" />
-        </div>
-      </div>
-      <div className="mt-6 h-9 w-40 animate-pulse rounded bg-wash" />
-      <div className="mt-4 h-[190px] animate-pulse rounded-panel bg-wash" />
-      <div className="mt-4 h-8 animate-pulse rounded-control bg-wash" />
-    </div>
   );
 }

@@ -20,7 +20,7 @@ export function AppShell({children}: {children: ReactNode}) {
   return (
     <div className="flex h-full flex-col bg-premium">
       <div className="scroll-quiet flex-1 overflow-y-auto px-[22px] pt-[26px] pb-[calc(96px+env(safe-area-inset-bottom))]">
-        <div className="animate-rise">{children}</div>
+        {children}
       </div>
 
       <TabBar />

@@ -4,7 +4,9 @@ import {
   toEventSelector,
 } from "viem";
 import type {Trade} from "@/lib/types";
+import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {cached} from "./cache";
+import {QUOTE_ASSETS} from "./dexscreener";
 
 /**
  * The last few seconds of fills, read straight off the chain.
@@ -45,8 +47,8 @@ const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951";
  */
 const BLOCKS = 9n;
 
-/** Short, because this exists to be fresh. Long enough to absorb a burst. */
-const TTL_MS = 1_500;
+/** Each tape poll reads the chain fresh — caching here made fills feel stuck. */
+const TTL_MS = 0;
 
 interface RawLog {
   address: string;
@@ -88,19 +90,14 @@ export async function recentSwaps(
   token: string,
   quote: string,
   priceUsd: number,
+  /** USD price of the quote asset — USDG is 1, RWAs from Robinhood mid. */
+  quotePriceUsd: number | null = null,
 ): Promise<Trade[]> {
-  // v4 is off. Two isolated checks said its amounts are the swapper's delta —
-  // fifteen of fifteen against the indexer, and the transfers inside those
-  // transactions agreed — but reading a v4 pool end to end through this
-  // function matched the indexer's sides on only sixty-four of a hundred and
-  // twenty-three fills. Something between the isolated check and the real path
-  // differs, and until that is understood a v4 pool keeps the indexed tape:
-  // eleven seconds late beats a coin flip on buy versus sell.
-  if (isPoolId(pool)) return [];
+  const ours = token.toLowerCase();
 
-  return cached(`swaps:${pool}`, TTL_MS, async () => {
-    const ours = token.toLowerCase();
+  const load = async (): Promise<Trade[]> => {
     const other = quote.toLowerCase();
+    const quoteSymbol = QUOTE_ASSETS.get(other);
 
     // Uniswap orders a pool's currencies by address, so which of the two
     // amounts is ours follows from comparing them — no need to ask the pool.
@@ -177,12 +174,32 @@ export async function recentSwaps(
       const amount = Number(delta < 0n ? -delta : delta) / 1e18;
       if (!Number.isFinite(amount) || amount <= 0) continue;
 
+      const quoteDelta = oursIsToken0 ? amount1 : amount0;
+      const quoteAmount =
+        Number(quoteDelta < 0n ? -quoteDelta : quoteDelta) / 1e18;
+
+      // Size the fill from the quote leg when we know that asset's USD price.
+      // DexScreener and the indexer both do this; token spot × amount is wrong
+      // on RWA-paired pools (e.g. OUROBOROS/CRCL).
+      let executionPrice = priceUsd;
+      let amountUsd = amount * priceUsd;
+      const quoteAbs =
+        Number.isFinite(quoteAmount) && quoteAmount > 0 ? quoteAmount : 0;
+
+      if (quoteSymbol === "USDG" && quoteAbs > 0) {
+        amountUsd = quoteAbs;
+        executionPrice = quoteAbs / amount;
+      } else if (quotePriceUsd != null && quotePriceUsd > 0 && quoteAbs > 0) {
+        amountUsd = quoteAbs * quotePriceUsd;
+        executionPrice = amountUsd / amount;
+      }
+
       trades.push({
         id: `${log.transactionHash}-${parseInt(log.logIndex, 16)}`,
         side: buy ? "buy" : "sell",
         amount,
-        amountUsd: amount * priceUsd,
-        priceUsd,
+        amountUsd,
+        priceUsd: executionPrice,
         // The second indexed argument is the recipient on a v3 pool and the
         // swap's sender on v4; either is the closest thing to a counterparty
         // without paying for a transaction lookup per fill.
@@ -193,6 +210,16 @@ export async function recentSwaps(
       });
     }
 
-    return trades.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-  });
+    return trades.sort(compareTradesNewestFirst);
+  };
+
+  if (TTL_MS <= 0) {
+    try {
+      return await load();
+    } catch {
+      return [];
+    }
+  }
+
+  return cached(`swaps:${pool}:${ours}`, TTL_MS, load);
 }

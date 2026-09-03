@@ -20,7 +20,11 @@ export const dynamic = "force-dynamic";
  */
 const feed = unstable_cache(
   async () => fetchFeed({window: "all", topic: "all"}),
-  ["news-feed"],
+  // Bumped from "news-feed": Vercel's Data Cache outlives a deploy, so an
+  // entry built under the old key kept serving the un-diversified feed this
+  // was meant to replace no matter how long the new code had been live.
+  // A new key mints a guaranteed-cold entry; the old one just ages out.
+  ["news-feed-v2"],
   {revalidate: 300},
 );
 

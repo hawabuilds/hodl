@@ -1,6 +1,7 @@
-import Link from "next/link";
+"use client";
+
+import {AssetLink} from "@/components/AssetLink";
 import {cn} from "@/lib/cn";
-import {assetPath} from "@/lib/routes";
 import type {StockType} from "@/lib/types";
 import {VerifiedIcon} from "./Icons";
 
@@ -80,8 +81,9 @@ export function PairMarket({
   className?: string;
 }) {
   return (
-    <Link
-      href={assetPath("rwa", quote)}
+    <AssetLink
+      kind="rwa"
+      id={quote}
       title={`${base} is paired against ${quote}`}
       className={cn(
         "inline-flex items-center gap-1 rounded-[8px] bg-[var(--overlay-wash)] px-2 py-1",
@@ -94,7 +96,7 @@ export function PairMarket({
       <span className="text-faint">/</span>
       <span className="text-ink">{quote}</span>
       <VerifiedIcon className="h-3 w-3 text-green" />
-    </Link>
+    </AssetLink>
   );
 }
 

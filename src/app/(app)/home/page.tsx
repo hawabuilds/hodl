@@ -246,6 +246,23 @@ function EmptyFeed({
     );
   }
 
+  if (reason === "new") {
+    // Graduation status is resolved gradually off-chain and cached — a few
+    // hundred tokens per request, topped up by a background job — so right
+    // after a fresh deploy this can be briefly empty while that cache warms.
+    // Saying so beats the generic empty state, which reads as broken rather
+    // than as "check back in a moment."
+    return (
+      <div className="px-6 py-12 text-center">
+        <p className="text-[14px] font-bold">No new graduations right now</p>
+        <p className="mx-auto mt-1.5 max-w-[34ch] text-[13px] leading-[1.5] text-muted">
+          This refreshes as launchpad tokens finish bonding. If you just
+          reloaded the app, give it a moment and check again.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <p className="py-10 text-center text-[13.5px] text-muted">
       Nothing to show here right now.

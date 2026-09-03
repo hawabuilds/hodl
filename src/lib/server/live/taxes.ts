@@ -8,10 +8,11 @@ import {cached} from "./cache";
  * Two things can withhold value from a trade, and which of them counts as "the
  * token's tax" depends on the launchpad:
  *
- * - **Pons** sets the tax on the pool. A launch carries a 1% base charge plus
- *   whatever the creator chose at deploy time, and both are snapshotted per
- *   pool in the hook. That combined figure is the tax a Pons token advertises,
- *   so it is what is reported here.
+ * - **Pons** lets a creator set a tax on the pool at launch, snapshotted in the
+ *   hook alongside a separate, fixed platform cut. Only the creator's own
+ *   figure is reported as this token's tax, matching what Pons's own pages
+ *   show — an earlier version added the platform's fixed 1% into the total,
+ *   which was wrong on every launch and confirmed wrong against a real one.
  * - **Long** and everything else charge nothing of their own. Their pools carry
  *   an ordinary Uniswap fee, which belongs to the venue rather than the token
  *   and is deliberately *not* counted — a Long token shows 0% because its
@@ -37,11 +38,15 @@ const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11" as const;
 /**
  * Pons's Uniswap v4 hook, which holds each launch's fee split.
  *
- * `hookFeeBps` is the launchpad's own cut and `creatorTaxBps` the one the
- * deployer picked at launch; the hook charges their sum on every swap, in
- * either direction. Both are read per pool rather than assumed, because the
- * creator's half is exactly the part that varies — the live set runs from 0 to
- * 100 basis points on top of the base 1%.
+ * `hookFeeBps` is Pons's own cut and `creatorTaxBps` the one the deployer
+ * picked at launch. An earlier version of this reported their *sum* as "the
+ * token's tax" on the strength of a comment that turned out to be wrong: a
+ * live check found `hookFeeBps` fixed at exactly 100 across every launch
+ * sampled, so it is a platform-wide charge rather than anything specific to a
+ * token, and it does not appear on the number Pons's own pages show — a token
+ * whose creator set two hundred basis points read three hundred here against
+ * two hundred there. `creatorTaxBps` alone is what is now reported as the
+ * tax; the platform's cut still appears in the fee-destination breakdown.
  */
 const PONS_HOOK = "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044" as const;
 
@@ -49,8 +54,6 @@ const ponsHookAbi = parseAbi([
   "function launches(bytes32) view returns (bool registered, bool memecoinIsCurrency0, address memecoin, address quoteToken, address creator, address buybackCreatorRecipient, address protocolFeeRecipient, uint16 creatorTaxBps, uint16 protocolFeeShareBps, uint16 buybackBurnBps, uint16 hookFeeBps, uint16 maxInternalPriceImpactBps, bool buybackEnabled)",
 ]);
 
-/** Uniswap v3 fee tier, which is what a pre-hook Pons V1 launch trades on. */
-const poolFeeAbi = parseAbi(["function poolFee() view returns (uint24)"]);
 
 /**
  * A scratch address that stands in for an ordinary trader. Owns nothing and is
@@ -156,7 +159,8 @@ async function ponsPoolTax(
       const creatorBps = Number(info[7]);
       const hookBps = Number(info[10]);
       return {
-        total: (hookBps + creatorBps) / 100,
+        // The creator's own cut, not the sum — see the note above.
+        total: creatorBps / 100,
         split: {
           basePct: hookBps / 100,
           creatorPct: creatorBps / 100,
@@ -168,17 +172,11 @@ async function ponsPoolTax(
     }
   }
 
-  try {
-    const raw = await call(
-      token,
-      encodeFunctionData({abi: poolFeeAbi, functionName: "poolFee"}),
-    );
-    // Hundredths of a basis point, so 10000 is 1%. A V1 launch predates the
-    // hook's fee record, so there is no split to report.
-    return {total: Number(BigInt(raw)) / 10_000, split: null};
-  } catch {
-    return null;
-  }
+  // A V1 launch predates the hook, so there is no per-launch fee record to
+  // read here. Its constructor carries no tax field at all — only wallet and
+  // transaction size limits — so a Pons V1 token genuinely has no launchpad
+  // tax to report, rather than one this app failed to find.
+  return {total: 0, split: null};
 }
 
 /**

@@ -196,6 +196,7 @@ export function PriceChart({
               cy={geometry.y(geometry.last)}
               r="3.5"
               fill={color}
+              className="transition-[cx,cy] duration-300 ease-out"
             />
           )}
         </svg>

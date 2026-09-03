@@ -1,4 +1,4 @@
-import {json, notFound, parseKind, publicJson} from "@/lib/server/http";
+import {json, notFound, parseKind} from "@/lib/server/http";
 import {fetchAsset} from "@/lib/server/sources";
 
 export const dynamic = "force-dynamic";
@@ -13,5 +13,5 @@ export async function GET(
   const {data, seeded} = await fetchAsset(kind, params.id);
   if (!data) return notFound("No asset with that id.");
 
-  return publicJson({asset: data, seeded}, {maxAge: 30, swr: 300});
+  return json({asset: data, seeded});
 }

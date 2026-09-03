@@ -151,6 +151,64 @@ const SHARED_IMAGE_LIMIT = 2;
  */
 const OG_LOOKUPS = 90;
 
+/**
+ * How many of one outlet in a row before another gets a turn.
+ *
+ * Two feels natural; one would break up a wire's own multi-part coverage of
+ * the same story unnecessarily.
+ */
+const MAX_CONSECUTIVE_SAME_SOURCE = 2;
+
+/**
+ * Breaks up long runs from one outlet without touching the sort otherwise.
+ *
+ * Finnhub's wire is dominated by one syndicator on this feed — seventy of the
+ * newest ninety-one articles measured were all Yahoo, so a straight recency
+ * sort put an unbroken wall of one source at the top and a visitor scrolling
+ * from the newest saw nothing else, which is what "I can only see Yahoo
+ * articles" actually meant: everything else was there, just never reached.
+ *
+ * Only ever swaps in a *later* item that is still by publication time — moving
+ * something up in time would misdate the feed — so the story you would have
+ * read next just moves a few places earlier rather than the order rewriting
+ * itself. Account posts are untouched: they are a small, separately displayed
+ * set, and stealing their turn from the wire is not what this is for.
+ */
+function diversifySources(items: FeedItem[]): FeedItem[] {
+  const articles = items.filter((item) => item.kind === "article");
+  const rest = items.filter((item) => item.kind !== "article");
+  if (articles.length <= MAX_CONSECUTIVE_SAME_SOURCE) return items;
+
+  const pool = [...articles];
+  const out: FeedItem[] = [];
+  let run: string | null = null;
+  let runLength = 0;
+
+  while (pool.length > 0) {
+    let index = 0;
+
+    if (run !== null && runLength >= MAX_CONSECUTIVE_SAME_SOURCE) {
+      const alt = pool.findIndex((item) => item.source !== run);
+      if (alt !== -1) index = alt;
+    }
+
+    const [next] = pool.splice(index, 1);
+    out.push(next);
+
+    if (next.source === run) runLength++;
+    else {
+      run = next.source;
+      runLength = 1;
+    }
+  }
+
+  // Accounts were never part of the run-limiting pass; put them back exactly
+  // where recency already placed them relative to the reordered articles is
+  // not meaningful here since they render in their own section, so they are
+  // simply appended in their original relative order.
+  return [...out, ...rest];
+}
+
 function stripOutletLogos(items: FeedItem[]): FeedItem[] {
   const uses = new Map<string, number>();
   for (const item of items) {
@@ -187,8 +245,10 @@ async function buildFeed(): Promise<FeedItem[]> {
     if (!seen.has(item.id)) seen.set(item.id, item);
   }
 
-  const items = stripOutletLogos([...seen.values()]).sort(
-    (a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt),
+  const items = diversifySources(
+    stripOutletLogos([...seen.values()]).sort(
+      (a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt),
+    ),
   );
 
   // The article's own lead image, read from its OpenGraph tags. Only for the

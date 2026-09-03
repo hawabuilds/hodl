@@ -36,6 +36,7 @@ export function AssetRow({asset, fresh}: {asset: Asset; fresh?: boolean}) {
   return (
     <Link
       href={assetHref(asset)}
+      prefetch
       // Pointer-down rather than click: the page's data starts loading while
       // the finger is still on the row, which is most of the gap a first tap
       // used to spend staring at a skeleton. `onMouseEnter` covers a cursor,
@@ -47,7 +48,14 @@ export function AssetRow({asset, fresh}: {asset: Asset; fresh?: boolean}) {
         fresh && "trade-in",
       )}
     >
-      {rwa ? null : <Avatar name={symbol} src={asset.imageUrl} size={40} />}
+      {rwa ? null : (
+        <Avatar
+          name={symbol}
+          src={asset.imageUrl}
+          fallbackSrc={asset.launchpad?.logoUrl}
+          size={40}
+        />
+      )}
 
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">

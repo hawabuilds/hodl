@@ -1,8 +1,12 @@
-import {notFound, parseKind, publicJson} from "@/lib/server/http";
+import {json, notFound, parseKind} from "@/lib/server/http";
 import {fetchAsset, fetchTrades} from "@/lib/server/sources";
 import {AUTHENTICATED} from "@/lib/server/live/geckoterminal";
 
 export const dynamic = "force-dynamic";
+
+/** On-chain head reads need a fresh response every poll, not an edge cache. */
+const LIVE_POLL_MS = 2_000;
+const INDEX_POLL_MS = 12_000;
 
 export async function GET(
   _request: Request,
@@ -14,20 +18,12 @@ export async function GET(
   const {data: asset} = await fetchAsset(kind, params.id);
   if (!asset) return notFound("No asset with that id.");
 
-  // The upstream returns three hundred fills in one call and the tape is meant
-  // to be scrolled, so forty was throwing away most of what had been fetched —
-  // the panel looked stale against any explorer showing the same pool.
   const {data, seeded} = await fetchTrades(asset, 300);
-  const pollMs = AUTHENTICATED ? 2_000 : 12_000;
 
-  // The tape is the same for everyone watching a pool, so the edge holds it for
-  // the length of one poll. Two seconds is short enough to stay live and long
-  // enough that a hundred viewers cost one upstream read rather than a hundred.
-  //
-  // The client cannot know which upstream plan is configured, and polling
-  // faster than the server can refresh just re-serves one cached answer.
-  return publicJson(
-    {trades: data, seeded, pollMs},
-    {maxAge: Math.ceil(pollMs / 1000), swr: 30},
-  );
+  // When RPC is configured the tape merges chain head fills every ~2s. Without
+  // it, only the indexer runs and polling faster just hammers a stale cache.
+  const pollMs =
+    process.env.ALCHEMY_RPC_URL || AUTHENTICATED ? LIVE_POLL_MS : INDEX_POLL_MS;
+
+  return json({trades: data, seeded, pollMs});
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import {useQuery} from "@tanstack/react-query";
+import {MARKET_REFRESH_MS} from "@/config/market";
 import type {RwaAsset, TokenAsset} from "@/lib/types";
 import type {MarketSort} from "@/app/api/market/route";
 
@@ -10,16 +11,14 @@ interface MarketResponse {
   seeded: boolean;
 }
 
-/**
- * The home feed. Refetched on a minute, which is the cadence the market itself
- * moves on — anything faster only redraws the same numbers.
- */
+/** The home feed — prices and market caps track DexScreener on this cadence. */
 export function useMarket(sort: MarketSort = "volume") {
   const query = useQuery({
     queryKey: ["market", sort],
-    refetchInterval: 60_000,
+    staleTime: 0,
+    refetchInterval: MARKET_REFRESH_MS,
     queryFn: async () => {
-      const res = await fetch(`/api/market?sort=${sort}`);
+      const res = await fetch(`/api/market?sort=${sort}`, {cache: "no-store"});
       if (!res.ok) throw new Error("Could not load the market.");
       return (await res.json()) as MarketResponse;
     },

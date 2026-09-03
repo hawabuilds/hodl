@@ -8,6 +8,7 @@ import {
   watchKey,
   type WatchKey,
 } from "@/lib/localStore";
+import {MARKET_REFRESH_MS} from "@/config/market";
 import type {Asset, AssetKind} from "@/lib/types";
 import {useLocalStore} from "./useLocalStore";
 
@@ -37,9 +38,13 @@ export function useWatchlistAssets(enabled: boolean) {
   const query = useQuery({
     queryKey: ["watchlist-assets", ids],
     enabled: enabled && ids.length > 0,
-    refetchInterval: 60_000,
+    staleTime: 0,
+    refetchInterval: MARKET_REFRESH_MS,
     queryFn: async () => {
-      const res = await fetch(`/api/assets?ids=${encodeURIComponent(ids.join(","))}`);
+      const res = await fetch(
+        `/api/assets?ids=${encodeURIComponent(ids.join(","))}`,
+        {cache: "no-store"},
+      );
       if (!res.ok) throw new Error("Could not load your watchlist.");
       return (await res.json()) as {assets: Asset[]};
     },

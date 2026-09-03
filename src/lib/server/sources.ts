@@ -13,10 +13,15 @@ import type {
 import * as seeded from "./market";
 import * as live from "./live/market";
 import * as gecko from "./live/geckoterminal";
+import {AUTHENTICATED} from "./live/geckoterminal";
 import * as swaps from "./live/swaps";
 import * as headlines from "./live/news";
+import {compareTradesNewestFirst} from "@/lib/tradeOrder";
+import {quotePriceUsd} from "@/lib/server/quotePrice";
 import {feedFor, type FeedQuery} from "./newsfeed";
 import {searchPeople} from "./social";
+
+const TRADES_LIMIT = 300;
 
 /**
  * The seam between the app and its data.
@@ -99,6 +104,55 @@ export async function fetchAsset(
 }
 
 /**
+ * Everything a chart page reads on first paint, in one server round trip.
+ *
+ * Resolves the asset once, then loads chart and trades against the same cached
+ * pool — three separate routes used to each rebuild the full token list.
+ */
+export async function fetchAssetPage(
+  kind: AssetKind,
+  id: string,
+  timeframe: Timeframe,
+): Promise<
+  SourceResult<{
+    asset: Asset;
+    chart: {timeframe: Timeframe; points: ChartPoint[]; changePct: number};
+    trades: {trades: Trade[]; pollMs: number};
+  } | null>
+> {
+  const assetResult = await fetchAsset(kind, id);
+  if (!assetResult.data) return {data: null, seeded: assetResult.seeded};
+
+  const [chartResult, tradesResult] = await Promise.all([
+    fetchChart(assetResult.data, timeframe),
+    fetchTrades(assetResult.data, 300),
+  ]);
+
+  const first = chartResult.data[0]?.price ?? 0;
+  const last = chartResult.data[chartResult.data.length - 1]?.price ?? 0;
+
+  return {
+    data: {
+      asset: assetResult.data,
+      chart: {
+        timeframe,
+        points: chartResult.data,
+        changePct:
+          first > 0
+            ? Number((((last - first) / first) * 100).toFixed(2))
+            : 0,
+      },
+      trades: {
+        trades: tradesResult.data,
+        pollMs:
+          process.env.ALCHEMY_RPC_URL || AUTHENTICATED ? 2_000 : 12_000,
+      },
+    },
+    seeded: assetResult.seeded || chartResult.seeded || tradesResult.seeded,
+  };
+}
+
+/**
  * Candles, from GeckoTerminal's index of this chain.
  *
  * Not scanned from `Swap` logs: the RPC plan in use caps `eth_getLogs` at a
@@ -135,48 +189,43 @@ export async function fetchTrades(
   try {
     const target = await live.poolFor(asset.kind, asset.id);
     if (target) {
-      // Two sources for one tape. The indexer runs about eleven seconds behind
-      // the chain, so the last few seconds are read from the pool's own logs
-      // and laid on top; the indexer supplies everything older. Either can
-      // fail on its own without emptying the panel.
+      const cap = limit ?? TRADES_LIMIT;
+      const quoteUsd = target.quote
+        ? await quotePriceUsd(target.quote)
+        : null;
+
       const [indexed, live_] = await Promise.all([
-        gecko.trades(target.pool, target.token, limit ?? 40),
+        gecko.trades(target.pool, target.token, cap),
         target.quote
           ? swaps
-              .recentSwaps(target.pool, target.token, target.quote, asset.priceUsd)
+              .recentSwaps(
+                target.pool,
+                target.token,
+                target.quote,
+                asset.priceUsd,
+                quoteUsd,
+              )
               .catch(() => [] as Trade[])
           : Promise.resolve([] as Trade[]),
       ]);
 
-      const seen = new Set<string>();
-      const merged: Trade[] = [];
-
-      // Chain first, so a fill present in both keeps the copy that arrived
-      // sooner and the tape does not reorder itself when the indexer catches
-      // up.
-      //
-      // Both sources now identify a fill as transaction plus log index, which
-      // is what makes this exact: a transaction hash alone is not a trade here,
-      // because pools on this chain routinely settle ten swaps in one.
-      for (const trade of [...live_, ...indexed]) {
+      const byId = new Map<string, Trade>();
+      for (const trade of indexed) byId.set(trade.id.toLowerCase(), trade);
+      for (const trade of live_) {
         const key = trade.id.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        merged.push(trade);
+        if (!byId.has(key)) byId.set(key, trade);
+      }
+      if (byId.size === 0 && live_.length > 0) {
+        for (const trade of live_) byId.set(trade.id.toLowerCase(), trade);
       }
 
-      merged.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+      const merged = [...byId.values()].sort(compareTradesNewestFirst);
 
-      // A real pool with nothing to show is an answer, not a failure. Falling
-      // back here meant a rate-limited fetch quietly replaced a live pool's
-      // tape with simulated fills — SPY and GLD were showing invented trades
-      // on their own chart pages, marked as though they were the market.
-      return {data: merged.slice(0, limit ?? 40), seeded: false};
+      return {data: merged.slice(0, cap), seeded: false};
     }
   } catch (error) {
     console.error("live trades failed", error);
   }
-  // Only when no live pool could be identified at all.
   return {data: seeded.tradesFor(asset, limit), seeded: true};
 }
 

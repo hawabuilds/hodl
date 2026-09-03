@@ -57,14 +57,13 @@ const CANDLE_TTL_MS = API_KEY ? 20_000 : 60_000;
  * paid key this sits at two seconds — roughly thirty calls a minute for a pool
  * someone has open, against a ceiling in the hundreds.
  *
- * Unauthenticated it has to be twelve: the free ceiling is about thirty calls a
- * minute for the whole app, and this window is per pool, so anything faster
- * starves every other pool that is open. The rejections that followed did not
- * surface as errors — they returned an empty tape, indistinguishable from a
- * quiet pool.
+ * The chain head is polled every two seconds; keep the indexer on the same
+ * cadence when a paid key is configured so neither source goes stale.
  */
 const TRADE_TTL_MS = API_KEY ? 2_000 : 12_000;
 const POOL_TTL_MS = 30 * 60_000;
+/** GeckoTerminal returns up to 300 fills per pool; cache the full page. */
+const TRADES_PAGE = 300;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -138,6 +137,166 @@ export async function deepestPool(token: string): Promise<string | null> {
     // fall through
   }
   return stale<string>(key) || null;
+}
+
+/**
+ * The shape `dexscreener.ts` builds the feed out of. Duplicated rather than
+ * imported from there, because that file needs to call *this* one to recover
+ * pairs DexScreener's own cap drops — importing the type back would make the
+ * two modules depend on each other.
+ */
+export interface OnchainPool {
+  chainId: string;
+  dexId: string;
+  labels?: string[];
+  pairAddress: string;
+  baseToken: {address: string; name: string; symbol: string};
+  quoteToken: {address: string; name: string; symbol: string};
+  priceUsd?: string;
+  liquidity?: {usd?: number};
+  volume?: {m5?: number; h1?: number; h6?: number; h24?: number};
+  priceChange?: {m5?: number; h1?: number; h6?: number; h24?: number};
+  marketCap?: number;
+  fdv?: number;
+  pairCreatedAt?: number;
+}
+
+interface TokenPoolsResponse {
+  data?: {
+    attributes?: {
+      address?: string;
+      base_token_price_usd?: string;
+      reserve_in_usd?: string;
+      market_cap_usd?: string;
+      fdv_usd?: string;
+      pool_created_at?: string;
+      volume_usd?: {m5?: string; h1?: string; h6?: string; h24?: string};
+      price_change_percentage?: {m5?: string; h1?: string; h6?: string; h24?: string};
+    };
+    relationships?: {
+      base_token?: {data?: {id?: string}};
+      quote_token?: {data?: {id?: string}};
+    };
+  }[];
+  included?: {
+    id?: string;
+    attributes?: {address?: string; name?: string; symbol?: string};
+  }[];
+}
+
+/** Strips the `<network>_` prefix CoinGecko puts on every relationship id. */
+function tokenIdToAddress(id: string | undefined): string {
+  return (id ?? "").replace(`${NETWORK}_`, "").toLowerCase();
+}
+
+/**
+ * Every pool CoinGecko knows for one token, paginated.
+ *
+ * `token-pairs/v1` on DexScreener caps at thirty pools and does not say so —
+ * the only tell is a response that lands on exactly thirty. This exists to
+ * recover what that cap drops: paid CoinGecko's onchain API serves the same
+ * data twenty pools to a page with no cap found in practice, at the cost of
+ * one request per page instead of one per token.
+ *
+ * Requires a paid key. The free GeckoTerminal endpoint enforces roughly thirty
+ * requests a minute across the whole app, and sweeping even a few dozen capped
+ * tickers at several pages each would exhaust that on its own — worse than the
+ * gap it would be trying to close.
+ */
+export async function poolsForToken(
+  address: string,
+  maxPages = 3,
+): Promise<OnchainPool[]> {
+  if (!API_KEY) return [];
+
+  const out: OnchainPool[] = [];
+
+  for (let page = 1; page <= maxPages; page++) {
+    let body: TokenPoolsResponse | null;
+    try {
+      const res = await fetch(
+        `${BASE}/networks/${NETWORK}/tokens/${address}/pools?page=${page}&include=base_token,quote_token`,
+        {headers: {accept: "application/json", ...authHeaders()}, cache: "no-store"},
+      );
+      if (!res.ok) break;
+      body = (await res.json()) as TokenPoolsResponse;
+    } catch {
+      break;
+    }
+
+    const rows = body?.data ?? [];
+    if (rows.length === 0) break;
+
+    const tokens = new Map(
+      (body?.included ?? []).map((entry) => [
+        entry.id ?? "",
+        entry.attributes ?? {},
+      ]),
+    );
+
+    for (const row of rows) {
+      const a = row.attributes;
+      if (!a?.address) continue;
+
+      const baseId = row.relationships?.base_token?.data?.id;
+      const quoteId = row.relationships?.quote_token?.data?.id;
+      const baseMeta = tokens.get(baseId ?? "");
+      const quoteMeta = tokens.get(quoteId ?? "");
+      const baseAddress = tokenIdToAddress(baseId);
+      const quoteAddress = tokenIdToAddress(quoteId);
+      if (!baseAddress || !quoteAddress) continue;
+
+      const num = (value: string | undefined) => {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : undefined;
+      };
+
+      out.push({
+        chainId: NETWORK,
+        dexId: "uniswap",
+        // Version detection elsewhere in the app goes by address shape — a
+        // 32-byte value is a v4 pool id, a 20-byte one a v3 pool address — so
+        // this only needs to match that same convention for the description
+        // string that reads it, not carry separate logic.
+        labels: /^0x[0-9a-f]{64}$/i.test(a.address) ? ["v4"] : ["v3"],
+        pairAddress: a.address,
+        baseToken: {
+          address: baseAddress,
+          name: baseMeta?.name ?? "",
+          symbol: baseMeta?.symbol ?? "",
+        },
+        quoteToken: {
+          address: quoteAddress,
+          name: quoteMeta?.name ?? "",
+          symbol: quoteMeta?.symbol ?? "",
+        },
+        priceUsd: a.base_token_price_usd,
+        liquidity: {usd: num(a.reserve_in_usd)},
+        volume: {
+          m5: num(a.volume_usd?.m5),
+          h1: num(a.volume_usd?.h1),
+          h6: num(a.volume_usd?.h6),
+          h24: num(a.volume_usd?.h24),
+        },
+        priceChange: {
+          m5: num(a.price_change_percentage?.m5),
+          h1: num(a.price_change_percentage?.h1),
+          h6: num(a.price_change_percentage?.h6),
+          h24: num(a.price_change_percentage?.h24),
+        },
+        marketCap: num(a.market_cap_usd),
+        fdv: num(a.fdv_usd),
+        pairCreatedAt: a.pool_created_at
+          ? Date.parse(a.pool_created_at)
+          : undefined,
+      });
+    }
+
+    // A page short of twenty is the last one; no point asking again.
+    if (rows.length < 20) break;
+  }
+
+  return out;
 }
 
 /** How each of the app's timeframes maps onto GeckoTerminal's buckets. */
@@ -216,8 +375,9 @@ interface TradesResponse {
 /**
  * Recent fills for a pool, newest first.
  *
- * `kind` is already buy or sell from the base token's point of view, which is
- * the same convention the tape uses, so no sign juggling is needed here.
+ * The `token` query param makes `kind` buy or sell from that token's point of
+ * view, which is what the tape needs when the page token is the pool's quote
+ * side rather than its base.
  */
 export async function trades(
   pool: string,
@@ -225,20 +385,25 @@ export async function trades(
   tokenAddress: string,
   limit = 40,
 ): Promise<Trade[]> {
-  const key = `gt:trades:${pool}`;
+  const wanted = tokenAddress.toLowerCase();
+  const key = `gt:trades:${pool}:${wanted}`;
 
   const load = async (): Promise<Trade[]> => {
+    const params = new URLSearchParams({
+      token: wanted,
+      limit: String(TRADES_PAGE),
+    });
     const body = await get<TradesResponse>(
-      `/networks/${NETWORK}/pools/${pool}/trades`,
+      `/networks/${NETWORK}/pools/${pool}/trades?${params}`,
     );
+    if (!body) throw new Error("trades upstream unavailable");
 
-    const wanted = tokenAddress.toLowerCase();
-
-    return (body?.data ?? [])
+    return (body.data ?? [])
       .map((row): Trade | null => {
         const a = row.attributes;
         if (!a?.tx_hash || !a.block_timestamp) return null;
 
+        // With `?token=`, kind is buy/sell from this token's point of view.
         const buy = a.kind === "buy";
         const amountUsd = Number(a.volume_in_usd ?? 0);
         if (!Number.isFinite(amountUsd) || amountUsd <= 0) return null;
@@ -258,7 +423,13 @@ export async function trades(
         // where a single transaction carries ten swaps, so a transaction hash
         // identifies a batch rather than a trade. Keying on it lets the chain
         // read and the indexer agree on which fill is which.
-        const logIndex = String(row.id ?? "").split("_")[3];
+        const logPart = String(row.id ?? "").split("_")[3];
+        const logNum = logPart
+          ? logPart.startsWith("0x")
+            ? parseInt(logPart, 16)
+            : parseInt(logPart, 10)
+          : NaN;
+        const logIndex = Number.isFinite(logNum) ? String(logNum) : null;
 
         return {
           id: logIndex
@@ -274,15 +445,17 @@ export async function trades(
           at: a.block_timestamp,
         };
       })
-      .filter((trade): trade is Trade => trade !== null)
-      .slice(0, limit);
+      .filter((trade): trade is Trade => trade !== null);
   };
 
   try {
     const loaded = await cached(key, TRADE_TTL_MS, load);
-    if (loaded.length > 0) return loaded;
+    if (loaded.length > 0) return loaded.slice(0, limit);
   } catch {
     // fall through
   }
-  return stale<Trade[]>(key) ?? [];
+
+  const previous = stale<Trade[]>(key);
+  if (previous && previous.length > 0) return previous.slice(0, limit);
+  return [];
 }

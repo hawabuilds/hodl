@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {usePathname} from "next/navigation";
 import {TABS, type TabKey} from "@/config/app";
+import {usePrefetchNews} from "@/hooks/usePrefetchNews";
 import {cn} from "@/lib/cn";
 import {HomeIcon, NewsIcon, SearchIcon, UserIcon} from "./ui/Icons";
 
@@ -26,6 +27,7 @@ const ICONS: Record<TabKey, (props: {className?: string}) => JSX.Element> = {
  */
 export function TabBar() {
   const pathname = usePathname();
+  const prefetchNews = usePrefetchNews();
 
   return (
     <nav
@@ -48,6 +50,8 @@ export function TabBar() {
               href={tab.href}
               aria-label={tab.label}
               aria-current={active ? "page" : undefined}
+              onPointerDown={tab.key === "news" ? prefetchNews : undefined}
+              onMouseEnter={tab.key === "news" ? prefetchNews : undefined}
               className={cn(
                 "grid h-[46px] w-[54px] place-items-center rounded-full",
                 "transition-[background-color,color,box-shadow] duration-200",

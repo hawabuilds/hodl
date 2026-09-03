@@ -2,6 +2,7 @@
 
 import {useMemo} from "react";
 import {keepPreviousData, useQuery} from "@tanstack/react-query";
+import {MARKET_REFRESH_MS} from "@/config/market";
 import type {Asset, Holding, Range} from "@/lib/types";
 import {useEthPrice} from "./useEthPrice";
 import {useUser} from "./useUser";
@@ -64,10 +65,13 @@ export function usePortfolio(range: Range = "1D") {
   const priced = useQuery({
     queryKey: ["portfolio-series", ids, range],
     enabled: ids.length > 0,
+    staleTime: 0,
+    refetchInterval: MARKET_REFRESH_MS,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const res = await fetch(
         `/api/assets?range=${range}&ids=${encodeURIComponent(ids)}`,
+        {cache: "no-store"},
       );
       if (!res.ok) throw new Error("Could not price your holdings.");
       return (await res.json()) as {assets: Asset[]};
