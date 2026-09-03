@@ -17,6 +17,14 @@ export function Providers({children}: {children: ReactNode}) {
             // The market moves on a one-minute cadence, so anything older than
             // that is worth replacing when a view remounts.
             staleTime: 30_000,
+            // Kept well past the stale window so moving between tabs paints
+            // from cache and refreshes behind you. At the default five minutes
+            // the data was dropped outright, and coming back to a tab meant
+            // watching a skeleton for something already fetched twice.
+            gcTime: 30 * 60_000,
+            // A remount with cached data renders it immediately rather than
+            // flashing a loading state before the same rows reappear.
+            placeholderData: <T,>(previous: T) => previous,
             refetchOnWindowFocus: false,
             retry: 1,
           },

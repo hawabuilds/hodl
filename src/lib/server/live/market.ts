@@ -13,6 +13,7 @@ import {
 import {quotes, RWA_BY_ADDRESS, RWA_BY_TICKER, RWA_REGISTRY} from "./robinhood";
 import {launchpadsFor} from "./launchpads";
 import {holderRewardsFor} from "./holderRewards";
+import {graduatedFrom} from "./graduation";
 import {taxesFor} from "./taxes";
 import {totalSupplies} from "./chain";
 
@@ -193,9 +194,10 @@ export async function listTokens(): Promise<TokenAsset[]> {
 
   // One multicall each for the whole page rather than a lookup per row.
   const addresses = [...best.keys()];
-  const [launchpads, payingHolders] = await Promise.all([
+  const [launchpads, payingHolders, graduated] = await Promise.all([
     launchpadsFor(addresses),
     holderRewardsFor(addresses),
+    graduatedFrom(addresses),
   ]);
 
   const out: TokenAsset[] = [];
@@ -244,6 +246,7 @@ export async function listTokens(): Promise<TokenAsset[]> {
       // not "none" — the Rewards filter stays inert until that lands.
       rewards24hUsd: 0,
       rewardsToHolders: payingHolders.has(address),
+      graduated: graduated.has(address),
       holders: 0,
       createdAt: new Date(pair.pairCreatedAt ?? Date.now()).toISOString(),
       pairedTicker: quoteSymbol,

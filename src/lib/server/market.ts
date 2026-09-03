@@ -237,6 +237,7 @@ export function listTokens(now: number = Date.now()): TokenAsset[] {
       liquidityUsd: Math.round(marketCap * between(next, 0.03, 0.14)),
       rewards24hUsd: Math.round((volume * feeBps) / 10_000),
       rewardsToHolders: false,
+      graduated: true,
       holders: Math.round(between(next, 240, 41_000)),
       createdAt: new Date(
         now - between(next, 2, 240) * 24 * 60 * 60_000,

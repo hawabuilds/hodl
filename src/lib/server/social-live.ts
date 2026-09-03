@@ -225,3 +225,107 @@ export async function profileByHandle(handle: string): Promise<Profile | null> {
 
   return toProfile(data as UserRow, followers ?? 0, following ?? 0);
 }
+
+/** Handles following a given account, by that account's handle. */
+export async function followersOf(handle: string): Promise<string[]> {
+  return edgesFor(handle, "followers");
+}
+
+/** Handles a given account follows, by that account's handle. */
+export async function followingByHandle(handle: string): Promise<string[]> {
+  return edgesFor(handle, "following");
+}
+
+/**
+ * One side of the follow graph for an account named by handle.
+ *
+ * Both directions are the same query against opposite columns, so they share
+ * an implementation rather than drifting apart. `followingOf` above stays
+ * separate because it is keyed on the caller's id from their token, which is
+ * the one case where no handle lookup is needed or wanted.
+ */
+async function edgesFor(
+  handle: string,
+  side: "followers" | "following",
+): Promise<string[]> {
+  if (!hasDatabase) return [];
+
+  const {data: user} = await db()
+    .from("users")
+    .select("id")
+    .eq("handle", handle.replace(/^@/, ""))
+    .maybeSingle();
+
+  if (!user?.id) return [];
+
+  const [match, join] =
+    side === "followers"
+      ? (["following_id", "users!follows_follower_id_fkey(handle)"] as const)
+      : (["follower_id", "users!follows_following_id_fkey(handle)"] as const);
+
+  const {data} = await db().from("follows").select(join).eq(match, user.id);
+
+  return (data ?? [])
+    .map((row) => {
+      const joined = one(
+        (row as {users?: {handle?: string} | {handle?: string}[]}).users,
+      );
+      return joined?.handle ?? null;
+    })
+    .filter((entry): entry is string => Boolean(entry));
+}
+
+/**
+ * Profiles for a set of handles, in the order asked for.
+ *
+ * One query rather than one per handle: follower lists render dozens of these
+ * at once, and the counts are left at zero because a list row shows a name and
+ * a picture, not a follower tally.
+ */
+export async function profilesByHandles(
+  handles: string[],
+): Promise<Profile[]> {
+  if (!hasDatabase || handles.length === 0) return [];
+
+  const wanted = handles.map((handle) => handle.replace(/^@/, ""));
+
+  const {data} = await db()
+    .from("users")
+    .select("id, handle, display_name, pfp_url, bio, socials, wallet")
+    .in("handle", wanted);
+
+  const byHandle = new Map(
+    (data ?? []).map((row) => [
+      (row as UserRow).handle ?? "",
+      toProfile(row as UserRow),
+    ]),
+  );
+
+  return wanted
+    .map((handle) => byHandle.get(handle))
+    .filter((profile): profile is Profile => profile !== undefined);
+}
+
+/**
+ * Handles following the caller.
+ *
+ * Keyed on the id from their token rather than a handle, so it needs no lookup
+ * and works before the account has picked one.
+ */
+export async function followersOfId(userId: string): Promise<string[]> {
+  if (!hasDatabase) return [];
+
+  const {data} = await db()
+    .from("follows")
+    .select("users!follows_follower_id_fkey(handle)")
+    .eq("following_id", userId);
+
+  return (data ?? [])
+    .map((row) => {
+      const joined = one(
+        (row as {users?: {handle?: string} | {handle?: string}[]}).users,
+      );
+      return joined?.handle ?? null;
+    })
+    .filter((entry): entry is string => Boolean(entry));
+}

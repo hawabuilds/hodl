@@ -76,6 +76,12 @@ export interface TokenAsset {
    */
   rewardsToHolders: boolean;
   /**
+   * Whether the token has finished bonding and trades in a real pool. False
+   * while it is still on its launchpad's curve, where the "liquidity" on show
+   * is the curve's own reserve rather than a market.
+   */
+  graduated: boolean;
+  /**
    * Volume and price move over each window the feed offers, so a filter set to
    * "1h" ranks on the hour rather than re-slicing a day's figure.
    */

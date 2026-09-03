@@ -5,10 +5,12 @@
  * DexScreener at roughly 300 a minute — and a route handler runs per request.
  * Without this, a busy minute on the feed would exhaust either one.
  *
+ * Stale-while-revalidate: an expired entry is still served, with the reload
+ * started behind the response. Blocking on the reload meant whoever arrived
+ * first after an expiry waited for the whole rebuild.
+ *
  * In-process, so it resets on a cold start and is not shared between serverless
- * instances. That is deliberate: it is a throttle, not a database. Part 03's
- * Postgres tables are what make the data durable; this is what keeps the app
- * responsive before those exist, and keeps it inside the limits afterwards.
+ * instances. That is deliberate: it is a throttle, not a database.
  */
 interface Entry<T> {
   value: T;
@@ -26,11 +28,36 @@ export async function cached<T>(
   load: () => Promise<T>,
 ): Promise<T> {
   const hit = store.get(key) as Entry<T> | undefined;
+  const pending = inflight.get(key) as Promise<T> | undefined;
+
+  // Fresh enough to serve outright.
   if (hit && hit.expires > Date.now()) return hit.value;
 
-  const pending = inflight.get(key) as Promise<T> | undefined;
-  if (pending) return pending;
+  /**
+   * Expired, but we have the last answer.
+   *
+   * Serve it and refresh behind the request. Waiting for the reload was the
+   * whole of the lag between pages: the market sweep takes several seconds to
+   * rebuild, so whoever arrived first after an expiry paid for everyone. A
+   * few seconds of staleness on a feed that refreshes every minute is not
+   * worth a page that visibly stalls.
+   */
+  if (hit) {
+    if (!pending) void refresh(key, ttlMs, load);
+    return hit.value;
+  }
 
+  // Nothing to serve, so this caller does have to wait — but only one does.
+  if (pending) return pending;
+  return refresh(key, ttlMs, load);
+}
+
+/** Loads, stores, and clears its own in-flight marker. */
+function refresh<T>(
+  key: string,
+  ttlMs: number,
+  load: () => Promise<T>,
+): Promise<T> {
   const promise = load()
     .then((value) => {
       store.set(key, {value, expires: Date.now() + ttlMs});
@@ -41,6 +68,9 @@ export async function cached<T>(
     });
 
   inflight.set(key, promise);
+  // A background refresh must not surface as an unhandled rejection; the
+  // stored value simply stays until a later attempt succeeds.
+  promise.catch(() => {});
   return promise;
 }
 

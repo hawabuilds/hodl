@@ -49,7 +49,10 @@ function trimmed(tokens: Asset[]): Asset[] {
     .slice(0, BY_VOLUME);
 
   const newest = [...tokens]
-    .filter((asset) => asset.kind === "token" && asset.launchpad !== null)
+    .filter(
+      (asset) =>
+        asset.kind === "token" && asset.launchpad !== null && asset.graduated,
+    )
     .sort((a, b) => {
       const at = a.kind === "token" ? Date.parse(a.createdAt) : 0;
       const bt = b.kind === "token" ? Date.parse(b.createdAt) : 0;

@@ -86,7 +86,10 @@ export default function HomePage() {
         // graduations from a launchpad we can prove, into a stock-token pair.
         // Everything else on the chain would bury them.
         return list
-          .filter((token) => token.launchpad !== null && token.rwaPaired)
+          .filter(
+            (token) =>
+              token.launchpad !== null && token.rwaPaired && token.graduated,
+          )
           .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       case "marketCap":
         return list.sort((a, b) => b.marketCapUsd - a.marketCapUsd);

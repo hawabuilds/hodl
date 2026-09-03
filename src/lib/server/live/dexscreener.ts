@@ -101,8 +101,8 @@ const SWEEP_TTL_MS = 5 * 60_000;
 export async function allRwaPairs(): Promise<DexPair[]> {
   const key = "ds:sweep";
 
-  try {
-    const loaded = await cached(key, SWEEP_TTL_MS, async () => {
+  const load = async () => {
+    {
       const addresses = RWA_REGISTRY.map((entry) => entry.address);
       const seen = new Map<string, DexPair>();
       let index = 0;
@@ -133,7 +133,21 @@ export async function allRwaPairs(): Promise<DexPair[]> {
       );
 
       return [...seen.values()];
-    });
+    }
+  };
+
+  // Never the thing a first request waits on. Two hundred round trips take
+  // several seconds, and on a cold instance that was the whole of the delay
+  // before a feed appeared. Until the sweep has landed the feed is built from
+  // the faster sources and is merely smaller; once it has, every later request
+  // gets the complete set from cache.
+  if (stale<DexPair[]>(key) === null) {
+    void cached(key, SWEEP_TTL_MS, load).catch(() => {});
+    return [];
+  }
+
+  try {
+    const loaded = await cached(key, SWEEP_TTL_MS, load);
     if (loaded.length > 0) return loaded;
   } catch (error) {
     console.error("rwa pair sweep failed", error);
