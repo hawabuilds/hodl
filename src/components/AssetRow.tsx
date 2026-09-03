@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {useArrivals} from "@/hooks/useArrivals";
+import {usePrefetchAsset} from "@/hooks/usePrefetchAsset";
 import {cn} from "@/lib/cn";
 import {compactMoney, percent, price as fmtPrice} from "@/lib/format";
 import {SECTORS} from "@/lib/sectors";
@@ -26,6 +27,8 @@ const SECTOR_LABEL = new Map(SECTORS.map((sector) => [sector.id, sector.label]))
  * by.
  */
 export function AssetRow({asset, fresh}: {asset: Asset; fresh?: boolean}) {
+  const prefetch = usePrefetchAsset();
+  const warm = () => prefetch(asset.kind, asset.id);
   const positive = asset.changePct >= 0;
   const rwa = asset.kind === "rwa";
   const symbol = rwa ? asset.ticker : asset.symbol;
@@ -33,6 +36,12 @@ export function AssetRow({asset, fresh}: {asset: Asset; fresh?: boolean}) {
   return (
     <Link
       href={assetHref(asset)}
+      // Pointer-down rather than click: the page's data starts loading while
+      // the finger is still on the row, which is most of the gap a first tap
+      // used to spend staring at a skeleton. `onMouseEnter` covers a cursor,
+      // which has even longer to work with.
+      onPointerDown={warm}
+      onMouseEnter={warm}
       className={cn(
         "flex items-center gap-3 px-[22px] py-[13px] transition-colors duration-150 hover:bg-[var(--overlay-wash)]",
         fresh && "trade-in",

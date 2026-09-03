@@ -3,6 +3,7 @@ import {
   followersOf,
   followingByHandle,
   profileByHandle,
+  walletForHandle,
 } from "@/lib/server/social-live";
 import {holdingsFor} from "@/lib/server/live/holdings";
 import {hasDatabase} from "@/lib/server/db";
@@ -25,18 +26,23 @@ export async function GET(
   if (hasDatabase) {
     const profile = await profileByHandle(params.handle);
     if (profile) {
-      const [followerHandles, followingHandles, wallet] = await Promise.all([
+      // Read here and used here. The address is what prices the holdings, and
+      // it goes no further than this function — the profile itself carries a
+      // null wallet by construction.
+      const address = await walletForHandle(profile.handle);
+
+      const [followerHandles, followingHandles, book] = await Promise.all([
         followersOf(profile.handle),
         followingByHandle(profile.handle),
         // A profile with no wallet on file is a real state, not an error: the
         // account exists, it just has nothing on chain to show.
-        profile.wallet && profile.wallet !== "0x"
-          ? holdingsFor(profile.wallet)
+        address && /^0x[0-9a-fA-F]{40}$/.test(address)
+          ? holdingsFor(address)
           : Promise.resolve({holdings: [], ethBalance: 0, degraded: false}),
       ]);
 
       return json({
-        profile: {...profile, holdings: wallet.holdings},
+        profile: {...profile, holdings: book.holdings},
         followerHandles,
         followingHandles,
         seeded: false,

@@ -12,7 +12,7 @@ import {SocialRow} from "@/components/SocialRow";
 import {Avatar} from "@/components/ui/Avatar";
 import {SectionLabel} from "@/components/ui/Card";
 import {PencilIcon} from "@/components/ui/Icons";
-import {useBook} from "@/hooks/useBook";
+import {usePortfolio} from "@/hooks/usePortfolio";
 import {useMe} from "@/hooks/useMe";
 import {useMyFollowers, usePeople} from "@/hooks/usePeople";
 import {useFollows} from "@/hooks/useProfile";
@@ -39,7 +39,7 @@ const RANGE_SPAN_MS: Record<Range, number> = {
 export default function ProfilePage() {
   const me = useMe();
   const [range, setRange] = useState<Range>("1D");
-  const book = useBook(range);
+  const book = usePortfolio(range);
   const [side, setSide] = useState<Side>("rwa");
   const [editOpen, setEditOpen] = useState(false);
   const [scrubbed, setScrubbed] = useState<ChartPoint | null>(null);
@@ -185,7 +185,11 @@ export default function ProfilePage() {
         <span className="tnum font-extrabold text-ink">
           {money(book.positionsValue)}
         </span>{" "}
-        in positions · {money(book.cashUsd)} cash
+        in positions ·{" "}
+        <span className="tnum font-extrabold text-ink">
+          {money(book.ethValueUsd)}
+        </span>{" "}
+        ETH
       </div>
 
       <FilterRail
@@ -205,44 +209,15 @@ export default function ProfilePage() {
         }
       />
 
-      {book.orders.length > 0 ? (
-        <>
-          <SectionLabel>RECENT ORDERS</SectionLabel>
-          <ul className="-mx-[22px] divide-y divide-hairline">
-            {book.orders.slice(0, 8).map((order) => (
-              <li
-                key={order.id}
-                className="flex items-center justify-between gap-3 px-[22px] py-3"
-              >
-                <div className="min-w-0">
-                  <div className="text-[13px] font-extrabold">
-                    <span
-                      className={
-                        order.side === "buy" ? "text-green-deep" : "text-red"
-                      }
-                    >
-                      {order.side === "buy" ? "Bought" : "Sold"}
-                    </span>{" "}
-                    {order.symbol}
-                  </div>
-                  <div className="tnum mt-0.5 text-[11.5px] font-semibold text-faint">
-                    {units(order.amount)} · {relativeTime(order.at)}
-                  </div>
-                </div>
-                <div className="tnum shrink-0 text-[13px] font-extrabold">
-                  {money(order.amountUsd)}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </>
+      {book.degraded ? (
+        <p className="mt-5 px-0.5 text-[11.5px] leading-[1.5] text-faint">
+          Balances could not be read just now, so this may be incomplete.
+        </p>
+      ) : !book.connected ? (
+        <p className="mt-5 px-0.5 text-[11.5px] leading-[1.5] text-faint">
+          Connect a wallet to see what you hold.
+        </p>
       ) : null}
-
-      <p className="mt-5 px-0.5 text-[11.5px] leading-[1.5] text-faint">
-        This book is simulated and opens with sample positions. Orders are
-        recorded in this browser only — no wallet is signed and no funds move.
-        Followers are seeded; who you follow is real and lives in this browser.
-      </p>
 
       <ConnectionsSheet
         open={connections === "followers"}

@@ -39,11 +39,33 @@ function toProfile(row: UserRow, followers = 0, following = 0): Profile {
       website: row.socials?.website ?? null,
       discord: row.socials?.discord ?? null,
     },
-    wallet: row.wallet ?? "0x",
+    // Never sent. A profile is public; the address that ties a handle to every
+    // trade the person has ever made is not, and it only has to leak once. The
+    // owner reads their own from their session, and the server uses
+    // `walletForHandle` where it needs one to price holdings.
+    wallet: null,
     followers,
     following,
     holdings: [],
   };
+}
+
+/**
+ * The address behind a handle, for server-side use only.
+ *
+ * Kept apart from `toProfile` so that a wallet can only reach a response by
+ * someone deciding to put it there.
+ */
+export async function walletForHandle(
+  handle: string,
+): Promise<string | null> {
+  if (!hasDatabase) return null;
+  const {data} = await db()
+    .from("users")
+    .select("wallet")
+    .eq("handle", handle.replace(/^@/, ""))
+    .maybeSingle();
+  return (data as {wallet?: string} | null)?.wallet ?? null;
 }
 
 /** Creates or refreshes the caller's row. Identity comes from the token. */

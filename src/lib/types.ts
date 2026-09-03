@@ -239,8 +239,14 @@ export interface Holding {
   amount: number;
   valueUsd: number;
   changePct: number;
-  /** Total put in, so the row can show unrealised profit rather than a guess. */
-  costUsd: number;
+  /**
+   * Total put in, where this platform recorded the fills.
+   *
+   * Null for a balance that arrived from anywhere else, which is most of them —
+   * and null is not zero. A zero cost makes a position's entire value read as
+   * profit, so a row without a basis shows the asset's own move instead.
+   */
+  costUsd: number | null;
 }
 
 export interface Profile {
@@ -249,7 +255,15 @@ export interface Profile {
   pfpUrl: string | null;
   bio: string;
   socials: SocialLinks;
-  wallet: string;
+  /**
+   * The account's wallet, and only ever their own.
+   *
+   * Null on anyone else's profile. A handle is public and a balance sheet is
+   * arguably part of the pitch, but the address that ties them together is not
+   * something a viewer needs — it would let anyone follow every trade the
+   * person has ever made, on any chain, for good.
+   */
+  wallet: string | null;
   followers: number;
   following: number;
   holdings: Holding[];

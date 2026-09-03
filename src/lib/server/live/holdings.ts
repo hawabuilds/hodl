@@ -77,7 +77,9 @@ export async function holdingsFor(wallet: string): Promise<{
       amount,
       valueUsd: amount * asset.priceUsd,
       changePct: asset.changePct,
-      costUsd: 0,
+      // Null, not zero: this platform did not fill these, so there is no basis
+      // and a zero would render the whole position as profit.
+      costUsd: null,
     });
   }
 

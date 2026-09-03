@@ -36,15 +36,13 @@ export default function PublicProfilePage({
   const following = profile ? follows.has(profile.handle) : false;
   const holdings = useMemo(() => profile?.holdings ?? [], [profile]);
 
-  // Someone else's book shows what it is worth and what it is up, but never a
-  // value line: the entry times behind it are not published, so a chart would
-  // be an invention rather than a summary.
-  const totals = useMemo(() => {
-    const value = holdings.reduce((sum, h) => sum + h.valueUsd, 0);
-    const cost = holdings.reduce((sum, h) => sum + h.costUsd, 0);
-    const pnl = value - cost;
-    return {value, cost, pnl, pct: cost > 0 ? (pnl / cost) * 100 : 0};
-  }, [holdings]);
+  // Someone else's book shows what it is worth, and nothing about what they
+  // paid: there is no cost basis for a balance this platform did not fill, and
+  // no value line either, because the entry times behind one are not published.
+  const totals = useMemo(
+    () => ({value: holdings.reduce((sum, h) => sum + h.valueUsd, 0)}),
+    [holdings],
+  );
 
   const sides: FilterOption<Side>[] = [
     {
@@ -124,14 +122,6 @@ export default function PublicProfilePage({
           <b className="tnum font-extrabold">{compact(profile.following)}</b>{" "}
           <span className="text-faint">following</span>
         </button>
-        <a
-          href={addressUrlForChain(profile.wallet, RH_MAINNET_ID)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-mono text-[11.5px] text-faint transition-colors hover:text-ink"
-        >
-          {shortAddress(profile.wallet, 4)}
-        </a>
       </div>
 
       <SocialRow socials={profile.socials} className="-ml-2 mt-1.5" />
@@ -142,16 +132,8 @@ export default function PublicProfilePage({
       <div className="tnum mt-1.5 text-[32px] font-extrabold leading-none tracking-[-0.035em]">
         {money(totals.value)}
       </div>
-      <div
-        className={cn(
-          "tnum mt-2 text-[13.5px] font-bold",
-          totals.pnl >= 0 ? "text-green-deep" : "text-red",
-        )}
-      >
-        {totals.pnl >= 0 ? "+" : "−"}
-        {money(Math.abs(totals.pnl))}
-        <span className="ml-1.5">{percent(totals.pct)}</span>
-        <span className="ml-1.5 font-semibold text-faint">unrealised</span>
+      <div className="tnum mt-2 text-[13.5px] font-semibold text-faint">
+        Held on Robinhood Chain
       </div>
 
       <FilterRail

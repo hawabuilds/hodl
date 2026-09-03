@@ -34,10 +34,16 @@ export function HoldingsList({
   return (
     <ul className="-mx-[22px]">
       {holdings.map((holding) => {
-        const pnlUsd = holding.valueUsd - holding.costUsd;
+        // Profit needs a basis. Balances that arrived from anywhere but this
+        // platform have none, and treating that as a cost of zero would print
+        // the whole position as profit — so those rows show the asset's own
+        // move over the day instead, which is a fact about the asset rather
+        // than a claim about what the holder paid.
+        const basis = holding.costUsd;
+        const pnlUsd = basis === null ? null : holding.valueUsd - basis;
         const pnlPct =
-          holding.costUsd > 0 ? (pnlUsd / holding.costUsd) * 100 : 0;
-        const positive = pnlUsd >= 0;
+          basis !== null && basis > 0 ? ((pnlUsd ?? 0) / basis) * 100 : null;
+        const positive = (pnlUsd ?? holding.changePct) >= 0;
 
         return (
           <li key={`${holding.kind}:${holding.assetId}`}>
@@ -72,11 +78,22 @@ export function HoldingsList({
                     positive ? "text-green-deep" : "text-red",
                   )}
                 >
-                  {positive ? "+" : "−"}
-                  {money(Math.abs(pnlUsd))}
-                  <span className="ml-1.5 font-semibold opacity-75">
-                    {percent(pnlPct)}
-                  </span>
+                  {pnlUsd === null ? (
+                    <>
+                      {percent(holding.changePct)}
+                      <span className="ml-1.5 font-semibold opacity-75">24h</span>
+                    </>
+                  ) : (
+                    <>
+                      {positive ? "+" : "−"}
+                      {money(Math.abs(pnlUsd))}
+                      {pnlPct === null ? null : (
+                        <span className="ml-1.5 font-semibold opacity-75">
+                          {percent(pnlPct)}
+                        </span>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             </Link>

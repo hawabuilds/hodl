@@ -1,18 +1,14 @@
 "use client";
 
-import {useCallback, useEffect, useMemo, useRef} from "react";
+import {useCallback, useMemo} from "react";
 import {keepPreviousData, useQuery, useQueryClient} from "@tanstack/react-query";
 import {
   applyFill,
-  hasBook,
   readBook,
-  seedBook,
   STARTING_CASH_USD,
   type Book,
   type FillInput,
-  type Position,
 } from "@/lib/localStore";
-import {SAMPLE_CASH_USD, SAMPLE_POSITIONS} from "@/lib/sampleBook";
 import type {Asset, Holding, Range} from "@/lib/types";
 import {useLocalStore} from "./useLocalStore";
 
@@ -25,73 +21,19 @@ export interface ValuedHolding extends Holding {
 }
 
 /**
- * Seeds the opening book once, from live prices.
+ * The trade simulator's book.
  *
- * Runs in the browser rather than in `localStore` because the sample positions
- * are expressed as dollar amounts at a fraction of the current price, and only
- * the market knows what that price is.
- */
-function useSeedBook() {
-  const started = useRef(false);
-
-  useEffect(() => {
-    if (started.current || hasBook()) return;
-    started.current = true;
-
-    const ids = SAMPLE_POSITIONS.map((p) => `${p.kind}:${p.lookup}`).join(",");
-
-    // Deliberately not cancelled on cleanup. Strict mode mounts, unmounts and
-    // remounts this effect, and the remount is short-circuited by the ref — so
-    // cancelling the first fetch would leave the book unseeded in development
-    // and seeded in production.
-    void (async () => {
-      try {
-        const res = await fetch(`/api/assets?ids=${encodeURIComponent(ids)}`);
-        if (!res.ok) return;
-        const {assets} = (await res.json()) as {assets: Asset[]};
-
-        const positions: Position[] = [];
-        for (const sample of SAMPLE_POSITIONS) {
-          const asset = assets.find(
-            (candidate) =>
-              candidate.kind === sample.kind &&
-              (candidate.id.toLowerCase() === sample.lookup ||
-                (candidate.kind === "token" &&
-                  candidate.symbol.toLowerCase() === sample.lookup)),
-          );
-          if (!asset || asset.priceUsd <= 0) continue;
-          const entry = asset.priceUsd * sample.entryFactor;
-          positions.push({
-            kind: asset.kind,
-            // The canonical id, so the row links to the same page a feed card
-            // does even though the sample was written against a symbol.
-            assetId: asset.id,
-            symbol: asset.kind === "rwa" ? asset.ticker : asset.symbol,
-            name: asset.name,
-            amount: sample.costUsd / entry,
-            costUsd: sample.costUsd,
-          });
-        }
-
-        if (positions.length > 0) seedBook(positions, SAMPLE_CASH_USD);
-      } catch {
-        // A failed seed leaves an empty book, which the page renders fine.
-      }
-    })();
-  }, []);
-}
-
-/**
- * The simulated book, priced over a window.
+ * Only the order ticket reads this now. It used to seed invented positions and
+ * a starting balance on first load, and the profile priced them at live prices
+ * — which made a fabricated portfolio indistinguishable from a real one. The
+ * profile reads the wallet instead, through `usePortfolio`, and this opens
+ * empty.
  *
  * Positions live in the browser; prices come from one batched lookup so a book
- * with a dozen names does not fire a dozen requests. The portfolio line is the
- * sum of each position's own series over the requested range, which is why the
- * batch endpoint takes a range and returns `series` rather than just a price.
+ * with a dozen names does not fire a dozen requests.
  */
 export function useBook(range: Range = "1D") {
   const queryClient = useQueryClient();
-  useSeedBook();
   const [book] = useLocalStore<Book>(readBook, EMPTY);
 
   const ids = useMemo(
