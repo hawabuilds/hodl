@@ -5,8 +5,20 @@
       "schedule": "0 * * * *"
     },
     {
-      "path": "/api/market",
+      "path": "/api/cron/index-tokens",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/prices",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/stats",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/market",
+      "schedule": "*/30 * * * *"
     },
     {
       "path": "/api/news",

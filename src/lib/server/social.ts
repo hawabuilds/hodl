@@ -179,6 +179,7 @@ function holdingsFor(handle: string, now: number): Holding[] {
     const asset = pick(next, tokens);
     if (taken.has(asset.id)) continue;
     taken.add(asset.id);
+    if (asset.priceUsd == null || asset.priceUsd <= 0) continue;
     const amount = Math.round(between(next, 50_000, 40_000_000));
     const entry = asset.priceUsd * between(next, 0.3, 2.1);
     out.push({

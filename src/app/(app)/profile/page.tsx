@@ -4,7 +4,7 @@ import {useMemo, useState} from "react";
 import {ConnectionsSheet} from "@/components/ConnectionsSheet";
 import {EditProfileSheet} from "@/components/EditProfileSheet";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
-import {HoldingsList} from "@/components/HoldingsList";
+import {HoldingsList, HoldingsSkeleton} from "@/components/HoldingsList";
 import {PillRail} from "@/components/PillRail";
 import {PriceChart} from "@/components/PriceChart";
 import {SettingsMenu} from "@/components/SettingsMenu";
@@ -146,7 +146,11 @@ export default function ProfilePage() {
         PORTFOLIO VALUE
       </div>
       <div className="tnum mt-1.5 text-[38px] font-extrabold leading-none tracking-[-0.035em]">
-        {book.isLoading ? "—" : money(shownValue)}
+        {book.nativeReady || book.tokensReady
+          ? book.holdings.length > 0 && shownValue <= 0
+            ? "—"
+            : money(shownValue)
+          : "—"}
       </div>
       <div
         className={cn(
@@ -183,7 +187,9 @@ export default function ProfilePage() {
 
       <div className="mb-1 mt-6 text-[12.5px] font-semibold text-muted">
         <span className="tnum font-extrabold text-ink">
-          {money(book.positionsValue)}
+          {book.holdings.length > 0 && book.positionsValue <= 0
+            ? "—"
+            : money(book.positionsValue)}
         </span>{" "}
         in positions ·{" "}
         <span className="tnum font-extrabold text-ink">
@@ -200,22 +206,34 @@ export default function ProfilePage() {
         className="mb-1 mt-3"
       />
 
-      <HoldingsList
-        holdings={shown}
-        empty={
-          side === "rwa"
-            ? "No tokenized stocks yet. Buy one from any RWA chart page."
-            : "No tokens yet. Buy one from any token chart page."
-        }
-      />
+      {book.isLoading && shown.length === 0 ? (
+        <HoldingsSkeleton />
+      ) : (
+        <HoldingsList
+          holdings={shown}
+          empty={
+            side === "rwa"
+              ? "No tokenized stocks yet. Buy one from any RWA chart page."
+              : "No tokens yet. Buy one from any token chart page."
+          }
+        />
+      )}
 
-      {book.degraded ? (
+      {book.error ? (
+        <p className="mt-5 px-0.5 text-[13px] leading-[1.5] text-red">
+          Couldn&apos;t load your balances. Pull to refresh and try again.
+        </p>
+      ) : book.degraded ? (
         <p className="mt-5 px-0.5 text-[11.5px] leading-[1.5] text-faint">
           Balances could not be read just now, so this may be incomplete.
         </p>
       ) : !book.connected ? (
         <p className="mt-5 px-0.5 text-[11.5px] leading-[1.5] text-faint">
           Connect a wallet to see what you hold.
+        </p>
+      ) : book.holdings.length === 0 && !book.isLoading ? (
+        <p className="mt-5 px-0.5 text-[11.5px] leading-[1.5] text-faint">
+          You hold nothing in the HODL universe on these wallets.
         </p>
       ) : null}
 

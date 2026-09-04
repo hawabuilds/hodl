@@ -30,15 +30,22 @@ export function TradesPanel({
   trades,
   symbol,
   isLoading,
+  error,
+  onRetry,
 }: {
   trades: Trade[];
   symbol: string;
   isLoading: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }) {
   const arrivals = useArrivals(trades.map((trade) => trade.id));
 
   if (isLoading && trades.length === 0) {
     return <PanelNote>Loading trades</PanelNote>;
+  }
+  if (error && trades.length === 0) {
+    return <PanelError message={error} onRetry={onRetry} />;
   }
   if (trades.length === 0) {
     return <PanelNote>No trades yet.</PanelNote>;
@@ -135,5 +142,28 @@ export function PanelNote({children}: {children: React.ReactNode}) {
     <p className="grid min-h-[96px] place-items-center px-6 text-center text-[13px] leading-[1.5] text-muted">
       {children}
     </p>
+  );
+}
+
+export function PanelError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <div className="grid min-h-[96px] place-items-center px-6 text-center">
+      <p className="text-[13px] leading-[1.5] text-muted">{message}</p>
+      {onRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 text-[13px] font-bold text-green-deep"
+        >
+          Retry
+        </button>
+      ) : null}
+    </div>
   );
 }

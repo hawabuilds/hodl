@@ -1,3 +1,4 @@
+import {usdPriceFor} from "@/lib/pairOrientation";
 import {cached, getJson, stale} from "./cache";
 import {RWA_BY_ADDRESS, RWA_REGISTRY} from "./robinhood";
 import {
@@ -5,8 +6,7 @@ import {
   megafilterPools,
   onchainPoolToDexPair,
   poolsForTokenAllPages,
-  rwaRegistryPools,
-  type OnchainPool,
+  poolsForTokenPublic,
 } from "./geckoterminal";
 
 /**
@@ -34,6 +34,10 @@ export interface DexPair {
   baseToken: {address: string; name: string; symbol: string};
   quoteToken: {address: string; name: string; symbol: string};
   priceUsd?: string;
+  /** Base priced in quote tokens. Needed to invert when our token is quote. */
+  priceNative?: string;
+  /** Quote token's own USD price, when the provider gives both sides. */
+  quotePriceUsd?: string;
   liquidity?: {usd?: number};
   volume?: {m5?: number; h1?: number; h6?: number; h24?: number};
   priceChange?: {m5?: number; h1?: number; h6?: number; h24?: number};
@@ -47,19 +51,29 @@ async function loadPairs(addresses: string[]): Promise<DexPair[]> {
   const out: DexPair[] = [];
 
   for (let i = 0; i < addresses.length; i += BATCH) {
-    const batch = addresses.slice(i, i + BATCH).join(",");
+    const batch = addresses.slice(i, i + BATCH).map((address) => address.toLowerCase());
+    const key = `ds:tokens:${[...batch].sort().join(",")}`;
     try {
-      const body = await getJson<DexPair[] | {pairs?: DexPair[]}>(
-        `${BASE}/${batch}`,
-        8000,
-      );
-      out.push(...(Array.isArray(body) ? body : (body.pairs ?? [])));
+      const rows = await cached(key, TTL_MS, async () => {
+        const body = await getJson<DexPair[] | {pairs?: DexPair[]}>(
+          `${BASE}/${batch.join(",")}`,
+          8000,
+        );
+        return Array.isArray(body) ? body : (body.pairs ?? []);
+      });
+      out.push(...rows);
     } catch {
       // A failed batch costs 30 tokens, not the whole feed.
     }
   }
 
   return out;
+}
+
+/** Batched `tokens/v1` lookup — used to decorate an already-listed feed page. */
+export async function pairsForAddresses(addresses: string[]): Promise<DexPair[]> {
+  if (addresses.length === 0) return [];
+  return loadPairs(addresses);
 }
 
 /**
@@ -84,6 +98,8 @@ export async function pairsForToken(address: string): Promise<DexPair[]> {
       return Array.isArray(body) ? body : (body.pairs ?? []);
     });
     if (loaded.length > 0) return loaded;
+    const gecko = await poolsForTokenPublic(address);
+    if (gecko.length > 0) return gecko.map(onchainPoolToDexPair);
   } catch (error) {
     console.error("token pairs failed", error);
   }
@@ -115,12 +131,6 @@ const SWEEP_TTL_MS = 5 * 60_000;
  */
 const PER_TOKEN_CAP = 30;
 
-function mergeGeckoPool(seen: Map<string, DexPair>, pool: OnchainPool): void {
-  if (!seen.has(pool.pairAddress)) {
-    seen.set(pool.pairAddress, onchainPoolToDexPair(pool));
-  }
-}
-
 /** Keep Gecko numbers but attach DexScreener profile metadata when we have it. */
 function mergeDexPair(seen: Map<string, DexPair>, pair: DexPair): void {
   const existing = seen.get(pair.pairAddress);
@@ -146,12 +156,6 @@ export async function allRwaPairs(): Promise<DexPair[]> {
 
   const load = async () => {
     const seen = new Map<string, DexPair>();
-
-    if (AUTHENTICATED) {
-      for (const pool of await rwaRegistryPools()) {
-        mergeGeckoPool(seen, pool);
-      }
-    }
 
     const addresses = RWA_REGISTRY.map((entry) => entry.address);
     let index = 0;
@@ -181,11 +185,7 @@ export async function allRwaPairs(): Promise<DexPair[]> {
       ),
     );
 
-    if (AUTHENTICATED) {
-      console.info(
-        `rwa pair sweep: ${seen.size} pools (${addresses.length} stock tickers, Gecko-primary)`,
-      );
-    } else if (seen.size > 0) {
+    if (seen.size > 0) {
       const capped = addresses.filter((address) => {
         let count = 0;
         for (const pair of seen.values()) {
@@ -349,9 +349,20 @@ export function classify(pair: DexPair): PairSide | null {
  * interpolation between two endpoints would not be. Returns an empty array
  * rather than inventing shape when the buckets are missing.
  */
-export function seriesFrom(pair: DexPair): number[] {
-  const now = Number(pair.priceUsd ?? 0);
-  if (!Number.isFinite(now) || now <= 0) return [];
+export function seriesFrom(pair: DexPair, token?: string): number[] {
+  const now = token
+    ? usdPriceFor(
+        {
+          base: pair.baseToken?.address,
+          quote: pair.quoteToken?.address,
+          priceUsd: pair.priceUsd,
+          priceNative: pair.priceNative,
+          quotePriceUsd: pair.quotePriceUsd,
+        },
+        token,
+      )
+    : Number(pair.priceUsd ?? 0);
+  if (!now || !Number.isFinite(now) || now <= 0) return [];
 
   const change = pair.priceChange;
   if (!change) return [];
@@ -466,6 +477,8 @@ export interface CommunityToken {
   quoteSymbol: string;
   /** True when the other side is an actual stock token rather than USDG or ETH. */
   rwaPaired: boolean;
+  /** False when `pair.priceUsd` is the counterparty (SPACEHOOD / SPCX). */
+  tokenIsBase: boolean;
 }
 
 /**
@@ -489,18 +502,21 @@ export function community(pair: DexPair): CommunityToken | null {
   let against: string | null = null;
   let rwaPaired = false;
 
+  let tokenIsBase = true;
   if (!baseRwa && !baseQuoteAsset && (quoteRwa || quoteQuoteAsset)) {
     token = pair.baseToken;
     against = quoteRwa?.ticker ?? quoteQuoteAsset!;
     rwaPaired = Boolean(quoteRwa);
+    tokenIsBase = true;
   } else if (!quoteRwa && !quoteQuoteAsset && (baseRwa || baseQuoteAsset)) {
-    // The pool quotes the other way round, so `priceUsd` describes the wrong
-    // side. Skipped rather than inverted on a guess.
-    return null;
+    token = pair.quoteToken;
+    against = baseRwa?.ticker ?? baseQuoteAsset!;
+    rwaPaired = Boolean(baseRwa);
+    tokenIsBase = false;
   }
 
   if (!token || !against) return null;
   if (!token.symbol || token.symbol.length > MAX_SYMBOL) return null;
 
-  return {pair, token, quoteSymbol: against, rwaPaired};
+  return {pair, token, quoteSymbol: against, rwaPaired, tokenIsBase};
 }

@@ -7,3 +7,5 @@ next-env.d.ts
 .next-verify
 .vercel
 .env*
+.tools/
+scripts/.backfill-pools-cursor.json

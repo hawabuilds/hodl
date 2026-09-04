@@ -8,7 +8,7 @@ import {profilePath} from "@/lib/routes";
 import type {AssetComment, AssetKind, CommentThread} from "@/lib/types";
 import {Avatar} from "../ui/Avatar";
 import {CloseIcon} from "../ui/Icons";
-import {PanelNote} from "./TradesPanel";
+import {PanelError, PanelNote} from "./TradesPanel";
 
 /**
  * Time-and-date stamped theses, one level of replies deep.
@@ -32,7 +32,7 @@ export function CommentsPanel({
   );
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
-  const {threads, isLoading, error, canPost, post} = useComments(kind, assetId);
+  const {threads, isLoading, error, retry, canPost, post} = useComments(kind, assetId);
 
   useEffect(() => {
     setDraft("");
@@ -69,9 +69,7 @@ export function CommentsPanel({
       {isLoading ? (
         <PanelNote>Loading comments</PanelNote>
       ) : error ? (
-        <p className="grid min-h-[96px] place-items-center px-6 text-center text-[13px] text-red">
-          {error}
-        </p>
+        <PanelError message={error} onRetry={retry} />
       ) : threads.length === 0 ? (
         <PanelNote>No reads on {symbol} yet. Post the first one.</PanelNote>
       ) : (

@@ -1,7 +1,7 @@
 "use client";
 
 import {useCallback, useMemo} from "react";
-import {useQuery} from "@tanstack/react-query";
+import {keepPreviousData, useQuery} from "@tanstack/react-query";
 import {
   readWatchlist,
   toggleWatch,
@@ -9,7 +9,8 @@ import {
   type WatchKey,
 } from "@/lib/localStore";
 import {MARKET_REFRESH_MS} from "@/config/market";
-import type {Asset, AssetKind} from "@/lib/types";
+import type {Asset, AssetKind, TokenAsset} from "@/lib/types";
+import {applyCachedAssets, rememberTokens} from "@/lib/tokenCache";
 import {useLocalStore} from "./useLocalStore";
 
 export function useWatchlist() {
@@ -38,7 +39,8 @@ export function useWatchlistAssets(enabled: boolean) {
   const query = useQuery({
     queryKey: ["watchlist-assets", ids],
     enabled: enabled && ids.length > 0,
-    staleTime: 0,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
     refetchInterval: MARKET_REFRESH_MS,
     queryFn: async () => {
       const res = await fetch(
@@ -46,12 +48,16 @@ export function useWatchlistAssets(enabled: boolean) {
         {cache: "no-store"},
       );
       if (!res.ok) throw new Error("Could not load your watchlist.");
-      return (await res.json()) as {assets: Asset[]};
+      const data = (await res.json()) as {assets: Asset[]};
+      rememberTokens(
+        data.assets.filter((asset): asset is TokenAsset => asset.kind === "token"),
+      );
+      return {assets: applyCachedAssets(data.assets)};
     },
   });
 
   return {
-    assets: query.data?.assets ?? [],
+    assets: applyCachedAssets(query.data?.assets ?? []),
     count,
     isLoading: enabled && ids.length > 0 && query.isLoading,
   };

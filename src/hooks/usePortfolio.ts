@@ -1,25 +1,18 @@
 "use client";
 
-import {useMemo} from "react";
+import {useEffect, useMemo} from "react";
 import {keepPreviousData, useQuery} from "@tanstack/react-query";
 import {MARKET_REFRESH_MS} from "@/config/market";
-import type {Asset, Holding, Range} from "@/lib/types";
+import {applyCachedAssets, rememberTokens} from "@/lib/tokenCache";
+import type {Asset, Holding, Range, TokenAsset} from "@/lib/types";
+import {readKnownHoldings, writeKnownHoldings} from "@/lib/localStore";
 import {useEthPrice} from "./useEthPrice";
 import {useUser} from "./useUser";
+import {useWallet} from "./useWallet";
 
-/**
- * What the signed-in wallet actually holds.
- *
- * Replaces a simulated book that seeded invented positions and a starting cash
- * balance into local storage on first load, then priced them at live prices —
- * which made a fabricated portfolio look exactly like a real one, down to the
- * profit figure.
- *
- * Everything here comes from the chain: balances read from the wallet, priced
- * against the same feed the rest of the app uses. There is no cash line,
- * because a wallet does not have one, and no profit line, because a balance
- * this platform did not fill has no cost basis to measure against.
- */
+interface NativeResponse {
+  ethBalance: number;
+}
 
 interface PortfolioResponse {
   holdings: Holding[];
@@ -27,24 +20,70 @@ interface PortfolioResponse {
   degraded: boolean;
 }
 
+const PORTFOLIO_TTL_MS = 15_000;
+
 export function usePortfolio(range: Range = "1D") {
   const user = useUser();
-  const wallet = user.embeddedWallet;
+  const imported = useWallet();
+  const wallets = useMemo(() => {
+    const out: string[] = [];
+    for (const value of [user.embeddedWallet, imported.address]) {
+      const address = value?.toLowerCase();
+      if (address && /^0x[a-f0-9]{40}$/.test(address) && !out.includes(address)) {
+        out.push(address);
+      }
+    }
+    return out;
+  }, [user.embeddedWallet, imported.address]);
+  const walletKey = wallets.join(",");
   const eth = useEthPrice();
 
-  const book = useQuery({
-    queryKey: ["portfolio", wallet],
-    enabled: Boolean(wallet),
+  const known = useMemo(
+    () => wallets.flatMap((wallet) => readKnownHoldings(wallet)),
+    [wallets],
+  );
+
+  const native = useQuery({
+    queryKey: ["portfolio-native", walletKey],
+    enabled: wallets.length > 0,
+    staleTime: PORTFOLIO_TTL_MS,
+    gcTime: 30 * 60_000,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const res = await fetch(
-        `/api/portfolio?wallet=${encodeURIComponent(wallet!)}`,
+        `/api/portfolio?phase=native&wallets=${encodeURIComponent(walletKey)}`,
+        {cache: "no-store"},
       );
+      if (!res.ok) throw new Error("Could not read your wallet.");
+      return (await res.json()) as NativeResponse;
+    },
+  });
+
+  const book = useQuery({
+    queryKey: ["portfolio-tokens", walletKey],
+    enabled: wallets.length > 0,
+    staleTime: PORTFOLIO_TTL_MS,
+    gcTime: 30 * 60_000,
+    refetchInterval: 60_000,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const params = new URLSearchParams({wallets: walletKey});
+      if (known.length > 0) params.set("known", known.join(","));
+      const res = await fetch(`/api/portfolio?${params}`, {cache: "no-store"});
       if (!res.ok) throw new Error("Could not read your wallet.");
       return (await res.json()) as PortfolioResponse;
     },
   });
+
+  useEffect(() => {
+    const held = book.data?.holdings ?? [];
+    if (held.length === 0 || wallets.length === 0) return;
+    const addresses = held
+      .filter((row) => row.kind === "token")
+      .map((row) => row.assetId);
+    for (const wallet of wallets) writeKnownHoldings(wallet, addresses);
+  }, [book.data?.holdings, wallets]);
 
   const holdings = useMemo(
     () => book.data?.holdings ?? [],
@@ -60,12 +99,10 @@ export function usePortfolio(range: Range = "1D") {
     [holdings],
   );
 
-  // The value line needs each position's own history, which the feed's single
-  // price does not carry.
   const priced = useQuery({
     queryKey: ["portfolio-series", ids, range],
     enabled: ids.length > 0,
-    staleTime: 0,
+    staleTime: PORTFOLIO_TTL_MS,
     refetchInterval: MARKET_REFRESH_MS,
     placeholderData: keepPreviousData,
     queryFn: async () => {
@@ -74,7 +111,11 @@ export function usePortfolio(range: Range = "1D") {
         {cache: "no-store"},
       );
       if (!res.ok) throw new Error("Could not price your holdings.");
-      return (await res.json()) as {assets: Asset[]};
+      const data = (await res.json()) as {assets: Asset[]};
+      rememberTokens(
+        data.assets.filter((asset): asset is TokenAsset => asset.kind === "token"),
+      );
+      return {assets: applyCachedAssets(data.assets)};
     },
   });
 
@@ -86,7 +127,7 @@ export function usePortfolio(range: Range = "1D") {
     return map;
   }, [priced.data]);
 
-  const ethBalance = book.data?.ethBalance ?? 0;
+  const ethBalance = book.data?.ethBalance ?? native.data?.ethBalance ?? 0;
   const ethValueUsd = ethBalance * (eth.ethUsd ?? 0);
   const positionsValue = holdings.reduce(
     (sum, holding) => sum + holding.valueUsd,
@@ -94,15 +135,6 @@ export function usePortfolio(range: Range = "1D") {
   );
   const totalValue = positionsValue + ethValueUsd;
 
-  /**
-   * Portfolio value across the window.
-   *
-   * The ETH balance is carried flat rather than charted: its own history is a
-   * separate series and the wallet's balance at each past point is not known,
-   * so moving it would be a guess. A position whose series is missing holds its
-   * current value instead of dropping to zero, which would draw a cliff that
-   * never happened.
-   */
   const series = useMemo(() => {
     if (holdings.length === 0) return [];
 
@@ -129,7 +161,8 @@ export function usePortfolio(range: Range = "1D") {
   const changeUsd = totalValue - openValue;
 
   return {
-    connected: Boolean(wallet),
+    connected: wallets.length > 0,
+    error: book.error ? (book.error as Error).message : null,
     holdings,
     rwaHoldings: holdings.filter((holding) => holding.kind === "rwa"),
     tokenHoldings: holdings.filter((holding) => holding.kind === "token"),
@@ -140,9 +173,9 @@ export function usePortfolio(range: Range = "1D") {
     series,
     changeUsd,
     changePct: openValue > 0 ? (changeUsd / openValue) * 100 : 0,
-    /** True while the wallet has been read but nothing came back yet. */
-    isLoading: Boolean(wallet) && book.isLoading,
-    /** The balance read failed, so an empty list is not a claim of empty. */
+    isLoading: wallets.length > 0 && book.isLoading && holdings.length === 0,
+    nativeReady: native.isSuccess || book.isSuccess,
+    tokensReady: book.isSuccess,
     degraded: book.data?.degraded ?? false,
   };
 }

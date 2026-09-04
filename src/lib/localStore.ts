@@ -346,3 +346,37 @@ export function writeProfileEdits(edits: ProfileEdits): void {
   write("profile", edits);
   announce();
 }
+
+/** Last-seen identity row. Lets the profile header paint before Privy/network. */
+export interface CachedMe {
+  displayName: string;
+  handle: string | null;
+  pfpUrl: string | null;
+  wallet: string | null;
+  bio: string;
+}
+
+export function readCachedMe(): CachedMe | null {
+  const stored = read<CachedMe | null>("me-row", null);
+  return stored?.displayName ? stored : null;
+}
+
+export function writeCachedMe(row: CachedMe): void {
+  write("me-row", row);
+}
+
+export function hasCachedMe(): boolean {
+  return readCachedMe() != null;
+}
+
+/** Token addresses this wallet last held — used to skip a universe scan. */
+export function readKnownHoldings(wallet: string): string[] {
+  const all = read<Record<string, string[]>>("held-tokens", {});
+  return all[wallet.toLowerCase()] ?? [];
+}
+
+export function writeKnownHoldings(wallet: string, addresses: string[]): void {
+  const all = read<Record<string, string[]>>("held-tokens", {});
+  all[wallet.toLowerCase()] = addresses;
+  write("held-tokens", all);
+}

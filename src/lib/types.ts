@@ -68,11 +68,22 @@ export interface TokenAsset {
   address: string;
   symbol: string;
   name: string;
+  /**
+   * Best available PFP: stored WebP if we have one, otherwise the remote
+   * URL the indexer saved. Null only when every source missed — Avatar
+   * then paints a generated mark from the address.
+   */
   imageUrl: string | null;
-  priceUsd: number;
+  imageUrl64?: string | null;
+  /** Remaining URLs to try if `imageUrl` / `imageUrl64` fail to load. */
+  imageFallbacks?: string[];
+  /** Average colour of the stored PFP, painted behind the img. */
+  imageColor?: string | null;
+  /** Null means unpriced. Never render as "$0". */
+  priceUsd: number | null;
   changePct: number;
-  volume24hUsd: number;
-  marketCapUsd: number;
+  volume24hUsd: number | null;
+  marketCapUsd: number | null;
   /**
    * Units in circulation, read from the chain, or null when that read failed
    * and `marketCapUsd` came from the indexer instead.
@@ -83,7 +94,12 @@ export interface TokenAsset {
    * cap never was supply times price, invents a supply that does not exist.
    */
   circulatingSupply: number | null;
-  liquidityUsd: number;
+  liquidityUsd: number | null;
+  /**
+   * Live pool at or above MIN_LIQUIDITY_USD. Null means not measured yet —
+   * that is not "untradeable" and must not hide the row.
+   */
+  tradeable: boolean | null;
   /**
    * Pool fees earned over the last 24 hours and paid back to liquidity
    * providers.
@@ -117,6 +133,8 @@ export interface TokenAsset {
   windows: Record<FeedWindow, {volumeUsd: number; changePct: number}>;
   holders: number;
   createdAt: string;
+  /** Bond time for Pons, launch time for Long — New feed sort key. */
+  listedAt: string | null;
   /** Ticker of the RWA on the other side of the pool. */
   pairedTicker: string;
   /**

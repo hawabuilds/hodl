@@ -6,12 +6,13 @@ import {multicallChunked} from "./chain";
  * The picture a creator uploaded when they launched the token.
  *
  * DexScreener's profile photo is preferred when someone has updated it. Until
- * then the launchpad wrote the original art on-chain: Pons as `tokenLogo` /
+ * then the launchpad wrote the original art on-chain: Pons as `logo()` /
  * `getTokenInfo()`, Long as `tokenURI()` JSON. Scraping the launchpad page
  * does not work — Pons serves a site-wide OG image, Long returns 403.
  */
 
 const ponsLogoAbi = parseAbi(["function tokenLogo() view returns (string)"]);
+const ponsLogoAliasAbi = parseAbi(["function logo() view returns (string)"]);
 
 const ponsInfoAbi = parseAbi([
   "function getTokenInfo() view returns (address, string, string, (string, string, string, string, string))",
@@ -25,10 +26,14 @@ const longUriAbi = parseAbi(["function tokenURI() view returns (string)"]);
  * served Long's tokenURI JSON when we measured it.
  */
 const IPFS_GATEWAYS = [
-  "https://gateway.pinata.cloud/ipfs/",
   "https://w3s.link/ipfs/",
+  "https://cloudflare-ipfs.com/ipfs/",
+  "https://gateway.pinata.cloud/ipfs/",
   "https://ipfs.io/ipfs/",
 ];
+
+/** Gateways that 429 stay skipped for the rest of this process. */
+const disabledGates = new Set<string>();
 
 function ipfsPath(uri: string): string | null {
   const value = uri.trim();
@@ -46,7 +51,7 @@ function ipfsPath(uri: string): string | null {
   return null;
 }
 
-function toHttp(uri: string | null | undefined): string | null {
+export function toHttp(uri: string | null | undefined): string | null {
   const value = uri?.trim();
   if (!value) return null;
   const path = ipfsPath(value);
@@ -58,22 +63,35 @@ function toHttp(uri: string | null | undefined): string | null {
 
 function imageFromMetadata(body: Record<string, unknown>): string | null {
   // Long writes `image_hash` (their IPFS upload API). Everyone else uses
-  // the usual ERC-721 field names.
+  // the usual ERC-721 field names. Doppler also nests the CID under `content`.
   for (const key of ["image", "image_url", "image_hash", "imageUrl", "logo"]) {
     const value = body[key];
     if (typeof value === "string" && value.trim()) return toHttp(value);
+  }
+  const nested = body.content;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const inner = nested as Record<string, unknown>;
+    for (const key of ["image", "image_url", "uri", "url"]) {
+      const value = inner[key];
+      if (typeof value === "string" && value.trim()) return toHttp(value);
+    }
   }
   return null;
 }
 
 async function fetchViaGateways(path: string): Promise<Response | null> {
   for (const gate of IPFS_GATEWAYS) {
+    if (disabledGates.has(gate)) continue;
     try {
       const res = await fetch(gate + path, {
         cache: "no-store",
         signal: AbortSignal.timeout(8_000),
         headers: {accept: "application/json,image/*,*/*"},
       });
+      if (res.status === 429) {
+        disabledGates.add(gate);
+        continue;
+      }
       if (res.ok) return res;
     } catch {
       // Try the next gateway.
@@ -119,87 +137,106 @@ async function fetchMetadataImage(uri: string): Promise<string | null> {
   }
 }
 
+export type DeployImageHit = {url: string; via: "pons" | "long"};
+
+function pickString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function logoFromInfo(result: unknown): string | null {
+  if (!result) return null;
+  if (Array.isArray(result)) return pickString(result[1]);
+  if (typeof result === "object") {
+    const row = result as Record<string, unknown>;
+    return pickString(row.tokenLogo, row.logo, row[1]);
+  }
+  return null;
+}
+
 /**
- * Deploy images for launchpad tokens that still have no DexScreener / Gecko
- * profile. One multicall per launchpad, then a handful of metadata fetches
- * for Long's tokenURI JSON.
+ * Read the creator-uploaded picture from the token itself.
+ *
+ * Launchpad labels are a hint, not a gate — a Pons row with a null
+ * `launchpad` still has `logo()` / `getTokenInfo()`. Tokens with no
+ * on-chain URI are left out of the map so the caller can retry later.
  */
 export async function deployImagesFor(
   addresses: string[],
-  launchpads: Map<string, Launchpad | null>,
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  const pons: string[] = [];
-  const longs: string[] = [];
+  _launchpads?: Map<string, Launchpad | null>,
+): Promise<Map<string, DeployImageHit>> {
+  const out = new Map<string, DeployImageHit>();
+  if (addresses.length === 0) return out;
 
-  for (const address of addresses) {
-    const pad = launchpads.get(address);
-    if (pad?.id === "pons") pons.push(address);
-    else if (pad?.id === "long") longs.push(address);
-  }
-
-  if (pons.length > 0) {
-    const [logos, infos] = await Promise.all([
-      multicallChunked<string>(
-        pons.map((address) => ({
-          address: address as `0x${string}`,
-          abi: ponsLogoAbi,
-          functionName: "tokenLogo",
-        })),
-        "deployImages/ponsLogo",
-      ),
-      multicallChunked<readonly unknown[]>(
-        pons.map((address) => ({
-          address: address as `0x${string}`,
-          abi: ponsInfoAbi,
-          functionName: "getTokenInfo",
-        })),
-        "deployImages/ponsInfo",
-      ),
-    ]);
-
-    pons.forEach((address, i) => {
-      const logo =
-        (logos[i]?.status === "success" && logos[i].result) ||
-        (infos[i]?.status === "success" &&
-          Array.isArray(infos[i].result) &&
-          typeof infos[i].result[1] === "string" &&
-          infos[i].result[1]) ||
-        null;
-      const url = toHttp(typeof logo === "string" ? logo : null);
-      if (url) out.set(address, url);
-    });
-  }
-
-  if (longs.length > 0) {
-    const uris = await multicallChunked<string>(
-      longs.map((address) => ({
+  const [v2Logos, v1Logos, infos] = await Promise.all([
+    multicallChunked<string>(
+      addresses.map((address) => ({
         address: address as `0x${string}`,
-        abi: longUriAbi,
-        functionName: "tokenURI",
+        abi: ponsLogoAbi,
+        functionName: "tokenLogo",
       })),
-      "deployImages/longUri",
+      "deployImages/ponsLogo",
+    ),
+    multicallChunked<string>(
+      addresses.map((address) => ({
+        address: address as `0x${string}`,
+        abi: ponsLogoAliasAbi,
+        functionName: "logo",
+      })),
+      "deployImages/ponsLogoAlias",
+    ),
+    multicallChunked<readonly unknown[]>(
+      addresses.map((address) => ({
+        address: address as `0x${string}`,
+        abi: ponsInfoAbi,
+        functionName: "getTokenInfo",
+      })),
+      "deployImages/ponsInfo",
+    ),
+  ]);
+
+  addresses.forEach((address, i) => {
+    const logo = pickString(
+      v2Logos[i]?.status === "success" ? v2Logos[i].result : null,
+      v1Logos[i]?.status === "success" ? v1Logos[i].result : null,
+      infos[i]?.status === "success" ? logoFromInfo(infos[i].result) : null,
     );
+    const url = toHttp(logo);
+    if (url) out.set(address.toLowerCase(), {url, via: "pons"});
+  });
 
-    const wanted: {address: string; uri: string}[] = [];
-    longs.forEach((address, i) => {
-      if (uris[i]?.status !== "success" || !uris[i].result) return;
-      wanted.push({address, uri: uris[i].result});
-    });
+  const longs = addresses.filter((address) => !out.has(address));
+  if (longs.length === 0) return out;
 
-    const CONCURRENCY = 8;
-    let index = 0;
-    async function worker() {
-      while (index < wanted.length) {
-        const row = wanted[index++];
-        const image = await fetchMetadataImage(row.uri);
-        if (image) out.set(row.address, image);
-      }
+  const uris = await multicallChunked<string>(
+    longs.map((address) => ({
+      address: address as `0x${string}`,
+      abi: longUriAbi,
+      functionName: "tokenURI",
+    })),
+    "deployImages/longUri",
+  );
+
+  const wanted: {address: string; uri: string}[] = [];
+  longs.forEach((address, i) => {
+    if (uris[i]?.status !== "success" || !uris[i].result) return;
+    wanted.push({address, uri: uris[i].result});
+  });
+
+  const CONCURRENCY = 12;
+  let index = 0;
+  async function worker() {
+    while (index < wanted.length) {
+      const row = wanted[index++];
+      const image = await fetchMetadataImage(row.uri);
+      if (image) out.set(row.address.toLowerCase(), {url: image, via: "long"});
     }
-    await Promise.all(
-      Array.from({length: Math.min(CONCURRENCY, wanted.length)}, worker),
-    );
   }
+  await Promise.all(
+    Array.from({length: Math.min(CONCURRENCY, wanted.length)}, worker),
+  );
 
   return out;
 }

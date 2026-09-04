@@ -1,4 +1,5 @@
-import registry from "../rwaRegistry.json";
+import type {ChartPoint, Timeframe} from "@/lib/types";
+import registry from "../rwaRegistry.json" with {type: "json"};
 import {cached, getJson, stale} from "./cache";
 
 /**
@@ -174,4 +175,154 @@ export async function quoteFor(ticker: string): Promise<Quote | null> {
  */
 export function cachedQuotes(): Map<string, Quote> {
   return stale<Map<string, Quote>>("rh:quotes") ?? new Map();
+}
+
+/**
+ * Official equity history for a stock token chart.
+ *
+ * Robinhood's quote is the price of these assets. DEX candles are not — a
+ * thin pool on this chain charts a different instrument, which is what broke
+ * the axis after the token-chart ladder landed on Gecko only.
+ */
+
+export interface HistoricalBar {
+  begins_at: string;
+  close_price: string;
+  interpolated?: boolean;
+}
+
+interface HistoricalsResponse {
+  historicals?: HistoricalBar[];
+}
+
+interface RhBucket {
+  interval: string;
+  span: string;
+  bounds: string;
+}
+
+/** Widest bucket first. Step down only when that bucket has no real shape. */
+const RH_LADDER: Record<Timeframe, RhBucket[]> = {
+  "1D": [
+    {interval: "day", span: "year", bounds: "regular"},
+    {interval: "hour", span: "month", bounds: "regular"},
+    {interval: "10minute", span: "week", bounds: "regular"},
+    {interval: "5minute", span: "week", bounds: "extended"},
+  ],
+  "4h": [
+    {interval: "hour", span: "month", bounds: "regular"},
+    {interval: "hour", span: "week", bounds: "regular"},
+    {interval: "10minute", span: "week", bounds: "regular"},
+    {interval: "5minute", span: "week", bounds: "extended"},
+  ],
+  "1h": [
+    {interval: "hour", span: "month", bounds: "regular"},
+    {interval: "hour", span: "week", bounds: "regular"},
+    {interval: "10minute", span: "week", bounds: "regular"},
+    {interval: "5minute", span: "week", bounds: "extended"},
+  ],
+  "15m": [
+    {interval: "10minute", span: "week", bounds: "regular"},
+    {interval: "5minute", span: "week", bounds: "extended"},
+  ],
+  "5m": [
+    {interval: "5minute", span: "week", bounds: "extended"},
+    {interval: "5minute", span: "day", bounds: "extended"},
+  ],
+  "1m": [
+    {interval: "5minute", span: "week", bounds: "extended"},
+    {interval: "5minute", span: "day", bounds: "extended"},
+  ],
+};
+
+/** Same threshold as the token Gecko ladder — a shape, not two dots. */
+export const RH_ENOUGH_TO_DRAW = 20;
+
+const HISTORICAL_TTL_MS = 60_000;
+
+/**
+ * Real closes only. Interpolated weekend/gap bars are dropped, never drawn.
+ */
+export function realHistoricalPoints(bars: HistoricalBar[]): ChartPoint[] {
+  return bars
+    .filter((bar) => bar.interpolated !== true)
+    .map((bar) => ({
+      t: Date.parse(bar.begins_at),
+      price: Number(bar.close_price),
+    }))
+    .filter(
+      (point) =>
+        Number.isFinite(point.t) &&
+        Number.isFinite(point.price) &&
+        point.price > 0,
+    )
+    .sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Walk a ladder of already-fetched buckets. Keeps the coarsest series that
+ * actually has history; a lone close is not a chart.
+ */
+export function pickEnoughHistory(
+  ladder: ChartPoint[][],
+  enough = RH_ENOUGH_TO_DRAW,
+  limit = 120,
+): ChartPoint[] {
+  let best: ChartPoint[] = [];
+  for (const points of ladder) {
+    const sliced = points.length > limit ? points.slice(-limit) : points;
+    if (sliced.length > best.length) best = sliced;
+    if (best.length >= enough) break;
+  }
+  return best.length > 1 ? best : [];
+}
+
+async function historicalsAt(
+  ticker: string,
+  bucket: RhBucket,
+): Promise<ChartPoint[]> {
+  const symbol = ticker.toUpperCase();
+  const key = `rh:ohlcv:${symbol}:${bucket.interval}:${bucket.span}:${bucket.bounds}`;
+
+  const load = async (): Promise<ChartPoint[]> => {
+    const params = new URLSearchParams({
+      interval: bucket.interval,
+      span: bucket.span,
+      bounds: bucket.bounds,
+    });
+    const body = await getJson<HistoricalsResponse>(
+      `https://api.robinhood.com/quotes/historicals/${encodeURIComponent(symbol)}/?${params}`,
+      9000,
+    );
+    return realHistoricalPoints(body.historicals ?? []);
+  };
+
+  try {
+    const loaded = await cached(key, HISTORICAL_TTL_MS, load);
+    if (loaded.length > 0) return loaded;
+  } catch {
+    // fall through
+  }
+  return stale<ChartPoint[]>(key) ?? [];
+}
+
+/**
+ * Candles for a stock token, oldest first, from Robinhood's own tape.
+ *
+ * Never synthesizes a bar, never fills a gap, never reads a DEX pool.
+ */
+export async function historicalCandles(
+  ticker: string,
+  timeframe: Timeframe,
+  limit = 120,
+): Promise<ChartPoint[]> {
+  const ladder = RH_LADDER[timeframe] ?? RH_LADDER["1h"];
+  const fetched: ChartPoint[][] = [];
+  for (const bucket of ladder) {
+    const points = await historicalsAt(ticker, bucket);
+    fetched.push(points);
+    const soFar = pickEnoughHistory(fetched, RH_ENOUGH_TO_DRAW, limit);
+    if (soFar.length >= RH_ENOUGH_TO_DRAW) return soFar;
+  }
+  return pickEnoughHistory(fetched, RH_ENOUGH_TO_DRAW, limit);
 }

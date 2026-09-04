@@ -241,6 +241,7 @@ export function listTokens(now: number = Date.now()): TokenAsset[] {
       // rescale on the client exactly the way a real one does.
       circulatingSupply: price > 0 ? marketCap / price : null,
       liquidityUsd: Math.round(marketCap * between(next, 0.03, 0.14)),
+      tradeable: true,
       rewards24hUsd: Math.round((volume * feeBps) / 10_000),
       rewardsToHolders: false,
       graduated: true,
@@ -249,6 +250,9 @@ export function listTokens(now: number = Date.now()): TokenAsset[] {
       paysRwaRewards: false,
       holders: Math.round(between(next, 240, 41_000)),
       createdAt: new Date(
+        now - between(next, 2, 240) * 24 * 60 * 60_000,
+      ).toISOString(),
+      listedAt: new Date(
         now - between(next, 2, 240) * 24 * 60 * 60_000,
       ).toISOString(),
       pairedTicker: seed.pairedTicker,
@@ -454,7 +458,11 @@ export function searchAssets(query: string, now: number = Date.now()): Asset[] {
   const scored = all
     .map((asset) => ({asset, score: scoreMatch(asset, q)}))
     .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score || b.asset.volume24hUsd - a.asset.volume24hUsd);
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        (b.asset.volume24hUsd ?? 0) - (a.asset.volume24hUsd ?? 0),
+    );
 
   return scored.slice(0, 40).map((row) => row.asset);
 }

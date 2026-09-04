@@ -278,6 +278,9 @@ export async function feed(
 
 /** Headlines for one ticker, for the RWA chart page's News tab. */
 export async function newsForTicker(ticker: string): Promise<FeedItem[]> {
+  if (!process.env.NEWS_API_KEY) {
+    throw new Error("News provider is not configured.");
+  }
   const key = `fh:ticker:${ticker}`;
   const name = RWA_REGISTRY.find((entry) => entry.ticker === ticker)?.name ?? null;
   try {
@@ -285,8 +288,10 @@ export async function newsForTicker(ticker: string): Promise<FeedItem[]> {
       companyNews(ticker, "rwa", [ticker], name).then((items) => items.slice(0, 8)),
     );
     if (loaded.length > 0) return loaded;
-  } catch {
-    // fall through
+  } catch (error) {
+    const previous = stale<FeedItem[]>(key);
+    if (previous && previous.length > 0) return previous;
+    throw error instanceof Error ? error : new Error("Could not load news.");
   }
   return stale<FeedItem[]>(key) ?? [];
 }

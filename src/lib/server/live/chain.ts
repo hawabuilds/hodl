@@ -152,6 +152,61 @@ export async function nativeBalance(wallet: string): Promise<number> {
   return Number(wei) / 1e18;
 }
 
+const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11" as const;
+const multicall3Abi = parseAbi([
+  "function getEthBalance(address addr) view returns (uint256 balance)",
+]);
+
+/**
+ * Native ETH plus every ERC-20 balance, one Multicall3 `eth_call`.
+ *
+ * Do not loop `balanceOf`. The candidate list must already be small — tokens
+ * this wallet has touched, plus the RWA registry — not the universe.
+ */
+export async function walletSnapshot(
+  wallet: string,
+  tokens: {address: string; decimals: number}[],
+): Promise<{eth: number; amounts: Map<string, number>; rpcCalls: number}> {
+  const owner = wallet as `0x${string}`;
+  const contracts = [
+    {
+      address: MULTICALL3,
+      abi: multicall3Abi,
+      functionName: "getEthBalance" as const,
+      args: [owner] as const,
+    },
+    ...tokens.map((token) => ({
+      address: token.address as `0x${string}`,
+      abi: erc20Abi,
+      functionName: "balanceOf" as const,
+      args: [owner] as const,
+    })),
+  ];
+
+  const results = await rpc().multicall({contracts, allowFailure: true});
+  const amounts = new Map<string, number>();
+  let eth = 0;
+
+  const native = results[0];
+  if (native?.status === "success") {
+    eth = Number(native.result) / 1e18;
+    if (!Number.isFinite(eth)) eth = 0;
+  }
+
+  for (let i = 0; i < tokens.length; i++) {
+    const result = results[i + 1];
+    if (result?.status !== "success") continue;
+    const raw = result.result as bigint;
+    if (raw === 0n) continue;
+    const amount = Number(raw) / 10 ** tokens[i].decimals;
+    if (Number.isFinite(amount) && amount > 0) {
+      amounts.set(tokens[i].address.toLowerCase(), amount);
+    }
+  }
+
+  return {eth, amounts, rpcCalls: 1};
+}
+
 /**
  * How many contracts go into one multicall.
  *

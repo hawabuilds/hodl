@@ -112,6 +112,8 @@ const LAUNCHPADS: LaunchpadSpec[] = [
       "0xa5aab3f0c6eeadf30ef1d3eb997108e976351feb",
       "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e",
       "0x0c37a24f5d23a486fa692d1500881d698b1f77a4",
+      // Mobula V3. Bytecode live; raw logs in −1d/−7d/−30d probes on 2026-09-04.
+      "0x1f7d7550b1b028f7571e69a784071f0205fd2efa",
     ],
   },
   {

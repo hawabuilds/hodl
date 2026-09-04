@@ -1,8 +1,9 @@
 "use client";
 
 import {useCallback, useMemo} from "react";
-import {useQuery} from "@tanstack/react-query";
+import {useQuery, useQueryClient} from "@tanstack/react-query";
 import {readLocalComments, writeLocalComment} from "@/lib/localStore";
+import {useSession} from "@/lib/session";
 import type {
   AssetComment,
   AssetKind,
@@ -45,12 +46,13 @@ function buildThreads(comments: AssetComment[]): CommentThread[] {
 /**
  * Comments for one asset.
  *
- * Seeded discussion comes from the server; anything posted here is written to
- * this browser and merged in. When a database lands, the merge collapses into a
- * POST and nothing above this hook changes.
+ * Live comments come from Supabase. Anything posted while the database is
+ * down is written to this browser and merged in.
  */
 export function useComments(kind: AssetKind, assetId: string) {
   const {authenticated, handle, displayName, pfpUrl} = useUser();
+  const session = useSession();
+  const queryClient = useQueryClient();
 
   const remote = useQuery({
     queryKey: ["comments", kind, assetId],
@@ -59,6 +61,7 @@ export function useComments(kind: AssetKind, assetId: string) {
       if (!res.ok) throw new Error("Could not load comments.");
       return (await res.json()) as {comments: AssetComment[]; localOnly: boolean};
     },
+    retry: false,
   });
 
   const readLocal = useCallback(
@@ -81,6 +84,21 @@ export function useComments(kind: AssetKind, assetId: string) {
     ({body, parentId}: {body: string; parentId: string | null}) => {
       const trimmed = body.trim();
       if (!trimmed || !authenticated) return;
+      if (remote.data?.localOnly === false) {
+        void session.getAccessToken().then(async (token) => {
+          if (!token) return;
+          await fetch(`/api/asset/${kind}/${assetId}/comments`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({body: trimmed.slice(0, 500), parentId}),
+          });
+          await queryClient.invalidateQueries({queryKey: ["comments", kind, assetId]});
+        });
+        return;
+      }
       writeLocalComment({
         id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         assetId,
@@ -94,7 +112,7 @@ export function useComments(kind: AssetKind, assetId: string) {
         createdAt: new Date().toISOString(),
       });
     },
-    [assetId, authenticated, handle, displayName, pfpUrl],
+    [assetId, authenticated, handle, displayName, pfpUrl, kind, queryClient, remote.data?.localOnly, session],
   );
 
   return {
@@ -102,6 +120,7 @@ export function useComments(kind: AssetKind, assetId: string) {
     threads,
     isLoading: remote.isLoading,
     error: remote.error ? (remote.error as Error).message : null,
+    retry: () => void remote.refetch(),
     canPost: authenticated,
     localOnly: remote.data?.localOnly ?? true,
     post,

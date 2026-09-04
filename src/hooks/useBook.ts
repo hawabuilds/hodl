@@ -10,6 +10,7 @@ import {
   type FillInput,
 } from "@/lib/localStore";
 import type {Asset, Holding, Range} from "@/lib/types";
+import {isPriced} from "@/lib/priceState";
 import {useLocalStore} from "./useLocalStore";
 
 const EMPTY: Book = {cashUsd: STARTING_CASH_USD, positions: [], orders: []};
@@ -69,7 +70,8 @@ export function useBook(range: Range = "1D") {
     return book.positions
       .map((position) => {
         const asset = assets.get(`${position.kind}:${position.assetId}`);
-        const priceUsd = asset?.priceUsd ?? 0;
+        const rawPrice = asset?.priceUsd;
+        const priceUsd = isPriced(rawPrice) ? rawPrice : 0;
         const valueUsd = position.amount * priceUsd;
         const pnlUsd = valueUsd - position.costUsd;
         return {

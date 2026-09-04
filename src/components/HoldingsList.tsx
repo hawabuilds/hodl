@@ -4,7 +4,10 @@ import Link from "next/link";
 import {AssetLink} from "@/components/AssetLink";
 import {cn} from "@/lib/cn";
 import {money, percent, units} from "@/lib/format";
+import {formatLiquidityUsd} from "@/lib/priceState";
 import type {Holding} from "@/lib/types";
+import {loadedLogoFor} from "@/lib/tokenLogoCache";
+import {tokenFor} from "@/lib/tokenCache";
 import {Avatar} from "./ui/Avatar";
 import {VerifiedTick} from "./ui/Badges";
 
@@ -53,7 +56,23 @@ export function HoldingsList({
               className="flex items-center gap-3 px-[22px] py-[13px] transition-colors hover:bg-[var(--overlay-wash)]"
             >
               {holding.kind === "rwa" ? null : (
-                <Avatar name={holding.symbol} src={holding.logoUrl} size={38} />
+                <Avatar
+                  name={holding.symbol}
+                  src={
+                    holding.kind === "token"
+                      ? holding.logoUrl ||
+                        tokenFor(holding.assetId)?.imageUrl ||
+                        loadedLogoFor(holding.assetId)
+                      : holding.logoUrl
+                  }
+                  seed={holding.kind === "token" ? holding.assetId : undefined}
+                  color={
+                    holding.kind === "token"
+                      ? tokenFor(holding.assetId)?.imageColor
+                      : null
+                  }
+                  size={38}
+                />
               )}
 
               <div className="min-w-0 flex-1">
@@ -71,7 +90,7 @@ export function HoldingsList({
 
               <div className="shrink-0 text-right">
                 <div className="tnum text-[14px] font-extrabold tracking-[-0.015em]">
-                  {money(holding.valueUsd)}
+                  {formatLiquidityUsd(holding.valueUsd)}
                 </div>
                 <div
                   className={cn(
@@ -101,6 +120,23 @@ export function HoldingsList({
           </li>
         );
       })}
+    </ul>
+  );
+}
+
+export function HoldingsSkeleton() {
+  return (
+    <ul className="-mx-[22px]" aria-hidden>
+      {[0, 1, 2, 3].map((row) => (
+        <li key={row} className="flex items-center gap-3 px-[22px] py-[13px]">
+          <span className="h-[38px] w-[38px] shrink-0 rounded-full bg-wash" />
+          <div className="min-w-0 flex-1">
+            <span className="block h-3.5 w-16 rounded bg-wash" />
+            <span className="mt-2 block h-3 w-24 rounded bg-wash" />
+          </div>
+          <span className="h-3.5 w-12 rounded bg-wash" />
+        </li>
+      ))}
     </ul>
   );
 }

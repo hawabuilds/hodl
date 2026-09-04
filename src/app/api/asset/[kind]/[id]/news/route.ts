@@ -15,8 +15,11 @@ export async function GET(
   const {data: asset} = await fetchAsset(kind, params.id);
   if (!asset || asset.kind !== "rwa") return notFound("No RWA with that id.");
 
-  const {data, seeded} = await fetchNews(asset);
+  const {data, seeded, error} = await fetchNews(asset);
   // `seeded` is what the UI reads to label these as samples rather than
   // reporting. Do not drop it when a real provider is wired in.
-  return publicJson({items: data, seeded}, {maxAge: 300, swr: 1800});
+  return publicJson(
+    {items: data, seeded, error: error ?? null},
+    {maxAge: 300, swr: 1800},
+  );
 }

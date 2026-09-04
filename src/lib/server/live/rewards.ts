@@ -1,4 +1,5 @@
 import {parseAbi, parseAbiItem, type Abi} from "viem";
+import {normalizeAddress, normalizeAddresses} from "@/lib/address";
 import {db, hasDatabase} from "../db";
 import {multicallChunked} from "./chain";
 import {RWA_BY_ADDRESS, RWA_REGISTRY} from "./robinhood";
@@ -255,19 +256,31 @@ export async function scanRewards(maxBlocks = 300): Promise<RewardScan> {
     }
   }
 
+  let wrote = 0;
   if (distributions.length > 0) {
-    const {error} = await db()
-      .from("reward_distributions")
-      .upsert(distributions, {onConflict: "tx_hash", ignoreDuplicates: true});
+    const wanted = normalizeAddresses([
+      ...new Set(distributions.map((row) => String(row.token_address))),
+    ]);
+    const {data: known} = await db().from("tokens").select("address").in("address", wanted);
+    const exist = new Set((known ?? []).map((row) => normalizeAddress(String(row.address))));
+    const accepted = distributions.filter((row) =>
+      exist.has(normalizeAddress(String(row.token_address))),
+    );
+    wrote = accepted.length;
+    if (accepted.length > 0) {
+      const {error} = await db()
+        .from("reward_distributions")
+        .upsert(accepted, {onConflict: "tx_hash", ignoreDuplicates: true});
 
-    // Not swallowed. This write silently rejected every row for weeks —
-    // `token_address` carries a foreign key to `tokens`, which nothing
-    // populates, so each batch failed the constraint while the scan went on
-    // reporting how many distributions it had "written".
-    if (error) {
-      throw new Error(
-        `reward_distributions write failed (${error.code}): ${error.message}`,
-      );
+      // Not swallowed. This write silently rejected every row for weeks —
+      // `token_address` carries a foreign key to `tokens`, which nothing
+      // populates, so each batch failed the constraint while the scan went on
+      // reporting how many distributions it had "written".
+      if (error) {
+        throw new Error(
+          `reward_distributions write failed (${error.code}): ${error.message}`,
+        );
+      }
     }
   }
 
@@ -277,7 +290,7 @@ export async function scanRewards(maxBlocks = 300): Promise<RewardScan> {
 
   return {
     scanned: {from: from.toString(), to: reached.toString()},
-    distributions: distributions.length,
+    distributions: wrote,
     tokens: tokensSeen.size,
   };
 }
@@ -294,7 +307,7 @@ export async function refreshRewardTotals(): Promise<number> {
 
   const totals = new Map<string, number>();
   for (const row of data ?? []) {
-    const key = String(row.token_address).toLowerCase();
+    const key = normalizeAddress(String(row.token_address));
     totals.set(key, (totals.get(key) ?? 0) + Number(row.amount_usd ?? 0));
   }
 
@@ -317,7 +330,7 @@ export async function rewardsFromDb(
 ): Promise<Set<string> | null> {
   if (!hasDatabase || addresses.length === 0) return null;
 
-  const wanted = new Set(addresses.map((a) => a.toLowerCase()));
+  const wanted = new Set(normalizeAddresses(addresses));
   const paying = new Set<string>();
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
 
@@ -335,11 +348,11 @@ export async function rewardsFromDb(
   ]);
 
   for (const row of tokens ?? []) {
-    const address = String(row.address).toLowerCase();
+    const address = normalizeAddress(String(row.address));
     if (wanted.has(address)) paying.add(address);
   }
   for (const row of dists ?? []) {
-    const address = String(row.token_address).toLowerCase();
+    const address = normalizeAddress(String(row.token_address));
     if (wanted.has(address)) paying.add(address);
   }
 
@@ -362,10 +375,10 @@ export async function allRewardPayingAddresses(): Promise<Set<string>> {
   ]);
 
   for (const row of tokens ?? []) {
-    paying.add(String(row.address).toLowerCase());
+    paying.add(normalizeAddress(String(row.address)));
   }
   for (const row of dists ?? []) {
-    paying.add(String(row.token_address).toLowerCase());
+    paying.add(normalizeAddress(String(row.token_address)));
   }
 
   return paying;

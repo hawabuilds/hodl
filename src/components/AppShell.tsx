@@ -2,18 +2,23 @@
 
 import {useEffect, type ReactNode} from "react";
 import {useRouter} from "next/navigation";
+import {hasCachedMe} from "@/lib/localStore";
 import {useUser} from "@/hooks/useUser";
 import {TabBar} from "./TabBar";
 
 export function AppShell({children}: {children: ReactNode}) {
   const router = useRouter();
   const {ready, authenticated} = useUser();
+  const cached = hasCachedMe();
 
   useEffect(() => {
     if (ready && !authenticated) router.replace("/");
   }, [ready, authenticated, router]);
 
-  if (!ready || !authenticated) {
+  if (ready && !authenticated) {
+    return <div className="h-full bg-premium" />;
+  }
+  if (!ready && !cached) {
     return <div className="h-full bg-premium" />;
   }
 

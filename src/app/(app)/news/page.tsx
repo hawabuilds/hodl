@@ -1,14 +1,14 @@
 "use client";
 
 import {useEffect, useState} from "react";
-import {useQuery} from "@tanstack/react-query";
+import {keepPreviousData, useQuery} from "@tanstack/react-query";
 import {AssetLink} from "@/components/AssetLink";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {Avatar} from "@/components/ui/Avatar";
 import {VerifiedTick} from "@/components/ui/Badges";
 import {ArrowUpRightIcon, NewsIcon} from "@/components/ui/Icons";
 import {cn} from "@/lib/cn";
-import {relativeTime} from "@/lib/format";
+import {newsTime} from "@/lib/format";
 import type {FeedItem, NewsTopic, NewsWindow} from "@/lib/types";
 
 const WINDOWS: FilterOption<NewsWindow>[] = [
@@ -36,6 +36,8 @@ export default function NewsPage() {
 
   const feed = useQuery({
     queryKey: ["news-feed", window, topic],
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
     refetchInterval: 5 * 60_000,
     queryFn: async () => {
       const res = await fetch(`/api/news?window=${window}&topic=${topic}`);
@@ -78,7 +80,7 @@ export default function NewsPage() {
         <EmptyFeed />
       ) : (
         <>
-          {lead ? <LeadStory item={lead} /> : null}
+          {lead ? <LeadStory item={lead} window={window} /> : null}
 
           {accounts.length > 0 ? (
             <section className="mt-6">
@@ -102,7 +104,12 @@ export default function NewsPage() {
               />
               <ul className="-mx-[22px]">
                 {rest.map((item, i) => (
-                  <StoryRow key={item.id} item={item} priority={i < 2} />
+                  <StoryRow
+                    key={item.id}
+                    item={item}
+                    window={window}
+                    priority={i < 2}
+                  />
                 ))}
               </ul>
             </section>
@@ -110,12 +117,13 @@ export default function NewsPage() {
         </>
       )}
 
-      {feed.data?.seeded ? (
-        <p className="mt-7 border-t border-hairline pt-4 text-[11.5px] leading-[1.55] text-faint">
-          Sample coverage, written to templates and credited to outlets that do
-          not exist, so nothing here can be mistaken for reporting. The source
-          accounts are real and link out — their posts arrive once a provider is
-          connected.
+      {feed.error ? (
+        <p className="mt-7 border-t border-hairline pt-4 text-[13px] text-muted">
+          Could not load the news feed. Retrying.
+        </p>
+      ) : !feed.isLoading && items.length === 0 ? (
+        <p className="mt-7 border-t border-hairline pt-4 text-[13px] text-muted">
+          No stories in this window.
         </p>
       ) : null}
     </div>
@@ -231,7 +239,7 @@ function StoryImage({
 }
 
 /** The story at the top of the section, given the room a lead deserves. */
-function LeadStory({item}: {item: FeedItem}) {
+function LeadStory({item, window}: {item: FeedItem; window: NewsWindow}) {
   return (
     <a
       href={item.url}
@@ -257,14 +265,22 @@ function LeadStory({item}: {item: FeedItem}) {
         <h3 className="text-[19px] font-extrabold leading-[1.24] tracking-[-0.028em]">
           {item.body}
         </h3>
-        <ByLine item={item} className="mt-2.5" />
+        <ByLine item={item} window={window} className="mt-2.5" />
         <TickerChips tickers={item.tickers} className="mt-3" />
       </div>
     </a>
   );
 }
 
-function StoryRow({item, priority = false}: {item: FeedItem; priority?: boolean}) {
+function StoryRow({
+  item,
+  window,
+  priority = false,
+}: {
+  item: FeedItem;
+  window: NewsWindow;
+  priority?: boolean;
+}) {
   return (
     <li>
       <a
@@ -278,7 +294,7 @@ function StoryRow({item, priority = false}: {item: FeedItem; priority?: boolean}
           <h3 className="mt-2 line-clamp-3 text-[15px] font-bold leading-[1.34] tracking-[-0.018em]">
             {item.body}
           </h3>
-          <ByLine item={item} className="mt-2" />
+          <ByLine item={item} window={window} className="mt-2" />
         </div>
 
         <StoryImage
@@ -291,7 +307,15 @@ function StoryRow({item, priority = false}: {item: FeedItem; priority?: boolean}
   );
 }
 
-function ByLine({item, className}: {item: FeedItem; className?: string}) {
+function ByLine({
+  item,
+  window,
+  className,
+}: {
+  item: FeedItem;
+  window: NewsWindow;
+  className?: string;
+}) {
   return (
     <div
       className={cn(
@@ -307,7 +331,7 @@ function ByLine({item, className}: {item: FeedItem; className?: string}) {
       </span>
       <span className="truncate text-muted">{item.source}</span>
       <span className="opacity-50">·</span>
-      <span className="shrink-0">{relativeTime(item.publishedAt)}</span>
+      <span className="shrink-0">{newsTime(item.publishedAt, window)}</span>
     </div>
   );
 }

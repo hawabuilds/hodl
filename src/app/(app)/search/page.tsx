@@ -12,7 +12,8 @@ import {SearchIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
 import {compact, compactMoney} from "@/lib/format";
 import {profilePath} from "@/lib/routes";
-import type {Asset, Profile} from "@/lib/types";
+import {applyCachedAssets, rememberTokens} from "@/lib/tokenCache";
+import type {Asset, Profile, TokenAsset} from "@/lib/types";
 
 type Scope = "all" | "token" | "rwa" | "people";
 
@@ -25,7 +26,10 @@ const SCOPES: FilterOption<Scope>[] = [
 
 interface SearchResponse {
   results: Asset[];
+  rwas?: Asset[];
+  tokens?: Asset[];
   people: Profile[];
+  ineligible?: boolean;
 }
 
 export default function SearchPage() {
@@ -47,13 +51,24 @@ export default function SearchPage() {
   const search = useQuery({
     queryKey: ["search-all", trimmed],
     enabled: active,
+    staleTime: 60_000,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const res = await fetch(
         `/api/search?people=1&q=${encodeURIComponent(trimmed)}`,
       );
       if (!res.ok) throw new Error("Search failed.");
-      return (await res.json()) as SearchResponse;
+      const data = (await res.json()) as SearchResponse;
+      const tokens = (data.tokens ?? data.results ?? []).filter(
+        (asset): asset is TokenAsset => asset.kind === "token",
+      );
+      rememberTokens(tokens);
+      return {
+        ...data,
+        results: applyCachedAssets(data.results ?? []),
+        tokens: applyCachedAssets(data.tokens ?? []),
+        rwas: data.rwas ?? [],
+      };
     },
   });
 
@@ -61,7 +76,7 @@ export default function SearchPage() {
   const market = useMarket();
 
   const assets = useMemo(() => {
-    const found = search.data?.results ?? [];
+    const found = applyCachedAssets(search.data?.results ?? []);
     if (scope === "token" || scope === "rwa") {
       return found.filter((asset) => asset.kind === scope);
     }
@@ -106,14 +121,43 @@ export default function SearchPage() {
             <SearchIcon className="h-6 w-6" />
           </span>
           <p className="mt-4 text-[14px] font-bold">
-            Nothing matches “{trimmed}”
+            {search.data?.ineligible
+              ? "Not eligible for HODL"
+              : `Nothing matches “${trimmed}”`}
           </p>
           <p className="mx-auto mt-1.5 max-w-[32ch] text-[13px] leading-[1.5] text-muted">
-            Try a ticker, a token symbol, a contract address or a handle.
+            {search.data?.ineligible
+              ? "That contract exists, but it is not a Pons or Long token paired against an RWA or paying holders in one."
+              : "Try a ticker, a token symbol, a contract address or a handle."}
           </p>
         </div>
       ) : (
         <>
+          {(search.data?.rwas ?? assets.filter((asset) => asset.kind === "rwa")).length > 0 &&
+          scope !== "token" &&
+          scope !== "people" ? (
+            <>
+              <SectionLabel>RWAS</SectionLabel>
+              <AssetList
+                assets={search.data?.rwas ?? assets.filter((asset) => asset.kind === "rwa")}
+              />
+            </>
+          ) : null}
+
+          {(search.data?.tokens ?? assets.filter((asset) => asset.kind === "token")).length > 0 &&
+          scope !== "rwa" &&
+          scope !== "people" ? (
+            <>
+              <SectionLabel>TOKENS</SectionLabel>
+              <AssetList
+                assets={applyCachedAssets(
+                  search.data?.tokens ??
+                    assets.filter((asset) => asset.kind === "token"),
+                )}
+              />
+            </>
+          ) : null}
+
           {people.length > 0 ? (
             <>
               <SectionLabel>PEOPLE</SectionLabel>
@@ -122,13 +166,6 @@ export default function SearchPage() {
                   <PersonRow key={person.handle} person={person} />
                 ))}
               </ul>
-            </>
-          ) : null}
-
-          {assets.length > 0 ? (
-            <>
-              {people.length > 0 ? <SectionLabel>MARKETS</SectionLabel> : null}
-              <AssetList assets={assets} />
             </>
           ) : null}
         </>

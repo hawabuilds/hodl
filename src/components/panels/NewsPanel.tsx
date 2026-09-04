@@ -2,19 +2,26 @@
 
 import {relativeTime} from "@/lib/format";
 import type {NewsItem} from "@/lib/types";
-import {PanelNote} from "./TradesPanel";
+import {PanelError, PanelNote} from "./TradesPanel";
 
 export function NewsPanel({
   items,
   isLoading,
   seeded,
+  error,
+  onRetry,
 }: {
   items: NewsItem[];
   isLoading: boolean;
   /** True while the headlines are placeholders rather than a real feed. */
   seeded: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }) {
   if (isLoading && items.length === 0) return <PanelNote>Loading news</PanelNote>;
+  if (error && items.length === 0) {
+    return <PanelError message={error} onRetry={onRetry} />;
+  }
   if (items.length === 0) return <PanelNote>No recent coverage.</PanelNote>;
 
   return (

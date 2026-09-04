@@ -53,35 +53,31 @@ test("arm 1 requires a launchpad this app can prove", () => {
   assert.equal(qualifiesForUniverse(unknown), false);
 });
 
-test("arm 1 requires the pair to actually be trading", () => {
-  assert.equal(qualifiesForUniverse(tok({graduated: false})), false);
-  assert.equal(qualifiesForUniverse(tok({tradesOnUniswap: false})), false);
+test("arm 1 still qualifies an unbonded Pons RWA pair — feeds hide it", () => {
+  assert.equal(qualifiesForUniverse(tok({graduated: false})), true);
+  assert.equal(isProvenLaunchpadRwaPair(tok({graduated: false})), true);
 });
 
-test("arm 2: paying holders in RWA qualifies on its own", () => {
-  // No launchpad, not RWA-paired, not graduated, not on Uniswap — and it
-  // still belongs, because it pays its holders. Every one of those used to
-  // exclude it.
+test("arm 2: ETH/USDG pair that pays an RWA, from Pons or Long", () => {
   const payer = tok({
-    launchpad: null,
+    launchpad: pons,
     rwaPaired: false,
-    graduated: false,
-    tradesOnUniswap: false,
+    pairedTicker: "USDG",
+    graduated: true,
     paysRwaRewards: true,
   });
   assert.equal(paysHoldersInRwa(payer), true);
   assert.equal(qualifiesForUniverse(payer), true);
 });
 
-test("arm 2 also accepts fee routing to holders", () => {
+test("arm 2 requires a launchpad this app can prove", () => {
   const router = tok({
     launchpad: null,
     rwaPaired: false,
-    graduated: false,
-    tradesOnUniswap: false,
-    rewardsToHolders: true,
+    pairedTicker: "USDG",
+    paysRwaRewards: true,
   });
-  assert.equal(qualifiesForUniverse(router), true);
+  assert.equal(qualifiesForUniverse(router), false);
 });
 
 test("a token meeting neither arm is excluded", () => {
@@ -95,15 +91,23 @@ test("a token meeting neither arm is excluded", () => {
 });
 
 test("a token meeting both arms is included once, not twice", () => {
-  const both = tok({paysRwaRewards: true});
-  assert.equal(paysHoldersInRwa(both), true);
+  const both = tok({
+    rwaPaired: true,
+    paysRwaRewards: true,
+    pairedTicker: "NVDA",
+  });
   assert.equal(isProvenLaunchpadRwaPair(both), true);
   assert.equal(qualifiesForUniverse(both), true);
 });
 
 test("the New tab is stricter than the universe", () => {
-  // A reward payer belongs in search but is not a new graduated listing.
-  const payer = tok({launchpad: null, rwaPaired: false, paysRwaRewards: true});
+  const payer = tok({
+    launchpad: pons,
+    rwaPaired: false,
+    pairedTicker: "USDG",
+    paysRwaRewards: true,
+    marketCapUsd: 1_000,
+  });
   assert.equal(qualifiesForUniverse(payer), true);
   assert.equal(qualifiesAsNewListing(payer), false);
 
@@ -126,9 +130,14 @@ test("category membership follows the launchpad, not the name", () => {
   assert.equal(matchesSearchCategory(tok(), "long"), false);
   assert.equal(matchesSearchCategory(tok({launchpad: long}), "long"), true);
 
-  const payer = tok({launchpad: null, rwaPaired: false, paysRwaRewards: true});
+  const payer = tok({
+    launchpad: pons,
+    rwaPaired: false,
+    pairedTicker: "USDG",
+    paysRwaRewards: true,
+  });
   assert.equal(matchesSearchCategory(payer, "rewards"), true);
-  assert.equal(matchesSearchCategory(payer, "pons"), false);
+  assert.equal(matchesSearchCategory(payer, "pons"), true);
 });
 
 test("a token outside the universe is in no category", () => {

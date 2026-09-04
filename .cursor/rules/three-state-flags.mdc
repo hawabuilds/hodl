@@ -1,0 +1,13 @@
+---
+description: Nullable boolean flags are three-state; never filter them as two-state
+globs: **/*.{ts,tsx,sql}
+alwaysApply: true
+---
+
+# Three-state flags (`eligible`, `is_tradeable`)
+
+`true` = evaluated, passes → show. `false` = evaluated, fails → hide. `null` = not yet evaluated → **show**.
+
+Never write `.eq("eligible", true)`, `.eq("is_tradeable", true)`, `AND eligible`, or `AND is_tradeable`. Those hide unevaluated rows and empty the feed.
+
+Use `column IS DISTINCT FROM false`, PostgREST `.or("column.is.null,column.is.true")` via `applyThreeStateFilter`, or JS `value !== false` / `showsThreeState`.

@@ -10,17 +10,18 @@ import type {
   TokenAsset,
   Trade,
 } from "@/lib/types";
-import * as seeded from "./market";
 import * as live from "./live/market";
 import * as gecko from "./live/geckoterminal";
-import {AUTHENTICATED} from "./live/geckoterminal";
+import {historicalCandles} from "./live/robinhood";
 import * as swaps from "./live/swaps";
 import * as headlines from "./live/news";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {quotePriceUsd} from "@/lib/server/quotePrice";
+import {reorientPoints} from "@/lib/pairOrientation";
 import {underFeature} from "./live/rpcMeter";
-import {feedFor, type FeedQuery} from "./newsfeed";
+import {type FeedQuery} from "./newsfeed";
 import {hasDatabase} from "./db";
+import {normalizeAddress} from "@/lib/address";
 import {searchPeople} from "./social";
 import {searchUsers as searchUsersLive} from "./social-live";
 
@@ -29,39 +30,22 @@ const TRADES_LIMIT = 300;
 /**
  * The seam between the app and its data.
  *
- * Every route reads through this module and nothing else, so wiring a real feed
- * is a one-function change here rather than a sweep through the UI. Each
- * adapter documents the source it is waiting on and falls through to the seeded
- * market until that source exists.
- *
- * The seeded market is not scaffolding to be deleted: keep it as the fallback
- * when a provider is down or unconfigured, the way Pick falls back to demo data.
+ * Production never invents tokens, charts, or people. A live miss is empty
+ * or an error. The seeded module stays for local-unconfigured social/demo
+ * routes that have no database — not for market rows.
  */
 
 export interface SourceResult<T> {
   data: T;
   /** True while the value came from the seeded market rather than a live feed. */
   seeded: boolean;
+  /** Set when the provider failed. Empty data without this is a real empty set. */
+  error?: string;
 }
 
-/**
- * Falls back to the seeded market when a live source is empty or throws.
- *
- * `seeded` on the result is what the UI reads to decide whether to caveat the
- * numbers, so it has to stay honest: true means nothing on screen came from a
- * real market.
- */
-async function liveOr<T>(
-  load: () => Promise<T[]>,
-  fallback: () => T[],
-): Promise<SourceResult<T[]>> {
-  try {
-    const data = await load();
-    if (data.length > 0) return {data, seeded: false};
-  } catch (error) {
-    console.error("live source failed, falling back to seeded", error);
-  }
-  return {data: fallback(), seeded: true};
+async function liveOnly<T>(load: () => Promise<T>): Promise<SourceResult<T>> {
+  const data = await load();
+  return {data, seeded: false};
 }
 
 /**
@@ -76,7 +60,7 @@ async function liveOr<T>(
  * rebuild. Part 04 step 1 has the weekly refresh that removes that.
  */
 export async function fetchRwas(): Promise<SourceResult<RwaAsset[]>> {
-  return liveOr(live.listRwas, seeded.listRwas);
+  return liveOnly(live.listRwas);
 }
 
 /**
@@ -90,7 +74,11 @@ export async function fetchRwas(): Promise<SourceResult<RwaAsset[]>> {
  * and are still zero. Part 05 step 4.
  */
 export async function fetchTokens(): Promise<SourceResult<TokenAsset[]>> {
-  return underFeature("feed", () => liveOr(live.listTokens, seeded.listTokens));
+  return underFeature("feed", () => liveOnly(live.listTokens));
+}
+
+function assetId(kind: AssetKind, id: string): string {
+  return kind === "token" ? normalizeAddress(id) : id;
 }
 
 export async function fetchAsset(
@@ -98,12 +86,12 @@ export async function fetchAsset(
   id: string,
 ): Promise<SourceResult<Asset | null>> {
   try {
-    const data = await live.getAsset(kind, id);
-    if (data) return {data, seeded: false};
+    const data = await live.getAsset(kind, assetId(kind, id));
+    return {data, seeded: false};
   } catch (error) {
     console.error("live asset lookup failed", error);
+    throw error;
   }
-  return {data: seeded.getAsset(kind, id), seeded: true};
 }
 
 /**
@@ -119,17 +107,30 @@ export async function fetchAssetPage(
 ): Promise<
   SourceResult<{
     asset: Asset;
-    chart: {timeframe: Timeframe; points: ChartPoint[]; changePct: number};
-    trades: {trades: Trade[]; pollMs: number};
+    chart: {
+      timeframe: Timeframe;
+      points: ChartPoint[];
+      changePct: number;
+      error?: string | null;
+    };
+    trades: {trades: Trade[]; pollMs: number; error?: string | null};
   } | null>
 > {
-  const assetResult = await fetchAsset(kind, id);
+  const assetResult = await fetchAsset(kind, assetId(kind, id));
   if (!assetResult.data) return {data: null, seeded: assetResult.seeded};
 
-  const [chartResult, tradesResult] = await Promise.all([
+  const [chartSettled, tradesSettled] = await Promise.allSettled([
     fetchChart(assetResult.data, timeframe, assetResult.seeded),
     fetchTrades(assetResult.data, 300, assetResult.seeded),
   ]);
+  const chartResult =
+    chartSettled.status === "fulfilled"
+      ? chartSettled.value
+      : {data: [] as ChartPoint[], seeded: false, error: "Could not load the chart."};
+  const tradesResult =
+    tradesSettled.status === "fulfilled"
+      ? tradesSettled.value
+      : {data: [] as Trade[], seeded: false, error: "Could not load trades."};
 
   const first = chartResult.data[0]?.price ?? 0;
   const last = chartResult.data[chartResult.data.length - 1]?.price ?? 0;
@@ -144,11 +145,12 @@ export async function fetchAssetPage(
           first > 0
             ? Number((((last - first) / first) * 100).toFixed(2))
             : 0,
+        error: chartResult.error ?? null,
       },
       trades: {
         trades: tradesResult.data,
-        pollMs:
-          process.env.ALCHEMY_RPC_URL || AUTHENTICATED ? 2_000 : 12_000,
+        pollMs: process.env.ALCHEMY_RPC_URL ? 2_000 : 12_000,
+        error: tradesResult.error ?? null,
       },
     },
     seeded: assetResult.seeded || chartResult.seeded || tradesResult.seeded,
@@ -172,14 +174,40 @@ export async function fetchChart(
    */
   assetIsSeeded = true,
 ): Promise<SourceResult<ChartPoint[]>> {
+  if (asset.kind === "rwa") {
+    try {
+      const points = await historicalCandles(asset.ticker, timeframe);
+      if (points.length > 1) return {data: points, seeded: false};
+    } catch (error) {
+      console.error("rwa chart failed", error);
+      return {
+        data: [],
+        seeded: false,
+        error: "Could not load the chart.",
+      };
+    }
+    return {data: [], seeded: false};
+  }
+
   try {
     const target = await live.poolFor(asset.kind, asset.id);
     if (target) {
-      const points = await gecko.candles(target.pool, timeframe, target.token);
+      const side = target.tokenIsBase === false ? "quote" : "base";
+      const raw = await gecko.candles(target.pool, timeframe, side);
+      const points = reorientPoints(
+        raw.points,
+        asset.priceUsd,
+        asset.liquidityUsd ?? 0,
+        asset.symbol,
+      );
       if (points.length > 1) return {data: points, seeded: false};
+      if (raw.error) {
+        return {data: [], seeded: false, error: raw.error};
+      }
     }
   } catch (error) {
     console.error("live chart failed", error);
+    return {data: [], seeded: false, error: "Could not load the chart."};
   }
 
   /**
@@ -194,9 +222,7 @@ export async function fetchChart(
    * than an honest empty chart, and a token that has actually traded now has
    * candles to show since the bucket ladder above reaches its first minutes.
    */
-  if (!assetIsSeeded) return {data: [], seeded: false};
-
-  return {data: seeded.chartFor(asset, timeframe), seeded: true};
+  return {data: [], seeded: false};
 }
 
 /**
@@ -219,45 +245,57 @@ export async function fetchTrades(
         ? await quotePriceUsd(target.quote)
         : null;
 
-      const [indexed, live_] = await Promise.all([
+      const [indexedSettled, liveSettled] = await Promise.allSettled([
         gecko.trades(target.pool, target.token, cap),
-        target.quote
-          ? swaps
-              .recentSwaps(
-                target.pool,
-                target.token,
-                target.quote,
-                asset.priceUsd,
-                quoteUsd,
-              )
-              .catch(() => [] as Trade[])
+        target.quote && asset.priceUsd != null && asset.priceUsd > 0
+          ? swaps.recentSwaps(
+              target.pool,
+              target.token,
+              target.quote,
+              asset.priceUsd,
+              quoteUsd,
+            )
           : Promise.resolve([] as Trade[]),
       ]);
 
+      const indexed =
+        indexedSettled.status === "fulfilled" ? indexedSettled.value : null;
+      const live_ =
+        liveSettled.status === "fulfilled" ? liveSettled.value : [];
+      const geckoDown =
+        indexedSettled.status === "rejected" || Boolean(indexed?.error);
+      const alchemyDown = liveSettled.status === "rejected";
+
       const byId = new Map<string, Trade>();
-      for (const trade of indexed) byId.set(trade.id.toLowerCase(), trade);
+      for (const trade of indexed?.trades ?? []) {
+        byId.set(trade.id.toLowerCase(), trade);
+      }
       for (const trade of live_) {
         const key = trade.id.toLowerCase();
         if (!byId.has(key)) byId.set(key, trade);
       }
-      if (byId.size === 0 && live_.length > 0) {
-        for (const trade of live_) byId.set(trade.id.toLowerCase(), trade);
-      }
 
       const merged = [...byId.values()].sort(compareTradesNewestFirst);
-
-      return {data: merged.slice(0, cap), seeded: false};
+      if (merged.length > 0) {
+        return {data: merged.slice(0, cap), seeded: false};
+      }
+      if (geckoDown && alchemyDown) {
+        return {data: [], seeded: false, error: "Could not load trades."};
+      }
+      if (geckoDown && live_.length === 0 && !alchemyDown) {
+        return {data: [], seeded: false};
+      }
+      return {data: [], seeded: false};
     }
   } catch (error) {
     console.error("live trades failed", error);
+    return {data: [], seeded: false, error: "Could not load trades."};
   }
 
   // Fabricated fills carry fake maker addresses and fake transaction hashes,
   // which on a real token's page read as a record of trades that never
   // happened. An empty tape is the truthful answer.
-  if (!assetIsSeeded) return {data: [], seeded: false};
-
-  return {data: seeded.tradesFor(asset, limit), seeded: true};
+  return {data: [], seeded: false};
 }
 
 /**
@@ -285,8 +323,9 @@ export async function fetchNews(
     }
   } catch (error) {
     console.error("live news failed", error);
+    return {data: [], seeded: false, error: "Could not load news."};
   }
-  return {data: seeded.newsFor(asset), seeded: true};
+  return {data: [], seeded: false};
 }
 
 /**
@@ -294,19 +333,31 @@ export async function fetchNews(
  * convert between the two currencies someone can size a trade in.
  */
 export async function fetchEthPrice(): Promise<SourceResult<number>> {
-  return {data: seeded.ethPriceUsd(), seeded: true};
+  try {
+    const {pairsForToken} = await import("./live/dexscreener");
+    const {QUOTE_WETH} = await import("@/lib/contracts");
+    const pairs = await pairsForToken(QUOTE_WETH);
+    const usd = Number(pairs[0]?.priceUsd ?? 0);
+    if (Number.isFinite(usd) && usd > 0) return {data: usd, seeded: false};
+  } catch (error) {
+    console.error("live eth price failed", error);
+  }
+  return {data: 0, seeded: false};
 }
 
 export async function search(query: string): Promise<SourceResult<Asset[]>> {
   return underFeature("search", async () => {
-  try {
-    // An empty result is a real answer to a search, not a failure, so only a
-    // throw falls back to seeded data.
-    return {data: await live.searchAssets(query), seeded: false};
-  } catch (error) {
-    console.error("live search failed", error);
-    return {data: seeded.searchAssets(query), seeded: true};
-  }
+    try {
+      if (hasDatabase) {
+        const {searchUniverse} = await import("./live/search");
+        const grouped = await searchUniverse(query, []);
+        return {data: grouped.results, seeded: false};
+      }
+      return {data: await live.searchAssets(query), seeded: false};
+    } catch (error) {
+      console.error("live search failed", error);
+      throw error;
+    }
   });
 }
 
@@ -325,6 +376,7 @@ export async function searchUsers(
       return {data: await searchUsersLive(query), seeded: false};
     } catch (error) {
       console.error("live people search failed", error);
+      throw error;
     }
   }
   return {data: searchPeople(query), seeded: true};
@@ -355,8 +407,9 @@ export async function fetchFeed(
         ? items.length > 0
         : items.some((item) => item.kind === "article");
     if (wireOk) return {data: items, seeded: false};
+    return {data: items, seeded: false};
   } catch (error) {
     console.error("live feed failed", error);
+    throw error;
   }
-  return {data: feedFor(query), seeded: true};
 }

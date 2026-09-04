@@ -2,7 +2,7 @@
 
 import {useMemo, useState, useEffect} from "react";
 import {changePctForPoints, mergeTradesIntoChart} from "@/lib/chartLive";
-import {marketCapAt} from "@/lib/marketCap";
+import {formatLiquidityUsd, formatMarketCapAt, formatPriceUsd} from "@/lib/priceState";
 import {publishPrice} from "@/lib/livePrice";
 import {useLivePrice} from "@/hooks/useLivePrice";
 import dynamic from "next/dynamic";
@@ -10,7 +10,7 @@ import {useRouter} from "next/navigation";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {useAsset, useChart, useNews, useTrades} from "@/hooks/useAsset";
 import {cn} from "@/lib/cn";
-import {clock, compactMoney, percent, price as fmtPrice, shortAddress} from "@/lib/format";
+import {clock, percent, shortAddress} from "@/lib/format";
 import {lastHomePath} from "@/lib/homeState";
 import {sectorFor} from "@/lib/sectors";
 import type {AssetKind, ChartPoint, Timeframe} from "@/lib/types";
@@ -18,12 +18,13 @@ import {TIMEFRAMES} from "@/lib/types";
 import {AssetSkeleton} from "./AssetPageSkeleton";
 import {LaunchpadMark} from "./LaunchpadMark";
 import {PanelTabs, type PanelTab} from "./PanelTabs";
-import {PriceChart} from "./PriceChart";
 import {SocialRow} from "./SocialRow";
 import {PillRail} from "./PillRail";
 import {TradeBar} from "./TradeBar";
 import {WatchStar} from "./WatchStar";
+import {applyCachedLogo} from "@/lib/tokenLogoCache";
 import {Avatar} from "./ui/Avatar";
+import {PanelError} from "./panels/TradesPanel";
 import {PairMarket, TaxChip, TypeBadge, VerifiedTick} from "./ui/Badges";
 import {ArrowUpRightIcon, ChevronLeftIcon, CopyIcon} from "./ui/Icons";
 
@@ -42,6 +43,13 @@ const NewsPanel = dynamic(() =>
 );
 const TradesPanel = dynamic(() =>
   import("./panels/TradesPanel").then((m) => ({default: m.TradesPanel})),
+);
+const PriceChart = dynamic(
+  () => import("./PriceChart").then((m) => ({default: m.PriceChart})),
+  {
+    ssr: false,
+    loading: () => <div className="mt-3 h-[220px] animate-pulse rounded-xl bg-wash" />,
+  },
 );
 
 type PanelKey = "trades" | "comments" | "detail";
@@ -70,18 +78,22 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
     asset?.kind === "rwa" ? asset.contractAddress : (asset?.address ?? "");
 
   const livePoints = useMemo(
-    () => mergeTradesIntoChart(chart.points, trades.trades),
-    [chart.points, trades.trades],
+    () =>
+      kind === "rwa"
+        ? chart.points
+        : mergeTradesIntoChart(chart.points, trades.trades),
+    [kind, chart.points, trades.trades],
   );
 
   // The tape is the freshest thing this app has, so it publishes into the
   // shared price. The feed row for this same asset reads it too, which is what
-  // keeps the two surfaces showing one number.
+  // keeps the two surfaces showing one number. RWA prices come from Robinhood
+  // quotes, not the DEX tape — mixing the two is what broke the stock axis.
   const newestFill = trades.trades[0];
   useEffect(() => {
-    if (!newestFill) return;
+    if (kind === "rwa" || !newestFill) return;
     publishPrice(id, newestFill.priceUsd, Date.parse(newestFill.at));
-  }, [id, newestFill]);
+  }, [kind, id, newestFill]);
 
   const livePrice = useLivePrice(id);
   const liveChange =
@@ -112,22 +124,26 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
     );
   }
 
+  const tokenArt = asset.kind === "token" ? applyCachedLogo(asset) : null;
+
   // While scrubbing, the header reports the point under the finger; otherwise
   // it reports the live price. The change follows the same rule, measured from
   // the start of the visible window.
   const latestTrade = trades.trades[0];
   const shownPrice =
-    scrubbed?.price ?? livePrice ?? latestTrade?.priceUsd ?? asset.priceUsd;
+    scrubbed?.price ??
+    livePrice ??
+    (kind === "rwa" ? asset.priceUsd : (latestTrade?.priceUsd ?? asset.priceUsd));
   const openPrice = livePoints[0]?.price ?? asset.priceUsd;
   const shownChange =
-    scrubbed && openPrice > 0
+    scrubbed && openPrice != null && openPrice > 0
       ? ((scrubbed.price - openPrice) / openPrice) * 100
       : liveChange;
 
   // One calculation, one price. Both live in shared modules precisely so the
   // feed row for this asset and the panel further down this page cannot end up
   // showing a different number from the header.
-  const shownMarketCap = marketCapAt(asset, shownPrice);
+  const shownMarketCap = formatMarketCapAt(asset, shownPrice);
 
   return (
     <div className="pb-[calc(84px+env(safe-area-inset-bottom))]">
@@ -153,8 +169,13 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
         <div className="mt-3 flex items-start gap-3">
           <Avatar
             name={symbol}
-            src={asset.imageUrl}
+            src={tokenArt?.imageUrl}
+            src64={tokenArt?.imageUrl64}
+            fallbacks={tokenArt?.imageFallbacks}
+            seed={asset.address}
+            color={tokenArt?.imageColor}
             size={44}
+            eager
           />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1">
@@ -222,15 +243,21 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
       <div className="mt-4 flex items-end justify-between gap-3">
         <div>
           <div className="tnum text-[32px] font-extrabold leading-none tracking-[-0.035em]">
-            {fmtPrice(shownPrice)}
+            {formatPriceUsd(shownPrice)}
           </div>
           <div
             className={cn(
               "tnum mt-1.5 text-[13.5px] font-bold",
-              shownChange >= 0 ? "text-green-deep" : "text-red",
+              asset.kind === "token" && shownMarketCap === "—"
+                ? "text-faint"
+                : shownChange >= 0
+                  ? "text-green-deep"
+                  : "text-red",
             )}
           >
-            {percent(shownChange)}
+            {asset.kind === "token" && shownMarketCap === "—"
+              ? "—"
+              : percent(shownChange)}
             <span className="ml-1.5 font-semibold text-faint">
               {scrubbed ? clock(scrubbed.t) : timeframe}
             </span>
@@ -242,25 +269,31 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
             Market cap
           </div>
           <div className="tnum text-[15px] font-extrabold tracking-[-0.02em]">
-            {compactMoney(shownMarketCap)}
+            {shownMarketCap}
           </div>
           {asset.kind === "token" ? (
             <div className="tnum mt-0.5 inline-flex items-center gap-1 rounded-[6px] bg-[var(--overlay-wash)] px-1.5 py-[3px] text-[11px] font-bold">
               <span className="text-faint">Liq</span>
               <span className="text-muted">
-                {compactMoney(asset.liquidityUsd)}
+                {formatLiquidityUsd(asset.liquidityUsd)}
               </span>
             </div>
           ) : null}
         </div>
       </div>
 
-      <PriceChart
-        points={livePoints}
-        positive={positive}
-        onScrub={setScrubbed}
-        className="mt-3"
-      />
+      {chart.error && livePoints.length < 2 ? (
+        <div className="mt-3 h-[220px] rounded-xl bg-wash">
+          <PanelError message={chart.error} onRetry={chart.retry} />
+        </div>
+      ) : (
+        <PriceChart
+          points={livePoints}
+          positive={positive}
+          onScrub={setScrubbed}
+          className="mt-3"
+        />
+      )}
 
       <PillRail
         label="Chart timeframe"
@@ -279,6 +312,8 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
             trades={trades.trades}
             symbol={symbol}
             isLoading={trades.isLoading}
+            error={trades.error}
+            onRetry={trades.retry}
           />
         ) : panel === "comments" ? (
           <CommentsPanel kind={asset.kind} assetId={asset.id} symbol={symbol} />
@@ -289,6 +324,8 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
             items={news.items}
             isLoading={news.isLoading}
             seeded={news.seeded}
+            error={news.error}
+            onRetry={news.retry}
           />
         )}
       </div>

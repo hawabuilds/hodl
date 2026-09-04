@@ -13,7 +13,8 @@ import {
 } from "@/lib/localStore";
 import {feeFor, FEE_BPS, tooSmall} from "@/config/fees";
 import {cn} from "@/lib/cn";
-import {money, percent, price as fmtPrice, units} from "@/lib/format";
+import {formatPriceUsd, isPriced} from "@/lib/priceState";
+import {money, percent, units} from "@/lib/format";
 import type {Asset} from "@/lib/types";
 import {Modal} from "./ui/Modal";
 import {SettingsIcon} from "./ui/Icons";
@@ -58,7 +59,10 @@ export function OrderModal({
   const [error, setError] = useState<string | null>(null);
   const [filled, setFilled] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
-
+  const [ticket, setTicket] = useState<{
+    venueLabel: string;
+    creatorTax: string;
+  } | null>(null);
   const symbol = asset?.kind === "rwa" ? asset.ticker : (asset?.symbol ?? "");
   const position = book.holdings.find((h) => h.assetId === asset?.id);
   const eth = settings.currency === "ETH";
@@ -69,6 +73,7 @@ export function OrderModal({
     setError(null);
     setFilled(null);
     setConfigOpen(false);
+    setTicket(null);
   }, [side, asset?.id]);
 
   // ETH is only offered once a rate exists; sizing a trade against an unknown
@@ -94,9 +99,38 @@ export function OrderModal({
   const undersized = valid ? tooSmall(amountUsd) : null;
 
   const estimatedUnits = useMemo(() => {
-    if (!asset || !valid || asset.priceUsd <= 0) return 0;
+    if (!asset || !valid || !isPriced(asset.priceUsd)) return 0;
     return (amountUsd - fee.usd) / asset.priceUsd;
   }, [asset, amountUsd, valid, fee.usd]);
+
+  useEffect(() => {
+    if (!asset || asset.kind !== "token" || !valid) {
+      setTicket(null);
+      return;
+    }
+    const token = asset.address;
+    const sideNow = activeSide;
+    const usd = amountUsd;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      void fetch(
+        `/api/quote?token=${token}&side=${sideNow}&amountUsd=${encodeURIComponent(String(usd))}`,
+        {signal: ctrl.signal},
+      )
+        .then((res) => res.json())
+        .then((body: {venueLabel?: string; creatorTax?: string; venue?: string | null}) => {
+          if (!body.venue || !body.venueLabel || !body.creatorTax) return;
+          setTicket({venueLabel: body.venueLabel, creatorTax: body.creatorTax});
+        })
+        .catch(() => {
+          setTicket(null);
+        });
+    }, 250);
+    return () => {
+      ctrl.abort();
+      clearTimeout(timer);
+    };
+  }, [asset, valid, activeSide, amountUsd]);
 
   /** Rounded to the precision the field itself accepts, so Max is spendable. */
   function setEntered(value: number) {
@@ -124,6 +158,10 @@ export function OrderModal({
   function confirm() {
     if (!asset || !valid) {
       setError("Enter an amount.");
+      return;
+    }
+    if (!isPriced(asset.priceUsd)) {
+      setError("No price yet for this token.");
       return;
     }
 
@@ -282,9 +320,9 @@ export function OrderModal({
             </div>
 
             <div className="tnum mt-1 text-[12px] font-semibold text-faint">
-              {valid && asset.priceUsd > 0
+              {valid && isPriced(asset.priceUsd)
                 ? `≈ ${units(estimatedUnits)} ${symbol}${eth ? ` · ${money(amountUsd)}` : ""}`
-                : `${fmtPrice(asset.priceUsd)} per ${symbol}`}
+                : `${formatPriceUsd(asset.priceUsd)} per ${symbol}`}
             </div>
           </div>
 
@@ -347,6 +385,19 @@ export function OrderModal({
             </div>
           ) : null}
 
+          {ticket ? (
+            <div className="mt-1.5 space-y-1 px-1 text-[12px] font-semibold">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-faint">Route</span>
+                <span className="font-bold text-muted">{ticket.venueLabel}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-faint">Creator tax</span>
+                <span className="font-bold text-muted">{ticket.creatorTax}</span>
+              </div>
+            </div>
+          ) : null}
+
           {error ? (
             <p role="alert" className="mt-3 text-[12.5px] font-semibold text-red">
               {error}
@@ -376,8 +427,9 @@ export function OrderModal({
           </button>
 
           <p className="mt-2.5 text-center text-[11px] font-medium leading-[1.5] text-faint">
-            Max slippage {settings.slippagePct}% · simulated order, no wallet is
-            signed and no funds move.
+            Max slippage {settings.slippagePct}% · This trade takes two
+            signatures. Simulated order until the router is live —
+            no wallet is signed and no funds move.
           </p>
         </>
       ) : null}

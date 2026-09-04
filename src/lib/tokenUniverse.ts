@@ -1,4 +1,31 @@
 import type {TokenAsset} from "./types";
+import type {LaunchpadId, QuoteKind, UniverseInput} from "./universe";
+import {
+  isRwaPaired as universeRwaPaired,
+  paysHoldersInRwa as universePays,
+  qualifiesForUniverse as universeQualifies,
+} from "./universe";
+
+function fromAsset(token: TokenAsset): UniverseInput {
+  const id = token.launchpad?.id;
+  const launchpad: LaunchpadId | null = id === "pons" || id === "long" ? id : null;
+  const quote: QuoteKind | null = token.rwaPaired
+    ? "rwa"
+    : token.pairedTicker === "USDG"
+      ? "usdg"
+      : token.pairedTicker === "WETH" || token.pairedTicker === "ETH"
+        ? "eth"
+        : null;
+  return {
+    launchpad,
+    quoteKind: quote,
+    rewardRwa:
+      token.paysRwaRewards || token.rewardsToHolders
+        ? token.pairedTicker || "rwa"
+        : null,
+    bonded: token.graduated || token.graduatedOnChain,
+  };
+}
 
 /**
  * Community tokens the app tracks.
@@ -20,20 +47,17 @@ import type {TokenAsset} from "./types";
  * is a fact about where its fees go, not about which venue it trades on.
  */
 export function qualifiesForUniverse(token: TokenAsset): boolean {
-  if (paysHoldersInRwa(token)) return true;
-  return isProvenLaunchpadRwaPair(token);
+  return universeQualifies(fromAsset(token));
 }
 
 /** Arm 2: the token routes real value back to the people holding it. */
 export function paysHoldersInRwa(token: TokenAsset): boolean {
-  return token.paysRwaRewards || token.rewardsToHolders;
+  return universePays(fromAsset(token));
 }
 
 /** Arm 1: an RWA pair, from Pons or Long, actually trading. */
 export function isProvenLaunchpadRwaPair(token: TokenAsset): boolean {
-  if (token.launchpad === null) return false;
-  if (!token.rwaPaired) return false;
-  return token.graduated && token.tradesOnUniswap;
+  return universeRwaPaired(fromAsset(token));
 }
 
 /**
@@ -58,5 +82,5 @@ export const NEW_LISTING_MIN_MARKET_CAP_USD = 50_000;
 export function qualifiesAsNewListing(token: TokenAsset): boolean {
   if (token.launchpad === null) return false;
   if (!token.graduated || !token.tradesOnUniswap) return false;
-  return token.marketCapUsd >= NEW_LISTING_MIN_MARKET_CAP_USD;
+  return (token.marketCapUsd ?? 0) >= NEW_LISTING_MIN_MARKET_CAP_USD;
 }

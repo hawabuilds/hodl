@@ -1,8 +1,11 @@
 "use client";
 
-import {useCallback} from "react";
+import {useCallback, useEffect, useMemo} from "react";
+import {useQuery} from "@tanstack/react-query";
 import {
+  readCachedMe,
   readProfileEdits,
+  writeCachedMe,
   writeProfileEdits,
   type ProfileEdits,
 } from "@/lib/localStore";
@@ -13,20 +16,62 @@ import {useUser} from "./useUser";
 
 const EMPTY: ProfileEdits = {displayName: null, bio: null, socials: {}};
 
-/**
- * The signed-in person as their own profile.
- *
- * Identity comes from Privy; the editable parts are stored locally and layered
- * on top, so an edited display name survives a reload without pretending there
- * is a users table behind it yet.
- */
+interface MeRow {
+  displayName: string | null;
+  handle: string | null;
+  pfpUrl: string | null;
+  wallet: string | null;
+  bio: string;
+}
+
 export function useMe() {
   const user = useUser();
   const session = useSession();
   const [edits] = useLocalStore<ProfileEdits>(readProfileEdits, EMPTY);
+  const cached = useMemo(() => readCachedMe(), []);
+
+  const remote = useQuery({
+    queryKey: ["me-profile", user.user?.id ?? ""],
+    enabled: user.authenticated,
+    staleTime: 60 * 60_000,
+    gcTime: 24 * 60 * 60_000,
+    queryFn: async (): Promise<MeRow> => {
+      const token = await session.getAccessToken();
+      if (!token) {
+        return {
+          displayName: user.displayName,
+          handle: user.handle,
+          pfpUrl: user.pfpUrl,
+          wallet: user.embeddedWallet,
+          bio: "",
+        };
+      }
+      const res = await fetch("/api/me/profile", {
+        headers: {authorization: `Bearer ${token}`},
+      });
+      if (!res.ok) throw new Error("Could not load your profile.");
+      return (await res.json()) as MeRow;
+    },
+  });
+
+  const displayName =
+    edits.displayName ??
+    remote.data?.displayName ??
+    cached?.displayName ??
+    user.displayName ??
+    "You";
+  const handle = remote.data?.handle ?? cached?.handle ?? user.handle;
+  const pfpUrl = remote.data?.pfpUrl ?? cached?.pfpUrl ?? user.pfpUrl;
+  const wallet = remote.data?.wallet ?? cached?.wallet ?? user.embeddedWallet;
+  const bio = edits.bio ?? remote.data?.bio ?? cached?.bio ?? "";
+
+  useEffect(() => {
+    if (!pfpUrl && displayName === "You") return;
+    writeCachedMe({displayName, handle, pfpUrl, wallet, bio});
+  }, [displayName, handle, pfpUrl, wallet, bio]);
 
   const socials: SocialLinks = {
-    x: edits.socials.x ?? (user.handle ? `https://x.com/${user.handle}` : null),
+    x: edits.socials.x ?? (handle ? `https://x.com/${handle}` : null),
     telegram: edits.socials.telegram ?? null,
     website: edits.socials.website ?? null,
     discord: edits.socials.discord ?? null,
@@ -58,11 +103,11 @@ export function useMe() {
   );
 
   return {
-    handle: user.handle,
-    displayName: edits.displayName ?? user.displayName ?? "You",
-    bio: edits.bio ?? "",
-    pfpUrl: user.pfpUrl,
-    wallet: user.embeddedWallet,
+    handle,
+    displayName,
+    bio,
+    pfpUrl,
+    wallet,
     socials,
     edits,
     save,

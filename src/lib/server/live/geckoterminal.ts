@@ -1,32 +1,29 @@
 import type {ChartPoint, Timeframe, Trade} from "@/lib/types";
 import type {DexPair} from "./dexscreener";
-import {RWA_REGISTRY} from "./robinhood";
 import {cached, stale} from "./cache";
+import {
+  applyKeyUsage,
+  geckoCreditLogFields,
+  markKeyPolled,
+  recordGeckoCall,
+  shouldFallbackToFree,
+  shouldPollKey,
+  type GeckoCaller,
+} from "./geckoCredits";
 
 /**
- * GeckoTerminal, for chart history and the trade tape.
+ * GeckoTerminal / CoinGecko onchain.
  *
- * This is the answer to a problem that looked like it needed a paid RPC. Both
- * the candles and the tape would otherwise come from scanning `Swap` logs, and
- * the Alchemy plan in use caps `eth_getLogs` at a ten-block range against a head
- * above fifty million — a backfill would have been millions of requests.
+ * Pro is for historical candles only. Discovery, images, holders and the tape
+ * use the free GeckoTerminal host. A 194-ticker Pro sweep every five minutes
+ * is what drained the last plan; that path is gone.
  *
- * GeckoTerminal has already done that indexing. Its daily candles for this
- * chain reach back to 20 July 2026, which is as far back as the chain goes, so
- * charts are complete on the first render rather than filling in from empty.
- *
- * Runs against the paid CoinGecko onchain API when a key is configured, and
- * against the free GeckoTerminal endpoint when one is not. The two serve the
- * same paths under different origins, so only the base and the auth header
- * differ — everything below is written once.
- *
- * The key is what makes the tape watchable. Unauthenticated the ceiling is
- * roughly thirty calls a minute for the whole app, which two open pools can
- * exhaust on their own; the rejections that follow come back as an empty tape
- * rather than an error, which is indistinguishable from a quiet pool.
+ * On 429 / 401 / 403 the candle path falls through to the free host in the
+ * same request. There is no sleep-and-retry loop — those sat a request at
+ * ~30s and still returned a silent blank.
  */
 
-/** Set to a CoinGecko API key to use the paid tier. */
+/** Set to a CoinGecko API key to use the paid tier for candles. */
 const API_KEY = process.env.COINGECKO_API_KEY?.trim();
 
 /**
@@ -35,38 +32,31 @@ const API_KEY = process.env.COINGECKO_API_KEY?.trim();
  */
 const IS_DEMO = process.env.COINGECKO_API_PLAN?.trim().toLowerCase() === "demo";
 
-const BASE = API_KEY
-  ? IS_DEMO
-    ? "https://api.coingecko.com/api/v3/onchain"
-    : "https://pro-api.coingecko.com/api/v3/onchain"
-  : "https://api.geckoterminal.com/api/v2";
+export const FREE_GECKO_BASE = "https://api.geckoterminal.com/api/v2";
+export const PRO_GECKO_BASE = IS_DEMO
+  ? "https://api.coingecko.com/api/v3/onchain"
+  : "https://pro-api.coingecko.com/api/v3/onchain";
+const KEY_URL = IS_DEMO
+  ? "https://api.coingecko.com/api/v3/key"
+  : "https://pro-api.coingecko.com/api/v3/key";
+
+const FETCH_MS = 8_000;
 
 function authHeaders(): Record<string, string> {
   if (!API_KEY) return {};
   return {[IS_DEMO ? "x-cg-demo-api-key" : "x-cg-pro-api-key"]: API_KEY};
 }
 
-/** Whether the paid tier is in use, which is what the cache windows key off. */
+/** Whether a Pro/demo key is configured. Cache windows still key off this. */
 export const AUTHENTICATED = Boolean(API_KEY);
 
 const NETWORK = "robinhood";
 
 const CANDLE_TTL_MS = API_KEY ? 20_000 : 60_000;
-/**
- * The tape's cache window.
- *
- * The trades panel is meant to be watched the way an explorer's is, so on a
- * paid key this sits at two seconds — roughly thirty calls a minute for a pool
- * someone has open, against a ceiling in the hundreds.
- *
- * The chain head is polled every two seconds; keep the indexer on the same
- * cadence when a paid key is configured so neither source goes stale.
- */
-const TRADE_TTL_MS = API_KEY ? 2_000 : 12_000;
+/** Tape is Alchemy-first. Gecko trades, when used, hit the free host. */
+const TRADE_TTL_MS = 12_000;
 const POOL_TTL_MS = 30 * 60_000;
-const RWA_SWEEP_TTL_MS = 5 * 60_000;
 const MEGAFILTER_TTL_MS = 30 * 60_000;
-const SWEEP_CONCURRENCY = 10;
 const POOLS_PAGE_SIZE = 20;
 const POOLS_MAX_PAGES = 50;
 const MEGAFILTER_MAX_PAGES = 100;
@@ -74,42 +64,100 @@ const MIN_POOL_LIQUIDITY_USD = 1_000;
 /** GeckoTerminal returns up to 300 fills per pool; cache the full page. */
 const TRADES_PAGE = 300;
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export interface GeckoGet<T> {
+  data: T | null;
+  error: string | null;
+  host: "pro" | "free" | null;
+}
+
+async function fetchOnce<T>(
+  base: string,
+  path: string,
+  headers: Record<string, string>,
+): Promise<{status: number; body: T | null}> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_MS);
+  try {
+    const res = await fetch(`${base}${path}`, {
+      headers: {accept: "application/json", ...headers},
+      cache: "no-store",
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return {status: res.status, body: null};
+    return {status: res.status, body: (await res.json()) as T};
+  } catch {
+    return {status: 0, body: null};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function refreshKeyUsage(): Promise<void> {
+  if (!API_KEY || !shouldPollKey()) return;
+  markKeyPolled();
+  try {
+    const res = await fetch(KEY_URL, {
+      headers: {accept: "application/json", ...authHeaders()},
+      cache: "no-store",
+    });
+    if (!res.ok) return;
+    const body = (await res.json()) as {
+      monthly_call_credit?: number;
+      current_remaining_monthly_calls?: number;
+    };
+    applyKeyUsage(body);
+    console.info("coingecko key usage", geckoCreditLogFields());
+  } catch (error) {
+    console.error("coingecko /key poll failed", error);
+  }
+}
 
 /**
- * A GET that treats 429 as "wait", not "fail".
+ * One Pro attempt (candles only), then free. No sleep retries.
  *
- * The free tier is shared and bursty, so a rejected call is routine rather than
- * exceptional. Three attempts with a widening pause covers it; beyond that the
- * caller falls back to whatever it had.
+ * `tier: "free"` never touches Pro — that is the market sweep / tape / images.
  */
-async function get<T>(path: string, attempts = 3): Promise<T | null> {
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      const res = await fetch(`${BASE}${path}`, {
-        headers: {accept: "application/json", ...authHeaders()},
-        cache: "no-store",
+async function get<T>(
+  path: string,
+  opts: {caller: GeckoCaller; tier?: "auto" | "free"},
+): Promise<GeckoGet<T>> {
+  const tryPro = opts.tier !== "free" && Boolean(API_KEY);
+
+  if (tryPro) {
+    void refreshKeyUsage();
+    const pro = await fetchOnce<T>(PRO_GECKO_BASE, path, authHeaders());
+    recordGeckoCall(opts.caller, "pro");
+    console.info("gecko pro", {
+      caller: opts.caller,
+      status: pro.status,
+      ...geckoCreditLogFields(),
+    });
+    if (pro.body) return {data: pro.body, error: null, host: "pro"};
+    if (shouldFallbackToFree(pro.status) || pro.status === 0) {
+      console.warn("coingecko pro rejected; falling back to free host", {
+        caller: opts.caller,
+        status: pro.status,
       });
-      if (res.status === 429) {
-        await sleep(1200 * (attempt + 1));
-        continue;
-      }
-      if (res.status === 401 || res.status === 403) {
-        // Worth saying out loud: a rejected key otherwise looks exactly like a
-        // quiet pool, and the app would run on the paid path returning nothing.
-        console.error(
-          `coingecko rejected the API key (${res.status}) — check COINGECKO_API_KEY and COINGECKO_API_PLAN`,
-        );
-        return null;
-      }
-      if (!res.ok) return null;
-      return (await res.json()) as T;
-    } catch {
-      if (attempt === attempts - 1) return null;
-      await sleep(500);
+    } else {
+      return {
+        data: null,
+        error: `CoinGecko returned ${pro.status || "a network error"}.`,
+        host: "pro",
+      };
     }
   }
-  return null;
+
+  const free = await fetchOnce<T>(FREE_GECKO_BASE, path, {});
+  recordGeckoCall(opts.caller, "free");
+  if (free.body) return {data: free.body, error: null, host: "free"};
+  const status = free.status;
+  const error =
+    status === 429
+      ? "GeckoTerminal is rate-limited. Retry in a moment."
+      : status === 0
+        ? "Could not reach GeckoTerminal."
+        : `GeckoTerminal returned ${status}.`;
+  return {data: null, error, host: "free"};
 }
 
 interface PoolsResponse {
@@ -134,8 +182,9 @@ export async function deepestPool(token: string): Promise<string | null> {
   const load = async () => {
     const body = await get<PoolsResponse>(
       `/networks/${NETWORK}/tokens/${token}/pools`,
+      {caller: "other", tier: "free"},
     );
-    const first = body?.data?.[0]?.attributes?.address;
+    const first = body.data?.data?.[0]?.attributes?.address;
     return first ?? "";
   };
 
@@ -162,6 +211,8 @@ export interface OnchainPool {
   baseToken: {address: string; name: string; symbol: string};
   quoteToken: {address: string; name: string; symbol: string};
   priceUsd?: string;
+  priceNative?: string;
+  quotePriceUsd?: string;
   liquidity?: {usd?: number};
   volume?: {m5?: number; h1?: number; h6?: number; h24?: number};
   priceChange?: {m5?: number; h1?: number; h6?: number; h24?: number};
@@ -175,6 +226,8 @@ interface TokenPoolsResponse {
     attributes?: {
       address?: string;
       base_token_price_usd?: string;
+      quote_token_price_usd?: string;
+      base_token_price_native_currency?: string;
       reserve_in_usd?: string;
       market_cap_usd?: string;
       fdv_usd?: string;
@@ -201,6 +254,19 @@ function tokenIdToAddress(id: string | undefined): string {
 function num(value: string | undefined): number | undefined {
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/** Base priced in quote tokens. Used to invert when our token is the quote. */
+function nativePrice(
+  baseUsd: string | undefined,
+  quoteUsd: string | undefined,
+  native: string | undefined,
+): string | undefined {
+  if (native && Number(native) > 0) return native;
+  const base = Number(baseUsd);
+  const quote = Number(quoteUsd);
+  if (base > 0 && quote > 0) return String(base / quote);
+  return undefined;
 }
 
 function poolRowToOnchain(
@@ -234,6 +300,8 @@ function poolRowToOnchain(
       symbol: quoteMeta?.symbol ?? "",
     },
     priceUsd: a.base_token_price_usd,
+    quotePriceUsd: a.quote_token_price_usd,
+    priceNative: nativePrice(a.base_token_price_usd, a.quote_token_price_usd, a.base_token_price_native_currency),
     liquidity: {usd: num(a.reserve_in_usd)},
     volume: {
       m5: num(a.volume_usd?.m5),
@@ -270,17 +338,11 @@ function parsePoolsBody(body: TokenPoolsResponse | null): OnchainPool[] {
 }
 
 async function fetchPoolsPage(path: string): Promise<OnchainPool[]> {
-  try {
-    const res = await fetch(`${BASE}${path}`, {
-      headers: {accept: "application/json", ...authHeaders()},
-      cache: "no-store",
-    });
-    if (!res.ok) return [];
-    const body = (await res.json()) as TokenPoolsResponse;
-    return parsePoolsBody(body);
-  } catch {
-    return [];
-  }
+  const fetched = await get<TokenPoolsResponse>(path, {
+    caller: "sweep",
+    tier: "free",
+  });
+  return parsePoolsBody(fetched.data);
 }
 
 /** CoinGecko pool rows in the shape the feed already consumes. */
@@ -310,6 +372,18 @@ export async function poolsForToken(
   return poolsForTokenAllPages(address, maxPages);
 }
 
+/**
+ * One page of pools from the public GeckoTerminal endpoint.
+ *
+ * DexScreener's per-token route is empty for some V4 / RWA-paired memecoins
+ * (SPACEHOOD). A single public page is enough to recover orientation.
+ */
+export async function poolsForTokenPublic(address: string): Promise<OnchainPool[]> {
+  return fetchPoolsPage(
+    `/networks/${NETWORK}/tokens/${address.toLowerCase()}/pools?page=1&include=base_token,quote_token`,
+  );
+}
+
 /** Full pagination — stops when a page is short or empty. */
 export async function poolsForTokenAllPages(
   address: string,
@@ -333,50 +407,12 @@ export async function poolsForTokenAllPages(
 }
 
 /**
- * Every pool for every stock token in the registry, via CoinGecko pagination.
- *
- * DexScreener caps at thirty pools per ticker; this is the complete index when
- * a paid key is configured.
+ * Disabled. This was 194 tickers × N pages on Pro every five minutes — the
+ * burn that emptied the last plan. DexScreener's per-ticker walk covers the
+ * same set without a CoinGecko invoice.
  */
 export async function rwaRegistryPools(): Promise<OnchainPool[]> {
-  if (!AUTHENTICATED) return [];
-
-  const key = "gt:rwa-sweep";
-  const load = async () => {
-    const addresses = RWA_REGISTRY.map((entry) => entry.address);
-    const seen = new Map<string, OnchainPool>();
-    let index = 0;
-
-    async function worker() {
-      while (index < addresses.length) {
-        const address = addresses[index++];
-        try {
-          for (const pool of await poolsForTokenAllPages(address)) {
-            seen.set(pool.pairAddress, pool);
-          }
-        } catch {
-          // One ticker failing costs its pools, not the sweep.
-        }
-      }
-    }
-
-    await Promise.all(
-      Array.from(
-        {length: Math.min(SWEEP_CONCURRENCY, addresses.length)},
-        worker,
-      ),
-    );
-
-    return [...seen.values()];
-  };
-
-  try {
-    return await cached(key, RWA_SWEEP_TTL_MS, load);
-  } catch (error) {
-    console.error("gecko rwa sweep failed", error);
-  }
-
-  return stale<OnchainPool[]>(key) ?? [];
+  return [];
 }
 
 /**
@@ -447,8 +483,8 @@ interface OhlcvResponse {
  */
 const BUCKET_LADDER: Timeframe[] = ["1D", "4h", "1h", "15m", "5m", "1m"];
 
-/** Points below which a finer bucket is worth asking for. */
-const ENOUGH_TO_DRAW = 12;
+/** Widest bucket that still has a real shape. Step down only when younger. */
+const ENOUGH_TO_DRAW = 20;
 
 /** One bucket's worth of closes, oldest first. Empty when the pool has none. */
 async function candlesAt(
@@ -469,11 +505,15 @@ async function candlesAt(
     // cent, which then multiplied out to a market cap in the billions.
     if (token) params.set("token", token);
 
-    const body = await get<OhlcvResponse>(
+    const fetched = await get<OhlcvResponse>(
       `/networks/${NETWORK}/pools/${pool}/ohlcv/${bucket.path}?${params}`,
+      {caller: "chart", tier: "auto"},
     );
+    if (!fetched.data) {
+      throw new Error(fetched.error ?? "Could not load candles.");
+    }
 
-    const list = body?.data?.attributes?.ohlcv_list ?? [];
+    const list = fetched.data.data?.attributes?.ohlcv_list ?? [];
     return list
       // [timestamp, open, high, low, close, volume], newest first.
       .map(([seconds, , , , close]) => ({t: seconds * 1000, price: close}))
@@ -506,15 +546,20 @@ export async function candles(
   /** The asset whose price this is, so a quote-side pool still reads right. */
   token: string | null = null,
   limit = 120,
-): Promise<ChartPoint[]> {
+): Promise<{points: ChartPoint[]; error: string | null}> {
   const start = BUCKET_LADDER.indexOf(timeframe);
   const ladder = start === -1 ? [timeframe] : BUCKET_LADDER.slice(start);
 
   let best: ChartPoint[] = [];
+  let lastError: string | null = null;
 
   for (const bucket of ladder) {
-    const points = await candlesAt(pool, bucket, token, limit);
-    if (points.length > best.length) best = points;
+    try {
+      const points = await candlesAt(pool, bucket, token, limit);
+      if (points.length > best.length) best = points;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Could not load candles.";
+    }
     // Enough to read as a shape rather than a straight segment between two
     // dots. A pool an hour old clears this on minutes where it could not on
     // hours, which is exactly the case this ladder exists for.
@@ -523,7 +568,8 @@ export async function candles(
 
   // Two points still beats none — it is a real open and a real close — but a
   // lone candle is not a chart and must not be padded into one.
-  return best.length > 1 ? best : [];
+  if (best.length > 1) return {points: best, error: null};
+  return {points: [], error: lastError};
 }
 
 interface TradesResponse {
@@ -558,7 +604,7 @@ export async function trades(
   /** The asset whose page this is, so amounts describe the right side. */
   tokenAddress: string,
   limit = 40,
-): Promise<Trade[]> {
+): Promise<{trades: Trade[]; error: string | null}> {
   const wanted = tokenAddress.toLowerCase();
   const key = `gt:trades:${pool}:${wanted}`;
 
@@ -567,12 +613,15 @@ export async function trades(
       token: wanted,
       limit: String(TRADES_PAGE),
     });
-    const body = await get<TradesResponse>(
+    const fetched = await get<TradesResponse>(
       `/networks/${NETWORK}/pools/${pool}/trades?${params}`,
+      {caller: "tape", tier: "free"},
     );
-    if (!body) throw new Error("trades upstream unavailable");
+    if (!fetched.data) {
+      throw new Error(fetched.error ?? "Could not load trades.");
+    }
 
-    return (body.data ?? [])
+    return (fetched.data.data ?? [])
       .map((row): Trade | null => {
         const a = row.attributes;
         if (!a?.tx_hash || !a.block_timestamp) return null;
@@ -624,14 +673,23 @@ export async function trades(
 
   try {
     const loaded = await cached(key, TRADE_TTL_MS, load);
-    if (loaded.length > 0) return loaded.slice(0, limit);
-  } catch {
-    // fall through
+    if (loaded.length > 0) return {trades: loaded.slice(0, limit), error: null};
+  } catch (error) {
+    const previous = stale<Trade[]>(key);
+    if (previous && previous.length > 0) {
+      return {trades: previous.slice(0, limit), error: null};
+    }
+    return {
+      trades: [],
+      error: error instanceof Error ? error.message : "Could not load trades.",
+    };
   }
 
   const previous = stale<Trade[]>(key);
-  if (previous && previous.length > 0) return previous.slice(0, limit);
-  return [];
+  if (previous && previous.length > 0) {
+    return {trades: previous.slice(0, limit), error: null};
+  }
+  return {trades: [], error: null};
 }
 
 const TOKEN_IMAGE_TTL_MS = 6 * 60 * 60_000;
@@ -667,11 +725,12 @@ export async function tokenImages(
     const key = `gt:img:${batch.join(",")}`;
     try {
       const loaded = await cached(key, TOKEN_IMAGE_TTL_MS, async () => {
-        const body = await get<{data?: TokenImageRow[]}>(
+        const fetched = await get<{data?: TokenImageRow[]}>(
           `/networks/${NETWORK}/tokens/multi/${batch.join(",")}`,
+          {caller: "image", tier: "free"},
         );
         const found: Record<string, string> = {};
-        for (const row of body?.data ?? []) {
+        for (const row of fetched.data?.data ?? []) {
           const address = row.attributes?.address?.toLowerCase();
           const image = usableTokenImage(row.attributes?.image_url);
           if (address && image) found[address] = image;
@@ -701,10 +760,11 @@ export async function holderCountFor(address: string): Promise<number> {
   const key = `gt:holders:${wanted}`;
   try {
     const count = await cached(key, HOLDER_TTL_MS, async () => {
-      const body = await get<{data?: TokenInfoRow}>(
+      const fetched = await get<{data?: TokenInfoRow}>(
         `/networks/${NETWORK}/tokens/${wanted}/info`,
+        {caller: "other", tier: "free"},
       );
-      const n = body?.data?.attributes?.holders?.count;
+      const n = fetched.data?.data?.attributes?.holders?.count;
       return typeof n === "number" && n >= 0 ? n : 0;
     });
     return count;

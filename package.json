@@ -9,7 +9,15 @@
     "start": "node --max-http-header-size=65536 node_modules/next/dist/bin/next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ./test/resolver.mjs --test \"test/**/*.test.ts\""
+    "test": "node --import ./test/resolver.mjs --test \"test/**/*.test.ts\"",
+    "backfill:universe": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-universe.ts",
+    "backfill:images": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-images.ts",
+    "backfill:image-cdn": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-image-cdn.ts",
+    "verify:chain": "node --import ./test/resolver.mjs --env-file=.env.local scripts/verify-chain.ts",
+    "backfill:pools": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-pools.ts",
+    "audit:charts": "node --import ./test/resolver.mjs --env-file=.env.local scripts/audit-chart-inversion.ts",
+    "backfill:eligible": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-eligible.ts",
+    "backfill:prices": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-prices.ts"
   },
   "dependencies": {
     "@privy-io/react-auth": "^3.37.1",
@@ -19,6 +27,7 @@
     "next": "14.2.35",
     "react": "^18",
     "react-dom": "^18",
+    "sharp": "^0.35.4",
     "viem": "^2.55.17",
     "wagmi": "^3.7.6"
   },

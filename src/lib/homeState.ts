@@ -19,6 +19,17 @@ export interface HomeViewState {
   rwaSort: RwaSort;
   sector: SectorId | "all";
   watchFilter: WatchFilter;
+  launchpad?: "pons" | "long" | "";
+  quote?: "rwa" | "eth" | "usdg" | "";
+  rewards?: boolean;
+  minMcap?: number | null;
+  maxMcap?: number | null;
+  minLiq?: number | null;
+  maxLiq?: number | null;
+  minVol?: number | null;
+  maxVol?: number | null;
+  minAge?: number | null;
+  maxAge?: number | null;
 }
 
 export const DEFAULT_HOME_VIEW: HomeViewState = {
@@ -48,12 +59,30 @@ export function parseHomeView(params: {
       ? (sectorRaw as SectorId | "all")
       : DEFAULT_HOME_VIEW.sector;
 
+  const bound = (key: string): number | null => {
+    const value = Number(params.get(key));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  };
+  const launchpadRaw = params.get("launchpad");
+  const quoteRaw = params.get("quote");
   return {
     tab: tab ?? DEFAULT_HOME_VIEW.tab,
     tokenSort: tokenSort ?? DEFAULT_HOME_VIEW.tokenSort,
     rwaSort: rwaSort ?? DEFAULT_HOME_VIEW.rwaSort,
     sector,
     watchFilter: watchFilter ?? DEFAULT_HOME_VIEW.watchFilter,
+    launchpad: launchpadRaw === "pons" || launchpadRaw === "long" ? launchpadRaw : "",
+    quote:
+      quoteRaw === "rwa" || quoteRaw === "eth" || quoteRaw === "usdg" ? quoteRaw : "",
+    rewards: params.get("rewards") === "rwa" || params.get("rewards") === "1",
+    minMcap: bound("minMcap"),
+    maxMcap: bound("maxMcap"),
+    minLiq: bound("minLiq"),
+    maxLiq: bound("maxLiq"),
+    minVol: bound("minVol"),
+    maxVol: bound("maxVol"),
+    minAge: bound("minAge"),
+    maxAge: bound("maxAge"),
   };
 }
 
@@ -73,6 +102,17 @@ export function homeQuery(state: HomeViewState): string {
   if (state.watchFilter !== DEFAULT_HOME_VIEW.watchFilter) {
     params.set("watch", state.watchFilter);
   }
+  if (state.launchpad) params.set("launchpad", state.launchpad);
+  if (state.quote) params.set("quote", state.quote);
+  if (state.rewards) params.set("rewards", "rwa");
+  if (state.minMcap) params.set("minMcap", String(state.minMcap));
+  if (state.maxMcap) params.set("maxMcap", String(state.maxMcap));
+  if (state.minLiq) params.set("minLiq", String(state.minLiq));
+  if (state.maxLiq) params.set("maxLiq", String(state.maxLiq));
+  if (state.minVol) params.set("minVol", String(state.minVol));
+  if (state.maxVol) params.set("maxVol", String(state.maxVol));
+  if (state.minAge) params.set("minAge", String(state.minAge));
+  if (state.maxAge) params.set("maxAge", String(state.maxAge));
   const query = params.toString();
   return query ? `?${query}` : "";
 }

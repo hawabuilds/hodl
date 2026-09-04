@@ -71,6 +71,30 @@ export async function walletForHandle(
   return (data as {wallet?: string} | null)?.wallet ?? null;
 }
 
+/** The caller's own users row. One indexed read. */
+export async function userById(id: string): Promise<{
+  displayName: string | null;
+  handle: string | null;
+  pfpUrl: string | null;
+  wallet: string | null;
+  bio: string;
+} | null> {
+  if (!hasDatabase) return null;
+  const {data} = await db()
+    .from("users")
+    .select("handle, display_name, pfp_url, wallet, bio")
+    .eq("id", id)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    displayName: data.display_name,
+    handle: data.handle,
+    pfpUrl: data.pfp_url,
+    wallet: data.wallet,
+    bio: data.bio ?? "",
+  };
+}
+
 /** Creates or refreshes the caller's row. Identity comes from the token. */
 export async function upsertUser(input: {
   id: string;

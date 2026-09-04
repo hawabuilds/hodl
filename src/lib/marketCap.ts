@@ -40,7 +40,7 @@ export function supplyOf(asset: Asset): number | null {
  * nothing, and on a token with a billion units it produced caps in the
  * billions.
  */
-export function marketCapAt(asset: Asset, priceUsd: number): number {
+export function marketCapAt(asset: Asset, priceUsd: number): number | null {
   const supply = supplyOf(asset);
   if (supply === null) return asset.marketCapUsd;
   if (!Number.isFinite(priceUsd) || priceUsd <= 0) return asset.marketCapUsd;

@@ -1,8 +1,6 @@
 import type {NextRequest} from "next/server";
 import {notFound, parseKind, parseTimeframe, json} from "@/lib/server/http";
 import {fetchAssetPage} from "@/lib/server/sources";
-import {AUTHENTICATED} from "@/lib/server/live/geckoterminal";
-
 export const dynamic = "force-dynamic";
 
 export async function GET(
@@ -16,8 +14,7 @@ export async function GET(
   const {data, seeded} = await fetchAssetPage(kind, params.id, timeframe);
   if (!data) return notFound("No asset with that id.");
 
-  const pollMs =
-    process.env.ALCHEMY_RPC_URL || AUTHENTICATED ? 2_000 : 12_000;
+  const pollMs = process.env.ALCHEMY_RPC_URL ? 2_000 : 12_000;
 
   return json({
     asset: data.asset,

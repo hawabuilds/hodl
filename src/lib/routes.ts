@@ -1,3 +1,4 @@
+import {normalizeAddress} from "./address";
 import type {Asset, AssetKind} from "./types";
 
 /**
@@ -8,7 +9,7 @@ import type {Asset, AssetKind} from "./types";
  * card links to.
  */
 export function assetPath(kind: AssetKind, id: string): string {
-  return kind === "rwa" ? `/rwa/${id.toLowerCase()}` : `/token/${id}`;
+  return kind === "rwa" ? `/rwa/${id.toLowerCase()}` : `/token/${normalizeAddress(id)}`;
 }
 
 export function assetHref(asset: Asset): string {

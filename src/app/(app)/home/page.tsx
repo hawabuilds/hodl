@@ -13,6 +13,7 @@ import {
 import {HomeTabs, type HomeTab} from "@/components/HomeTabs";
 import {StarIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
+import {useNewTokens} from "@/hooks/useNewTokens";
 import {useWatchlistAssets} from "@/hooks/useWatchlist";
 import {
   homeQuery,
@@ -22,7 +23,6 @@ import {
   type TokenSort,
   type WatchFilter,
 } from "@/lib/homeState";
-import {qualifiesAsNewListing} from "@/lib/tokenUniverse";
 import {SECTORS, type SectorId} from "@/lib/sectors";
 import {APP_NAME} from "@/config/app";
 import type {Asset} from "@/lib/types";
@@ -72,20 +72,90 @@ function HomeFeed() {
   const [rwaSort, setRwaSort] = useState<RwaSort>(initial.rwaSort);
   const [sector, setSector] = useState<SectorId | "all">(initial.sector);
   const [watchFilter, setWatchFilter] = useState<WatchFilter>(initial.watchFilter);
-  const [filters, setFilters] = useState<FeedFilterState>(NO_FILTERS);
+  const [filters, setFilters] = useState<FeedFilterState>({
+    ...NO_FILTERS,
+    minMarketCap: initial.minMcap ?? null,
+    maxMarketCap: initial.maxMcap ?? null,
+    minLiquidity: initial.minLiq ?? null,
+    maxLiquidity: initial.maxLiq ?? null,
+    minVolume: initial.minVol ?? null,
+    maxVolume: initial.maxVol ?? null,
+    minAgeHours: initial.minAge ?? null,
+    maxAgeHours: initial.maxAge ?? null,
+  });
 
   useEffect(() => {
-    const state = {tab, tokenSort, rwaSort, sector, watchFilter};
+    const state = {
+      tab,
+      tokenSort,
+      rwaSort,
+      sector,
+      watchFilter,
+      minMcap: filters.minMarketCap,
+      maxMcap: filters.maxMarketCap,
+      minLiq: filters.minLiquidity,
+      maxLiq: filters.maxLiquidity,
+      minVol: filters.minVolume,
+      maxVol: filters.maxVolume,
+      minAge: filters.minAgeHours,
+      maxAge: filters.maxAgeHours,
+    };
     rememberHomeView(state);
     const query = homeQuery(state);
     const next = query.startsWith("?") ? query.slice(1) : "";
     if (searchParams.toString() !== next) {
       router.replace(`${pathname}${query}`, {scroll: false});
     }
-  }, [tab, tokenSort, rwaSort, sector, watchFilter, pathname, router, searchParams]);
+  }, [tab, tokenSort, rwaSort, sector, watchFilter, filters.minMarketCap, filters.maxMarketCap, filters.minLiquidity, filters.maxLiquidity, filters.minVolume, filters.maxVolume, filters.minAgeHours, filters.maxAgeHours, pathname, router, searchParams]);
 
-  const market = useMarket();
+  const market = useMarket(tokenSort === "marketCap" ? "marketCap" : "volume", {
+    minLiq: filters.minLiquidity ?? initial.minLiq,
+    maxLiq: filters.maxLiquidity ?? initial.maxLiq,
+    minMcap: filters.minMarketCap ?? initial.minMcap,
+    maxMcap: filters.maxMarketCap ?? initial.maxMcap,
+    minVol: filters.minVolume ?? initial.minVol,
+    maxVol: filters.maxVolume ?? initial.maxVol,
+    minAge: filters.minAgeHours ?? initial.minAge,
+    maxAge: filters.maxAgeHours ?? initial.maxAge,
+  });
   const watchlist = useWatchlistAssets(tab === "watchlist");
+  const newFilters = useMemo(
+    () => ({
+      launchpad: initial.launchpad,
+      quote: initial.quote,
+      rewards: initial.rewards,
+      minMcap: filters.minMarketCap ?? initial.minMcap,
+      maxMcap: filters.maxMarketCap ?? initial.maxMcap,
+      minLiq: filters.minLiquidity ?? initial.minLiq,
+      maxLiq: filters.maxLiquidity ?? initial.maxLiq,
+      minVol: filters.minVolume ?? initial.minVol,
+      maxVol: filters.maxVolume ?? initial.maxVol,
+      minAge: filters.minAgeHours ?? initial.minAge,
+      maxAge: filters.maxAgeHours ?? initial.maxAge,
+    }),
+    [
+      initial.launchpad,
+      initial.quote,
+      initial.rewards,
+      initial.minMcap,
+      initial.maxMcap,
+      initial.minLiq,
+      initial.maxLiq,
+      initial.minVol,
+      initial.maxVol,
+      initial.minAge,
+      initial.maxAge,
+      filters.minMarketCap,
+      filters.maxMarketCap,
+      filters.minLiquidity,
+      filters.maxLiquidity,
+      filters.minVolume,
+      filters.maxVolume,
+      filters.minAgeHours,
+      filters.maxAgeHours,
+    ],
+  );
+  const newFeed = useNewTokens(newFilters, tab === "tokens");
 
   const sectorOptions: FilterOption<SectorId | "all">[] = useMemo(() => {
     const counts = new Map<SectorId, number>();
@@ -105,17 +175,14 @@ function HomeFeed() {
   }, [market.rwas]);
 
   const tokens = useMemo(() => {
+    if (tokenSort === "new") {
+      return newFeed.tokens.filter((token) => passesFilters(token, filters));
+    }
     const list = market.tokens.filter((token) => passesFilters(token, filters));
 
     switch (tokenSort) {
-      case "new":
-        // Graduated launchpad tokens with a real market behind them, newest
-        // first — not every token the app tracks.
-        return list
-          .filter(qualifiesAsNewListing)
-          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       case "marketCap":
-        return list.sort((a, b) => b.marketCapUsd - a.marketCapUsd);
+        return list.sort((a, b) => (b.marketCapUsd ?? 0) - (a.marketCapUsd ?? 0));
       case "rewards":
         // Tokens whose trading fees are routed back to holders, read from the
         // launch's fee recipient. Ordered by volume, because that is what the
@@ -134,7 +201,7 @@ function HomeFeed() {
             a.windows[filters.window].volumeUsd,
         );
     }
-  }, [market.tokens, tokenSort, filters]);
+  }, [market.tokens, tokenSort, filters, newFeed.tokens]);
 
   const rwas = useMemo(() => {
     const list =
@@ -160,7 +227,11 @@ function HomeFeed() {
     tab === "tokens" ? tokens : tab === "rwas" ? rwas : watched;
 
   const loading =
-    tab === "watchlist" ? watchlist.isLoading : market.isLoading;
+    tab === "watchlist"
+      ? watchlist.isLoading
+      : tokenSort === "new" && tab === "tokens"
+        ? newFeed.isLoading
+        : market.isLoading;
 
   return (
     <div>
@@ -206,31 +277,39 @@ function HomeFeed() {
         )}
       </div>
 
-      {loading && showing.length === 0 ? (
+      {showing.length > 0 ? (
+        <>
+          <AssetList
+            assets={showing}
+            markArrivals={tab === "tokens" && tokenSort === "new"}
+          />
+          {tab === "tokens" && tokenSort === "new" && newFeed.hasMore ? (
+            <button
+              type="button"
+              onClick={newFeed.loadMore}
+              className="mt-3 w-full py-3 text-[13px] font-bold text-muted"
+            >
+              Load more
+            </button>
+          ) : null}
+        </>
+      ) : loading ? (
         <FeedSkeleton />
-      ) : market.error ? (
+      ) : tab === "tokens" && tokenSort === "new" && newFeed.error ? (
         <p className="py-8 text-center text-[13.5px] text-muted">
-          {market.error.message}
+          Could not load new tokens. Retrying.
         </p>
-      ) : showing.length === 0 ? (
+      ) : market.error && !(tab === "tokens" && tokenSort === "new") ? (
+        <p className="py-8 text-center text-[13.5px] text-muted">
+          Could not load the market. Retrying.
+        </p>
+      ) : (
         <EmptyFeed
           tab={tab}
           watching={watchlist.count > 0}
           reason={tab === "tokens" ? tokenSort : undefined}
         />
-      ) : (
-        <AssetList
-          assets={showing}
-          markArrivals={tab === "tokens" && tokenSort === "new"}
-        />
       )}
-
-      {market.seeded && !market.isLoading ? (
-        <p className="mt-5 px-0.5 text-[11.5px] leading-[1.5] text-faint">
-          Seeded market data. Prices, pools and trades are simulated until the
-          registry and pool indexer are connected.
-        </p>
-      ) : null}
     </div>
   );
 }

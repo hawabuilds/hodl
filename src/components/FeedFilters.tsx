@@ -2,78 +2,21 @@
 
 import {useState} from "react";
 import {cn} from "@/lib/cn";
+import {
+  NO_FILTERS,
+  activeFilterCount,
+  type FeedFilterState,
+} from "@/lib/feedFilters";
 import {compactMoney} from "@/lib/format";
-import {FEED_WINDOWS, type FeedWindow, type TokenAsset} from "@/lib/types";
+import {FEED_WINDOWS} from "@/lib/types";
 import {FilterIcon} from "./ui/Icons";
 
-/**
- * The feed's custom filters.
- *
- * Separate from the sort rail beside it: the rail picks one ordering, this
- * narrows what is in the list at all. Ranges are open-ended on both sides —
- * "over $100k" is a far more common thing to want than a band, and requiring
- * both ends would make the simple case the awkward one.
- */
-
-export interface FeedFilterState {
-  /** Which window volume and price move are read over. */
-  window: FeedWindow;
-  minMarketCap: number | null;
-  maxMarketCap: number | null;
-  minVolume: number | null;
-  maxVolume: number | null;
-  /** Age of the token, in hours since its pool opened. */
-  minAgeHours: number | null;
-  maxAgeHours: number | null;
-}
-
-export const NO_FILTERS: FeedFilterState = {
-  window: "24h",
-  minMarketCap: null,
-  maxMarketCap: null,
-  minVolume: null,
-  maxVolume: null,
-  minAgeHours: null,
-  maxAgeHours: null,
-};
-
-/** How many ranges are set, for the dot on the button. */
-export function activeFilterCount(state: FeedFilterState): number {
-  const pairs: [number | null, number | null][] = [
-    [state.minMarketCap, state.maxMarketCap],
-    [state.minVolume, state.maxVolume],
-    [state.minAgeHours, state.maxAgeHours],
-  ];
-  let count = pairs.filter(([lo, hi]) => lo !== null || hi !== null).length;
-  if (state.window !== NO_FILTERS.window) count += 1;
-  return count;
-}
-
-const hoursSince = (iso: string, now: number): number =>
-  (now - Date.parse(iso)) / 3_600_000;
-
-/** Whether one token survives the filters. */
-export function passesFilters(
-  token: TokenAsset,
-  state: FeedFilterState,
-  now: number = Date.now(),
-): boolean {
-  const volume = token.windows[state.window].volumeUsd;
-  const age = hoursSince(token.createdAt, now);
-
-  const within = (
-    value: number,
-    min: number | null,
-    max: number | null,
-  ): boolean =>
-    (min === null || value >= min) && (max === null || value <= max);
-
-  return (
-    within(token.marketCapUsd, state.minMarketCap, state.maxMarketCap) &&
-    within(volume, state.minVolume, state.maxVolume) &&
-    within(age, state.minAgeHours, state.maxAgeHours)
-  );
-}
+export {
+  NO_FILTERS,
+  activeFilterCount,
+  passesFilters,
+  type FeedFilterState,
+} from "@/lib/feedFilters";
 
 export function FeedFilterButton({
   state,
@@ -204,6 +147,18 @@ function FilterSheet({
             max={draft.maxMarketCap}
             onMin={(value) => set({minMarketCap: value})}
             onMax={(value) => set({maxMarketCap: value})}
+            placeholderMin="No min"
+            placeholderMax="No max"
+            prefix="$"
+          />
+        </Section>
+
+        <Section label="Liquidity">
+          <RangeInputs
+            min={draft.minLiquidity}
+            max={draft.maxLiquidity}
+            onMin={(value) => set({minLiquidity: value})}
+            onMax={(value) => set({maxLiquidity: value})}
             placeholderMin="No min"
             placeholderMax="No max"
             prefix="$"

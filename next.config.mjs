@@ -8,6 +8,9 @@ const nextConfig = {
   images: {
     remotePatterns: [{protocol: "https", hostname: "pbs.twimg.com"}],
   },
+  experimental: {
+    serverComponentsExternalPackages: ["sharp"],
+  },
   webpack: (config) => {
     // Privy, WalletConnect and wagmi's connector barrel reference integrations
     // this app does not ship: Farcaster mini-apps, React Native storage,

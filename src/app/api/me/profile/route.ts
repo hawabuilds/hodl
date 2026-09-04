@@ -1,8 +1,16 @@
 import {json} from "@/lib/server/http";
 import {requireCaller} from "@/lib/server/auth";
-import {saveProfile, upsertUser} from "@/lib/server/social-live";
+import {saveProfile, upsertUser, userById} from "@/lib/server/social-live";
 
 export const dynamic = "force-dynamic";
+
+/** One users row. The profile header should not wait on balances for this. */
+export async function GET(request: Request) {
+  const caller = await requireCaller(request);
+  if (caller instanceof Response) return caller;
+  const row = await userById(caller.userId);
+  return json(row ?? {displayName: null, handle: null, pfpUrl: null, wallet: null, bio: ""});
+}
 
 /**
  * Creates the caller's row on first write, then applies the edit.

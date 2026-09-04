@@ -1,13 +1,17 @@
 "use client";
 
-import {marketCapAt, supplyOf} from "@/lib/marketCap";
+import {supplyOf} from "@/lib/marketCap";
+import {
+  formatLiquidityUsd,
+  formatMarketCapAt,
+  formatPriceUsd,
+  formatVolumeUsd,
+} from "@/lib/priceState";
 import {useLivePrice} from "@/hooks/useLivePrice";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {
   ageSince,
   compact,
-  compactMoney,
-  price as fmtPrice,
   percent,
   shortAddress,
   stamp,
@@ -33,7 +37,12 @@ export function InfoPanel({token}: {token: TokenAsset}) {
   // Depth relative to daily flow is the one derived number worth showing: a
   // large cap over a thin pool is the failure mode this page should expose.
   const turnover =
-    token.liquidityUsd > 0 ? token.volume24hUsd / token.liquidityUsd : 0;
+    token.liquidityUsd != null &&
+    token.liquidityUsd > 0 &&
+    token.volume24hUsd != null &&
+    token.volume24hUsd > 0
+      ? token.volume24hUsd / token.liquidityUsd
+      : 0;
 
   return (
     <div className="pb-1">
@@ -42,10 +51,10 @@ export function InfoPanel({token}: {token: TokenAsset}) {
       </p>
 
       <dl className="grid grid-cols-2 gap-x-3 gap-y-0 overflow-hidden rounded-panel border border-hairline bg-card">
-        <Stat label="Liquidity" value={compactMoney(token.liquidityUsd)} />
-        <Stat label="24h volume" value={compactMoney(token.volume24hUsd)} />
-        <Stat label="Market cap" value={compactMoney(marketCapAt(token, shownPrice))} />
-        <Stat label="Price" value={fmtPrice(shownPrice)} />
+        <Stat label="Liquidity" value={formatLiquidityUsd(token.liquidityUsd)} />
+        <Stat label="24h volume" value={formatVolumeUsd(token.volume24hUsd)} />
+        <Stat label="Market cap" value={formatMarketCapAt(token, shownPrice)} />
+        <Stat label="Price" value={formatPriceUsd(shownPrice)} />
         <Stat label="Supply" value={compact(supply)} />
         <Stat label="Holders" value={compact(token.holders)} />
         <Stat

@@ -2,7 +2,9 @@
 
 import {useCallback, useRef} from "react";
 import {useQueryClient} from "@tanstack/react-query";
+import {normalizeAddress} from "@/lib/address";
 import type {Asset, AssetKind, ChartPoint, Trade} from "@/lib/types";
+import {rememberTokens} from "@/lib/tokenCache";
 
 /**
  * Warms an asset's page before it is opened.
@@ -17,11 +19,12 @@ export function usePrefetchAsset() {
 
   return useCallback(
     (kind: AssetKind, id: string) => {
-      const key = `${kind}:${id}`;
+      const assetId = kind === "token" ? normalizeAddress(id) : id;
+      const key = `${kind}:${assetId}`;
       if (warmed.current.has(key)) return;
       warmed.current.add(key);
 
-      const url = `/api/asset/${kind}/${encodeURIComponent(id)}/bundle?tf=1h`;
+      const url = `/api/asset/${kind}/${encodeURIComponent(assetId)}/bundle?tf=1h`;
 
       void (async () => {
         try {
@@ -31,21 +34,24 @@ export function usePrefetchAsset() {
           const bundle = (await res.json()) as {
             asset: Asset;
             seeded: boolean;
-            chart: {points: ChartPoint[]; changePct: number};
-            trades: {trades: Trade[]; pollMs?: number};
+            chart: {points: ChartPoint[]; changePct: number; error?: string | null};
+            trades: {trades: Trade[]; pollMs?: number; error?: string | null};
           };
 
-          queryClient.setQueryData(["asset", kind, id], {
+          if (bundle.asset?.kind === "token") rememberTokens([bundle.asset]);
+          queryClient.setQueryData(["asset", kind, assetId], {
             asset: bundle.asset,
             seeded: bundle.seeded,
           });
-          queryClient.setQueryData(["chart", kind, id, "1h"], {
+          queryClient.setQueryData(["chart", kind, assetId, "1h"], {
             points: bundle.chart.points,
             changePct: bundle.chart.changePct,
+            error: bundle.chart.error ?? null,
           });
-          queryClient.setQueryData(["trades", kind, id], {
+          queryClient.setQueryData(["trades", kind, assetId], {
             trades: bundle.trades.trades,
             pollMs: bundle.trades.pollMs,
+            error: bundle.trades.error ?? null,
           });
         } catch {
           // Best-effort: a failed warm just means the page loads the old way.

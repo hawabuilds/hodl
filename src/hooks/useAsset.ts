@@ -11,7 +11,9 @@ import type {
   Trade,
 } from "@/lib/types";
 import {MARKET_REFRESH_MS} from "@/config/market";
+import {normalizeAddress} from "@/lib/address";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
+import {applyCachedToken, rememberTokens, tokenFor} from "@/lib/tokenCache";
 
 const TAPE_LIMIT = 300;
 
@@ -42,19 +44,32 @@ function mergeTape(tape: Map<string, Trade>, incoming: Trade[]): Trade[] {
 }
 
 export function useAsset(kind: AssetKind, id: string) {
+  const key = kind === "token" ? normalizeAddress(id) : id;
   const query = useQuery({
-    queryKey: ["asset", kind, id],
-    staleTime: 0,
+    queryKey: ["asset", kind, key],
+    staleTime: 60_000,
+    placeholderData: (previous) => {
+      if (previous) return previous;
+      if (kind !== "token") return undefined;
+      const cached = tokenFor(key);
+      return cached ? {asset: cached, seeded: false} : undefined;
+    },
     refetchInterval: MARKET_REFRESH_MS,
     queryFn: async () => {
-      const res = await fetch(`/api/asset/${kind}/${id}`, {cache: "no-store"});
+      const res = await fetch(`/api/asset/${kind}/${key}`, {cache: "no-store"});
       if (!res.ok) throw new Error("Could not load this asset.");
-      return (await res.json()) as {asset: Asset; seeded: boolean};
+      const data = (await res.json()) as {asset: Asset; seeded: boolean};
+      if (data.asset?.kind === "token") rememberTokens([data.asset]);
+      return data;
     },
   });
 
+  const raw = query.data?.asset ?? null;
+  const asset =
+    raw?.kind === "token" ? applyCachedToken(raw) : raw;
+
   return {
-    asset: query.data?.asset ?? null,
+    asset,
     seeded: query.data?.seeded ?? false,
     isLoading: query.isPending && !query.data,
     error: query.error as Error | null,
@@ -62,26 +77,39 @@ export function useAsset(kind: AssetKind, id: string) {
 }
 
 export function useChart(kind: AssetKind, id: string, timeframe: Timeframe) {
+  const key = kind === "token" ? normalizeAddress(id) : id;
   const query = useQuery({
-    queryKey: ["chart", kind, id, timeframe],
+    queryKey: ["chart", kind, key, timeframe],
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const res = await fetch(`/api/asset/${kind}/${id}/chart?tf=${timeframe}`);
+      const res = await fetch(`/api/asset/${kind}/${key}/chart?tf=${timeframe}`);
       if (!res.ok) throw new Error("Could not load the chart.");
-      return (await res.json()) as {points: ChartPoint[]; changePct: number};
+      return (await res.json()) as {
+        points: ChartPoint[];
+        changePct: number;
+        error?: string | null;
+      };
     },
+    retry: false,
   });
 
   return {
     points: query.data?.points ?? [],
     changePct: query.data?.changePct ?? null,
     isLoading: query.isPending && !query.data,
+    error:
+      query.error?.message ??
+      (query.data?.error && (query.data.points?.length ?? 0) < 2
+        ? query.data.error
+        : null),
+    retry: () => void query.refetch(),
   };
 }
 
 export function useTrades(kind: AssetKind, id: string, enabled: boolean) {
-  const scope = `${kind}:${id}`;
+  const key = kind === "token" ? normalizeAddress(id) : id;
+  const scope = `${kind}:${key}`;
   const tapeRef = useRef<Map<string, Trade>>(new Map());
   const scopeRef = useRef(scope);
 
@@ -91,16 +119,21 @@ export function useTrades(kind: AssetKind, id: string, enabled: boolean) {
   }
 
   const query = useQuery({
-    queryKey: ["trades", kind, id],
+    queryKey: ["trades", kind, key],
     enabled,
     staleTime: 0,
     refetchInterval: (q) => q.state.data?.pollMs ?? 2_000,
     structuralSharing: false,
     queryFn: async () => {
-      const res = await fetch(`/api/asset/${kind}/${id}/trades`);
+      const res = await fetch(`/api/asset/${kind}/${key}/trades`);
       if (!res.ok) throw new Error("Could not load recent trades.");
-      return (await res.json()) as {trades: Trade[]; pollMs?: number};
+      return (await res.json()) as {
+        trades: Trade[];
+        pollMs?: number;
+        error?: string | null;
+      };
     },
+    retry: false,
   });
 
   const trades = useMemo(() => {
@@ -111,6 +144,10 @@ export function useTrades(kind: AssetKind, id: string, enabled: boolean) {
   return {
     trades,
     isLoading: query.isPending && tapeRef.current.size === 0,
+    error:
+      query.error?.message ??
+      (trades.length === 0 ? query.data?.error ?? null : null),
+    retry: () => void query.refetch(),
   };
 }
 
@@ -122,13 +159,22 @@ export function useNews(id: string, enabled: boolean) {
     queryFn: async () => {
       const res = await fetch(`/api/asset/rwa/${id}/news`);
       if (!res.ok) throw new Error("Could not load news.");
-      return (await res.json()) as {items: NewsItem[]; seeded: boolean};
+      return (await res.json()) as {
+        items: NewsItem[];
+        seeded: boolean;
+        error?: string | null;
+      };
     },
+    retry: false,
   });
 
   return {
     items: query.data?.items ?? [],
     seeded: query.data?.seeded ?? false,
     isLoading: query.isLoading,
+    error:
+      query.error?.message ??
+      (query.data?.items?.length ? null : query.data?.error ?? null),
+    retry: () => void query.refetch(),
   };
 }

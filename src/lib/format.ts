@@ -66,6 +66,29 @@ export function shortAddress(address: string, lead = 6): string {
   return `${address.slice(0, lead)}…${address.slice(-4)}`;
 }
 
+/**
+ * Byline time on the news tab.
+ *
+ * Today stays relative ("3h ago"). This week used to keep printing "3d ago"
+ * like the old flat list; the week view uses the weekday instead.
+ */
+export function newsTime(
+  iso: string,
+  window: "24h" | "7d" | "30d" | "all",
+  now: number = Date.now(),
+): string {
+  if (window !== "7d") return relativeTime(iso, now);
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return "";
+  const hours = Math.floor((now - date.getTime()) / 3_600_000);
+  if (hours < 24) return relativeTime(iso, now);
+  return date.toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+}
+
 /** "3m ago" — used on trades, comments and news. */
 /**
  * How long ago something happened.

@@ -1,6 +1,5 @@
 import {json, notFound, parseKind} from "@/lib/server/http";
 import {fetchAsset, fetchTrades} from "@/lib/server/sources";
-import {AUTHENTICATED} from "@/lib/server/live/geckoterminal";
 
 export const dynamic = "force-dynamic";
 
@@ -18,12 +17,10 @@ export async function GET(
   const {data: asset, seeded: assetIsSeeded} = await fetchAsset(kind, params.id);
   if (!asset) return notFound("No asset with that id.");
 
-  const {data, seeded} = await fetchTrades(asset, 300, assetIsSeeded);
+  const {data, seeded, error} = await fetchTrades(asset, 300, assetIsSeeded);
 
-  // When RPC is configured the tape merges chain head fills every ~2s. Without
-  // it, only the indexer runs and polling faster just hammers a stale cache.
-  const pollMs =
-    process.env.ALCHEMY_RPC_URL || AUTHENTICATED ? LIVE_POLL_MS : INDEX_POLL_MS;
+  // Tape cadence follows Alchemy, not CoinGecko. Gecko is optional history.
+  const pollMs = process.env.ALCHEMY_RPC_URL ? LIVE_POLL_MS : INDEX_POLL_MS;
 
-  return json({trades: data, seeded, pollMs});
+  return json({trades: data, seeded, pollMs, error: error ?? null});
 }
