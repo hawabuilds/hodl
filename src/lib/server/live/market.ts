@@ -844,6 +844,94 @@ export async function searchableTokens(): Promise<TokenAsset[]> {
   });
 }
 
+/**
+ * Words in a name, for matching a query against part of a company.
+ *
+ * "apple inc" and "adobe systems" both scored zero against names of "Apple"
+ * and "Adobe", because matching was prefix-or-substring against the whole
+ * string: a query longer than the name could never match it, however much of
+ * the name it contained. Splitting both sides lets the overlap be seen.
+ */
+function words(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0);
+}
+
+/**
+ * Words that identify a company form rather than the company.
+ *
+ * Left in, they match the wrong thing: "apple inc" scored the same against
+ * MicroStrategy Inc as against Apple, and the tie went to whichever had more
+ * volume — so the company actually asked for came second to one that shared
+ * nothing with the query but its suffix.
+ */
+const CORPORATE_WORDS = new Set([
+  "inc",
+  "inc.",
+  "corp",
+  "corporation",
+  "co",
+  "company",
+  "ltd",
+  "limited",
+  "plc",
+  "llc",
+  "lp",
+  "sa",
+  "nv",
+  "ag",
+  "holdings",
+  "holding",
+  "group",
+  "the",
+  "stock",
+  "shares",
+  "token",
+  // Share-class qualifiers. The registry names Alphabet "Alphabet Class A",
+  // and counting those three words equally meant the query "alphabet"
+  // described a third of the name — scoring it below a community token that
+  // had simply named itself Alphabet.
+  "class",
+  "series",
+  "ordinary",
+  "common",
+  "adr",
+  "a",
+  "b",
+  "c",
+]);
+
+/**
+ * How much of the query the name accounts for, from 0 to 1.
+ *
+ * Every distinctive query word has to appear as a word of the name, or as the
+ * start of one, so "apple inc" matches "Apple Inc." and "app" matches "Apple",
+ * while "apple pie" matches neither.
+ */
+function nameOverlap(name: string, q: string): {asked: number; name: number} {
+  const asked = words(q).filter((word) => !CORPORATE_WORDS.has(word));
+  if (asked.length === 0) return {asked: 0, name: 0};
+
+  const have = words(name).filter((word) => !CORPORATE_WORDS.has(word));
+  if (have.length === 0) return {asked: 0, name: 0};
+
+  const matched = asked.filter((word) =>
+    have.some((part) => part === word || part.startsWith(word)),
+  ).length;
+
+  // How much of the *name* the query accounts for matters as much as the other
+  // direction. "apple" fully describes Apple and half-describes Apple Cat, and
+  // without that second measure the two tied and the tie went to whichever had
+  // more volume — which put a meme token above the company it is named after.
+  const covered = have.filter((part) =>
+    asked.some((word) => part === word || part.startsWith(word)),
+  ).length;
+
+  return {asked: matched / asked.length, name: covered / have.length};
+}
+
 function scoreAsset(asset: Asset, q: string): number {
   const symbol = (asset.kind === "rwa" ? asset.ticker : asset.symbol).toLowerCase();
   const address = (
@@ -856,6 +944,14 @@ function scoreAsset(asset: Asset, q: string): number {
   if (address.startsWith(q) && q.length >= 4) return 95;
   if (symbol.startsWith(q)) return 80;
   if (name.startsWith(q)) return 70;
+
+  // Every word of the query is a word of the name: "apple inc" finding Apple,
+  // "advanced micro" finding AMD's registry name.
+  const overlap = nameOverlap(name, q);
+  // The query accounts for the whole name and the name for the whole query —
+  // this is the company being asked for, not one that merely contains it.
+  if (overlap.asked === 1 && overlap.name === 1) return 75;
+  if (overlap.asked === 1) return 68;
   if (asset.kind === "token") {
     if (asset.launchpad?.id === q) return 75;
     if (
@@ -869,14 +965,31 @@ function scoreAsset(asset: Asset, q: string): number {
   }
   if (symbol.includes(q)) return 50;
   if (name.includes(q)) return 40;
+  // Most of a multi-word query landing on the name still beats nothing.
+  if (overlap.asked >= 0.5) return 35;
   return 0;
+}
+
+/** Official stock tokens sort ahead of community tokens on an equal match. */
+function rankOfKind(asset: Asset): number {
+  return asset.kind === "rwa" ? 0 : 1;
 }
 
 function rankAssets(assets: Asset[], q: string): Asset[] {
   return assets
     .map((asset) => ({asset, score: scoreAsset(asset, q)}))
     .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score || b.asset.volume24hUsd - a.asset.volume24hUsd)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        // On an equal match, the official tokenised stock comes first. The
+        // chain is full of community tokens named after companies — searching
+        // "alphabet" matched both Alphabet and a meme token calling itself
+        // that, and volume broke the tie for the meme. Someone typing a
+        // company name is asking for the company.
+        rankOfKind(a.asset) - rankOfKind(b.asset) ||
+        b.asset.volume24hUsd - a.asset.volume24hUsd,
+    )
     .map((row) => row.asset);
 }
 
@@ -898,6 +1011,44 @@ function alreadyHas(assets: Asset[], id: string): boolean {
  * the scored feed list is empty, so a ticker that already matches NVDA does
  * not also spend a search round trip.
  */
+/**
+ * Stock tokens the live list dropped, recovered from the registry.
+ *
+ * `listRwas` skips any ticker whose quote it could not fetch — deliberately,
+ * because a feed row with no price is worse than no row. But identity does not
+ * come from the quote: which stocks exist, and what they are called, is in the
+ * registry and is always available. Applying the feed's rule to search meant a
+ * dropped quote made a company unfindable by any spelling of its name, which
+ * is how Alphabet came to be missing from search entirely while Adobe and
+ * Apple beside it were fine.
+ *
+ * Matched against the registry, then resolved individually — one ticker's
+ * quote can succeed where the bulk fetch dropped it. Nothing is invented: a
+ * ticker that still cannot be priced is still left out.
+ */
+async function registryHits(q: string, present: RwaAsset[]): Promise<Asset[]> {
+  const have = new Set(present.map((asset) => asset.ticker.toUpperCase()));
+
+  const wanted = RWA_REGISTRY.filter((entry) => {
+    if (have.has(entry.ticker.toUpperCase())) return false;
+    const ticker = entry.ticker.toLowerCase();
+    if (ticker === q || ticker.startsWith(q)) return true;
+    const name = entry.name.toLowerCase();
+    if (name.startsWith(q) || name.includes(q)) return true;
+    return nameOverlap(entry.name, q).asked === 1;
+  })
+    // Bounded: a one-letter query matches a great many names, and each of
+    // these is a quote fetch.
+    .slice(0, 5);
+
+  if (wanted.length === 0) return [];
+
+  const hits = await Promise.all(
+    wanted.map((entry) => getAsset("rwa", entry.ticker).catch(() => null)),
+  );
+  return hits.filter((hit): hit is RwaAsset => hit !== null);
+}
+
 async function extraSearchHits(
   q: string,
   already: Asset[],
@@ -957,14 +1108,24 @@ export async function searchAssets(query: string): Promise<Asset[]> {
   let pool: Asset[] = [...tokens, ...rwas];
 
   if (category) {
-    return searchable
+    // The category slice leads, but anything that matches the word normally
+    // follows it. Searching "long" returned only Long's launches and could
+    // never reach a token whose symbol is LONG; "rwa" could reach nothing at
+    // all. A category is a strong signal about intent, not proof of it.
+    const members = searchable
       .filter((token) => matchesSearchCategory(token, category))
       .sort((a, b) => b.volume24hUsd - a.volume24hUsd)
       .slice(0, 100);
+
+    const byName = rankAssets(pool, q).filter(
+      (asset) => !members.some((member) => member.id === asset.id),
+    );
+
+    return mergeUnique([...members, ...byName]).slice(0, 100);
   }
 
   const indexHits = searchable.filter((token) => scoreAsset(token, q) > 0);
-  pool = mergeUnique([...pool, ...indexHits]);
+  pool = mergeUnique([...pool, ...indexHits, ...(await registryHits(q, rwas))]);
 
   const scored = rankAssets(pool, q).slice(0, 40);
   const isAddress = TOKEN_ADDRESS.test(q);

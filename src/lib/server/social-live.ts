@@ -1,6 +1,9 @@
 import type {AssetComment, Profile} from "@/lib/types";
 import {db, hasDatabase} from "./db";
 
+/** People returned for one query. Twenty was a silent ceiling on the tab. */
+const SEARCH_USER_LIMIT = 40;
+
 /**
  * People and conversation, from Postgres.
  *
@@ -216,16 +219,42 @@ export async function followingOf(userId: string): Promise<string[]> {
     .filter((handle): handle is string => Boolean(handle));
 }
 
-export async function searchUsers(query: string): Promise<Profile[]> {
+/**
+ * Characters PostgREST reads as structure inside an `or` filter.
+ *
+ * The query went into that string raw. A comma started a new condition, a
+ * closing bracket ended the group, a dot separated column from operator and
+ * an asterisk is the wildcard — so searching for a name with a comma in it
+ * did not fail loudly, it silently became a different filter. Escaping the
+ * wildcards and refusing the structural characters keeps a search a search.
+ */
+function forOrFilter(value: string): string {
+  return value
+    // LIKE wildcards, so a literal % or _ matches itself rather than any run
+    // of characters.
+    .replace(/[%_]/g, (ch) => "\\" + ch)
+    // PostgREST structure. Dropped rather than escaped: none of them are
+    // worth matching a person on, and each one could end the condition
+    // early and turn the search into a different query.
+    .replace(/[(),.:*"'\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export async function searchUsers(
+  query: string,
+  limit = SEARCH_USER_LIMIT,
+): Promise<Profile[]> {
   if (!hasDatabase) return [];
-  const q = query.trim().replace(/^@/, "");
+  const raw = query.trim().replace(/^@/, "");
+  const q = forOrFilter(raw);
   if (!q) return [];
 
   const {data} = await db()
     .from("users")
     .select("id, handle, display_name, pfp_url, bio, socials, wallet")
     .or(`handle.ilike.%${q}%,display_name.ilike.%${q}%`)
-    .limit(20);
+    .limit(limit);
 
   return (data ?? []).map((row) => toProfile(row as UserRow));
 }

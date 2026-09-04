@@ -51,6 +51,42 @@ const TIMEOUT_MS = 1_500;
  */
 const READ_TIMEOUT_MS = 8_000;
 
+/**
+ * A Map survives the round trip; `JSON.stringify` alone does not.
+ *
+ * `JSON.stringify(new Map(...))` is `"{}"`. Two of the values held here are
+ * Maps — every stock's quote, and on-chain supply — so the shared copy of both
+ * was an empty object, and a cold instance that read one got something with no
+ * `.get` on it. That surfaced two ways: stock quotes silently unavailable on
+ * a cold instance, which is why tickers went missing from the feed and from
+ * search, and a `TypeError: l.get is not a function` on the portfolio route
+ * in production.
+ *
+ * Tagged rather than guessed at on the way back, so a plain object that
+ * happens to have the same shape is still returned as a plain object.
+ */
+const MAP_TAG = "__map__";
+
+/** Exported for tests; the cache itself uses these internally. */
+export function encodeForShared(value: unknown): string {
+  return JSON.stringify(value, (_key, held) =>
+    held instanceof Map ? {[MAP_TAG]: [...held.entries()]} : held,
+  );
+}
+
+export function decodeFromShared<T>(raw: string): T {
+  return JSON.parse(raw, (_key, held) => {
+    if (
+      held &&
+      typeof held === "object" &&
+      Array.isArray((held as Record<string, unknown>)[MAP_TAG])
+    ) {
+      return new Map((held as Record<string, [unknown, unknown][]>)[MAP_TAG]);
+    }
+    return held;
+  }) as T;
+}
+
 async function command<T>(
   body: unknown[],
   timeoutMs: number = TIMEOUT_MS,
@@ -83,7 +119,7 @@ export async function readShared<T>(key: string): Promise<T | null> {
   const raw = await command<string>(["GET", key], READ_TIMEOUT_MS);
   if (raw === null) return null;
   try {
-    return JSON.parse(raw) as T;
+    return decodeFromShared<T>(raw);
   } catch {
     return null;
   }
@@ -100,7 +136,7 @@ export async function writeShared(
   value: unknown,
   ttlSeconds: number,
 ): Promise<void> {
-  await command(["SET", key, JSON.stringify(value), "EX", ttlSeconds]);
+  await command(["SET", key, encodeForShared(value), "EX", ttlSeconds]);
 }
 
 /**
@@ -136,7 +172,7 @@ export async function readManyShared<T>(
     rows.forEach((row, i) => {
       if (typeof row?.result !== "string") return;
       try {
-        found.set(keys[i], JSON.parse(row.result) as T);
+        found.set(keys[i], decodeFromShared<T>(row.result));
       } catch {
         // A value we cannot parse is a value we do not have.
       }
@@ -165,7 +201,7 @@ export async function writeManyShared(
         entries.map((entry) => [
           "SET",
           entry.key,
-          JSON.stringify(entry.value),
+          encodeForShared(entry.value),
           "EX",
           entry.ttlSeconds,
         ]),
