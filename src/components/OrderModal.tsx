@@ -1,9 +1,14 @@
 "use client";
 
 import {useEffect, useMemo, useState} from "react";
-import {useBook} from "@/hooks/useBook";
+import {formatUnits} from "viem";
+import {useBalance, useReadContract} from "wagmi";
+import {RH_MAINNET_ID, txUrlForChain} from "@/config/chain";
+import {feeFor, FEE_BPS, tooSmall} from "@/config/fees";
+import {QUOTE_USDG} from "@/lib/contracts";
 import {useEthPrice} from "@/hooks/useEthPrice";
 import {useLocalStore} from "@/hooks/useLocalStore";
+import {useSwap} from "@/hooks/useSwap";
 import {
   MAX_SLIPPAGE_PCT,
   readTradeSettings,
@@ -11,10 +16,13 @@ import {
   writeTradeSettings,
   type TradeSettings,
 } from "@/lib/localStore";
-import {feeFor, FEE_BPS, tooSmall} from "@/config/fees";
+import {humanToRaw} from "@/lib/quoteAmounts";
 import {cn} from "@/lib/cn";
 import {formatPriceUsd, isPriced} from "@/lib/priceState";
-import {money, percent, units} from "@/lib/format";
+import {money, units} from "@/lib/format";
+import {fetchSwapQuote, type SwapQuote} from "@/lib/swapQuote";
+import {erc20Abi} from "@/lib/swapTx";
+import {ticketBlockReason} from "@/lib/tradePolicy";
 import type {Asset} from "@/lib/types";
 import {Modal} from "./ui/Modal";
 import {SettingsIcon} from "./ui/Icons";
@@ -28,15 +36,9 @@ const DEFAULT_SETTINGS: TradeSettings = {slippagePct: 1, currency: "USD"};
 /**
  * Buy and sell.
  *
- * Centred rather than sheeted from the bottom: an order is a decision, not a
- * drawer of options, and the middle of the screen is where a confirmation
- * belongs.
- *
- * The fill is simulated and recorded against the local book — nothing here
- * signs a transaction or moves funds, and the dialog says so above the confirm
- * button rather than in fine print somewhere else. The validation is real,
- * though: insufficient balance and oversized sells fail here exactly as they
- * would against a router, so wiring one in later does not change this file.
+ * Confirm quotes a Uniswap venue, encodes that route, and asks the Privy or
+ * imported wallet to sign. Nothing here writes the simulated book. A missing
+ * pool leaves the button disabled rather than inventing a fill.
  */
 export function OrderModal({
   asset,
@@ -47,8 +49,8 @@ export function OrderModal({
   side: "buy" | "sell";
   onClose: () => void;
 }) {
-  const book = useBook();
   const {ethUsd} = useEthPrice();
+  const swap = useSwap();
   const [settings] = useLocalStore<TradeSettings>(
     readTradeSettings,
     DEFAULT_SETTINGS,
@@ -58,26 +60,65 @@ export function OrderModal({
   const [amount, setAmount] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [filled, setFilled] = useState<string | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
-  const [ticket, setTicket] = useState<{
-    venueLabel: string;
-    creatorTax: string;
-  } | null>(null);
+  const [quote, setQuote] = useState<SwapQuote | null>(null);
+  const [quotePending, setQuotePending] = useState(false);
+  const [quoteMiss, setQuoteMiss] = useState(false);
+
   const symbol = asset?.kind === "rwa" ? asset.ticker : (asset?.symbol ?? "");
-  const position = book.holdings.find((h) => h.assetId === asset?.id);
+  const token =
+    asset?.kind === "token" && /^0x[0-9a-fA-F]{40}$/.test(asset.address)
+      ? (asset.address.toLowerCase() as `0x${string}`)
+      : null;
   const eth = settings.currency === "ETH";
+  const wallet = swap.address ?? undefined;
+
+  const ethBal = useBalance({
+    address: wallet,
+    chainId: RH_MAINNET_ID,
+    query: {enabled: Boolean(wallet)},
+  });
+  const usdgBal = useReadContract({
+    address: QUOTE_USDG,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: wallet ? [wallet] : undefined,
+    chainId: RH_MAINNET_ID,
+    query: {enabled: Boolean(wallet)},
+  });
+  const spendToken =
+    quote && !quote.quoteIsNative && !quote.quoteIsWeth
+      ? quote.quoteToken
+      : null;
+  const spendBal = useReadContract({
+    address: spendToken ?? QUOTE_USDG,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: wallet ? [wallet] : undefined,
+    chainId: RH_MAINNET_ID,
+    query: {enabled: Boolean(wallet && spendToken && spendToken !== QUOTE_USDG)},
+  });
+  const tokenBal = useReadContract({
+    address: token ?? QUOTE_USDG,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: wallet ? [wallet] : undefined,
+    chainId: RH_MAINNET_ID,
+    query: {enabled: Boolean(wallet && token)},
+  });
 
   useEffect(() => {
     setActiveSide(side);
     setAmount("");
     setError(null);
     setFilled(null);
+    setTxHash(null);
     setConfigOpen(false);
-    setTicket(null);
+    setQuote(null);
+    setQuoteMiss(false);
   }, [side, asset?.id]);
 
-  // ETH is only offered once a rate exists; sizing a trade against an unknown
-  // one would be guessing.
   useEffect(() => {
     if (eth && ethUsd === null) {
       writeTradeSettings({...settings, currency: "USD"});
@@ -90,60 +131,113 @@ export function OrderModal({
   const valid = Number.isFinite(amountUsd) && amountUsd > 0;
 
   const buying = activeSide === "buy";
-  const maxUsd = buying ? book.cashUsd : (position?.valueUsd ?? 0);
-  const maxEntered = rate > 0 ? maxUsd / rate : 0;
+  const tokenDecimals = quote?.tokenDecimals ?? 18;
+  const quoteDecimals = quote?.quoteDecimals ?? 18;
+  const ethUnits = ethBal.data ? Number(formatUnits(ethBal.data.value, 18)) : 0;
+  const usdgUsd = usdgBal.data != null ? Number(formatUnits(usdgBal.data, 6)) : 0;
+  const heldUnits =
+    tokenBal.data != null ? Number(formatUnits(tokenBal.data, tokenDecimals)) : 0;
+  const heldUsd =
+    asset && isPriced(asset.priceUsd) ? heldUnits * asset.priceUsd : 0;
+  const paysNative = Boolean(eth || quote?.quoteIsNative || quote?.quoteIsWeth);
+  const spendUnits =
+    spendBal.data != null
+      ? Number(formatUnits(spendBal.data, quoteDecimals))
+      : 0;
+  const quotedIn =
+    quote && valid ? Number(formatUnits(BigInt(quote.amountIn), quoteDecimals)) : 0;
+  const spendUsd =
+    quotedIn > 0 && spendToken && spendToken !== QUOTE_USDG
+      ? spendUnits * (amountUsd / quotedIn)
+      : usdgUsd;
 
-  // The fee comes off before the swap, so what the amount actually buys is the
-  // net — quoting the gross would overstate every trade by the fee.
+  const maxEntered = buying
+    ? paysNative
+      ? ethUnits
+      : spendUsd
+    : heldUnits;
+
   const fee = useMemo(() => feeFor(amountUsd), [amountUsd]);
   const undersized = valid ? tooSmall(amountUsd) : null;
 
-  const estimatedUnits = useMemo(() => {
+  const estimatedOut = useMemo(() => {
+    if (quote) {
+      return Number(formatUnits(BigInt(quote.amountOut), quote.outDecimals));
+    }
     if (!asset || !valid || !isPriced(asset.priceUsd)) return 0;
     return (amountUsd - fee.usd) / asset.priceUsd;
-  }, [asset, amountUsd, valid, fee.usd]);
+  }, [asset, amountUsd, valid, fee.usd, quote]);
+
+  const quoteAmountIn = useMemo(() => {
+    if (!valid) return undefined;
+    if (buying && eth) return humanToRaw(entered, 18);
+    if (!buying && asset && isPriced(asset.priceUsd)) {
+      return humanToRaw(amountUsd / asset.priceUsd, tokenDecimals);
+    }
+    return undefined;
+  }, [valid, buying, eth, entered, asset, amountUsd, tokenDecimals]);
 
   useEffect(() => {
-    if (!asset || asset.kind !== "token" || !valid) {
-      setTicket(null);
+    if (!token || !valid || asset?.kind !== "token") {
+      setQuote(null);
+      setQuoteMiss(false);
+      setQuotePending(false);
       return;
     }
-    const token = asset.address;
     const sideNow = activeSide;
     const usd = amountUsd;
+    const rawIn = quoteAmountIn;
     const ctrl = new AbortController();
     const timer = setTimeout(() => {
-      void fetch(
-        `/api/quote?token=${token}&side=${sideNow}&amountUsd=${encodeURIComponent(String(usd))}`,
-        {signal: ctrl.signal},
-      )
-        .then((res) => res.json())
-        .then((body: {venueLabel?: string; creatorTax?: string; venue?: string | null}) => {
-          if (!body.venue || !body.venueLabel || !body.creatorTax) return;
-          setTicket({venueLabel: body.venueLabel, creatorTax: body.creatorTax});
+      setQuotePending(true);
+      void fetchSwapQuote({
+        token,
+        side: sideNow,
+        amountUsd: usd,
+        amountIn: rawIn,
+        signal: ctrl.signal,
+      })
+        .then((result) => {
+          if (result.ok) {
+            setQuote(result.quote);
+            setQuoteMiss(false);
+          } else {
+            setQuote(null);
+            setQuoteMiss(true);
+          }
         })
-        .catch(() => {
-          setTicket(null);
-        });
+        .catch((cause) => {
+          if ((cause as {name?: string})?.name === "AbortError") return;
+          setQuote(null);
+          setQuoteMiss(true);
+        })
+        .finally(() => setQuotePending(false));
     }, 250);
     return () => {
       ctrl.abort();
       clearTimeout(timer);
     };
-  }, [asset, valid, activeSide, amountUsd]);
+  }, [token, valid, activeSide, amountUsd, quoteAmountIn, asset?.kind]);
 
-  /** Rounded to the precision the field itself accepts, so Max is spendable. */
+  const blocked = ticketBlockReason({
+    kind: asset?.kind ?? "token",
+    authenticated: swap.authenticated,
+    demo: swap.demo,
+    wallet: swap.address,
+    venue: quote?.venue ?? (quoteMiss ? null : undefined),
+    quotePending,
+  });
+
   function setEntered(value: number) {
     setAmount(eth ? value.toFixed(6) : value.toFixed(2));
     setError(null);
     setFilled(null);
+    setTxHash(null);
   }
 
   function switchCurrency(next: "USD" | "ETH") {
     if (next === settings.currency) return;
     if (next === "ETH" && (ethUsd === null || ethUsd <= 0)) return;
-    // Carry the value across rather than clearing it: the amount someone meant
-    // does not change because they changed how it is written.
     if (valid) {
       const nextRate = next === "ETH" ? (ethUsd ?? 1) : 1;
       setAmount(
@@ -155,42 +249,68 @@ export function OrderModal({
     writeTradeSettings({...settings, currency: next});
   }
 
-  function confirm() {
+  async function confirm() {
     if (!asset || !valid) {
       setError("Enter an amount.");
+      return;
+    }
+    if (blocked) {
+      if (!swap.authenticated) {
+        swap.login();
+        return;
+      }
+      setError(blocked);
+      return;
+    }
+    if (!token || !quote) {
+      setError("No Uniswap pool for this token.");
       return;
     }
     if (!isPriced(asset.priceUsd)) {
       setError("No price yet for this token.");
       return;
     }
-
     if (undersized) {
       setError(undersized);
       return;
     }
 
-    const result = book.trade({
-      kind: asset.kind,
-      assetId: asset.id,
-      symbol,
-      name: asset.name,
-      side: activeSide,
-      amountUsd,
-      priceUsd: asset.priceUsd,
-      feeUsd: fee.usd,
-    });
-
-    if (!result.ok) {
-      setError(result.error ?? "That order could not be filled.");
-      return;
-    }
     setError(null);
-    setFilled(
-      `${buying ? "Bought" : "Sold"} ${units(result.order?.amount ?? 0)} ${symbol}`,
-    );
-    setAmount("");
+    setFilled(null);
+    try {
+      const hash = await swap.submit({
+        quote,
+        side: activeSide,
+        token,
+        slippagePct: settings.slippagePct,
+        payNative: buying && (eth || quote.quoteIsNative || quote.quoteIsWeth),
+        permit2Blocked: asset.kind === "token" && asset.launchpad?.id === "long",
+      });
+      setTxHash(hash);
+      setFilled(
+        `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : quote.quoteIsWeth || quote.quoteIsNative ? "ETH" : "USDG"}`,
+      );
+      setAmount("");
+    } catch (cause) {
+      setError(swap.explain(cause));
+    }
   }
+
+  const confirmDisabled =
+    swap.submitting ||
+    (blocked != null && swap.authenticated) ||
+    (!valid && swap.authenticated) ||
+    undersized !== null ||
+    (swap.authenticated && !swap.demo && valid && (quotePending || (!quote && !quoteMiss)));
+
+  const confirmLabel = (() => {
+    if (swap.submitting) return "Confirm in wallet…";
+    if (!swap.authenticated) return "Sign in to trade";
+    if (blocked && asset?.kind === "rwa") return "Not on this ticket";
+    if (quotePending) return "Finding route…";
+    if (quoteMiss || (blocked && quote == null)) return "No pool";
+    return `${buying ? "Buy" : "Sell"} ${symbol}`;
+  })();
 
   return (
     <Modal
@@ -240,6 +360,7 @@ export function OrderModal({
                     setAmount("");
                     setError(null);
                     setFilled(null);
+                    setTxHash(null);
                   }}
                   className={cn(
                     "flex-1 rounded-[9px] py-2 text-[13px] font-extrabold capitalize transition-all duration-150",
@@ -291,8 +412,6 @@ export function OrderModal({
               )}
               <input
                 id="order-amount"
-                // `decimal` rather than `numeric`: an amount needs the point,
-                // and `numeric` hides it on iOS.
                 inputMode="decimal"
                 autoComplete="off"
                 placeholder="0"
@@ -308,10 +427,8 @@ export function OrderModal({
                   );
                   setError(null);
                   setFilled(null);
+                  setTxHash(null);
                 }}
-                // The global focus ring is a green rectangle, which reads as a
-                // validation state on a money field. The container takes the
-                // focus treatment instead.
                 className="tnum w-full min-w-0 border-none bg-transparent text-[30px] font-extrabold tracking-[-0.03em] text-ink outline-none placeholder:text-faint focus:outline-none focus-visible:outline-none"
               />
               {eth ? (
@@ -321,7 +438,7 @@ export function OrderModal({
 
             <div className="tnum mt-1 text-[12px] font-semibold text-faint">
               {valid && isPriced(asset.priceUsd)
-                ? `≈ ${units(estimatedUnits)} ${symbol}${eth ? ` · ${money(amountUsd)}` : ""}`
+                ? `≈ ${units(estimatedOut)} ${buying ? symbol : quote?.quoteIsWeth || quote?.quoteIsNative ? "ETH" : "USDG"}${eth ? ` · ${money(amountUsd)}` : ""}`
                 : `${formatPriceUsd(asset.priceUsd)} per ${symbol}`}
             </div>
           </div>
@@ -332,7 +449,7 @@ export function OrderModal({
                   <QuickButton
                     key={value}
                     label={eth ? `${value} ETH` : `$${value}`}
-                    disabled={value > maxEntered}
+                    disabled={maxEntered > 0 && value > maxEntered}
                     onClick={() => setEntered(value)}
                   />
                 ))
@@ -356,13 +473,17 @@ export function OrderModal({
               {buying ? "Available" : `Your ${symbol}`}
             </span>
             <span className="tnum truncate font-extrabold">
-              {buying
-                ? eth && ethUsd
-                  ? `${(book.cashUsd / ethUsd).toFixed(4)} ETH`
-                  : money(book.cashUsd)
-                : position
-                  ? `${units(position.amount)} · ${money(position.valueUsd)}`
-                  : "None"}
+              {!wallet
+                ? "—"
+                : buying
+                  ? paysNative
+                    ? `${ethUnits.toFixed(4)} ETH`
+                    : spendToken && spendToken !== QUOTE_USDG
+                      ? `${units(spendUnits)} · ${money(spendUsd)}`
+                      : money(usdgUsd)
+                  : tokenBal.data != null
+                    ? `${units(heldUnits)} · ${money(heldUsd)}`
+                    : "—"}
             </span>
           </div>
 
@@ -378,29 +499,30 @@ export function OrderModal({
               </span>
               <span className="tnum font-bold text-muted">
                 {money(fee.usd)}
-                <span className="ml-1.5 font-semibold text-faint">
-                  {percent(fee.pct)}
-                </span>
               </span>
             </div>
           ) : null}
 
-          {ticket ? (
+          {quote ? (
             <div className="mt-1.5 space-y-1 px-1 text-[12px] font-semibold">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-faint">Route</span>
-                <span className="font-bold text-muted">{ticket.venueLabel}</span>
+                <span className="font-bold text-muted">{quote.venueLabel}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-faint">Creator tax</span>
-                <span className="font-bold text-muted">{ticket.creatorTax}</span>
+                <span className="font-bold text-muted">{quote.creatorTax}</span>
               </div>
             </div>
+          ) : quotePending && valid ? (
+            <p className="mt-1.5 px-1 text-[12px] font-semibold text-faint">
+              Finding route…
+            </p>
           ) : null}
 
-          {error ? (
+          {error || (blocked && swap.authenticated && !quotePending) ? (
             <p role="alert" className="mt-3 text-[12.5px] font-semibold text-red">
-              {error}
+              {error ?? blocked}
             </p>
           ) : null}
           {filled ? (
@@ -409,13 +531,26 @@ export function OrderModal({
               className="mt-3 text-[12.5px] font-semibold text-green-deep"
             >
               {filled}
+              {txHash ? (
+                <>
+                  {" · "}
+                  <a
+                    href={txUrlForChain(txHash, RH_MAINNET_ID)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                  >
+                    View tx
+                  </a>
+                </>
+              ) : null}
             </p>
           ) : null}
 
           <button
             type="button"
-            onClick={confirm}
-            disabled={!valid || undersized !== null}
+            onClick={() => void confirm()}
+            disabled={confirmDisabled}
             className={cn(
               "mt-4 w-full rounded-[16px] py-[16px] text-[16px] font-extrabold text-white",
               "transition-[transform,opacity] duration-200 hover:-translate-y-0.5",
@@ -423,13 +558,12 @@ export function OrderModal({
               buying ? "bg-green shadow-green" : "bg-red",
             )}
           >
-            {buying ? "Buy" : "Sell"} {symbol}
+            {confirmLabel}
           </button>
 
           <p className="mt-2.5 text-center text-[11px] font-medium leading-[1.5] text-faint">
-            Max slippage {settings.slippagePct}% · This trade takes two
-            signatures. Simulated order until the router is live —
-            no wallet is signed and no funds move.
+            Max slippage {settings.slippagePct}% · Your wallet signs this swap
+            on Robinhood Chain. No simulated fill.
           </p>
         </>
       ) : null}

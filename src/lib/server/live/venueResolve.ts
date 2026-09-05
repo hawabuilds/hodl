@@ -63,9 +63,10 @@ export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | n
     : v4Hits;
   for (const v4 of ordered) {
     const tokenIn = req.side === "buy" ? v4.quote : token;
+    const zeroForOne = v4ZeroForOne(v4, tokenIn);
     const quoted = await quoteV4ExactIn({
       key: v4.key,
-      zeroForOne: v4ZeroForOne(v4, tokenIn),
+      zeroForOne,
       amountIn: req.amountIn,
       client,
     });
@@ -76,6 +77,8 @@ export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | n
         creatorTaxBps: v4.creatorTaxBps,
         quoteToken: v4.quote,
         label: `${v4.source} fee=${v4.key.fee} tick=${v4.key.tickSpacing}`,
+        poolKey: v4.key,
+        zeroForOne,
       });
     }
   }
@@ -94,6 +97,8 @@ export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | n
         creatorTaxBps: 0,
         quoteToken: quote,
         label: `QuoterV2 fee=${bestV3.fee}`,
+        v3Fee: bestV3.fee,
+        v3Pool: bestV3.pool,
       });
     }
   }

@@ -7,6 +7,8 @@
  * and our 0.5%. That is best execution, not a tax-bypass feature.
  */
 
+import type {V4PoolKey} from "./v4Encoding";
+
 export type VenueId = "v4" | "v3";
 
 export const PLATFORM_FEE_BPS = 50;
@@ -19,6 +21,13 @@ export interface VenueCandidate {
   creatorTaxBps: number;
   quoteToken: `0x${string}`;
   label: string;
+  /** V4 PoolKey used to encode Universal Router execute. */
+  poolKey?: V4PoolKey;
+  /** V4 swap direction for that PoolKey. */
+  zeroForOne?: boolean;
+  /** V3 fee tier, when this candidate is a SwapRouter02 pool. */
+  v3Fee?: number;
+  v3Pool?: `0x${string}`;
 }
 
 export interface VenueDecision extends VenueCandidate {
