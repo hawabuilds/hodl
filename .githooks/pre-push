@@ -1,0 +1,4 @@
+#!/bin/sh
+# Catch type errors before they land on master and freeze Vercel deploys.
+# Enable with: git config core.hooksPath .githooks
+npm run typecheck

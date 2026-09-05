@@ -1,12 +1,21 @@
 /**
- * Stamp tokens.eligible from stored columns, then report counts.
- * Requires scripts/schema-eligible.sql (the column). Safe to re-run.
+ * Stamp tokens.eligible from stored columns (membership, not price).
+ * Keyset on address. Resumable via batch_cursors.
  *
- *   node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-eligible.ts
+ *   npm run backfill:eligible
  */
 import {normalizeAddresses} from "../src/lib/address";
 import {db, hasDatabase} from "../src/lib/server/db";
+import {pageByAddress, runKeysetBatch} from "../src/lib/server/live/keysetBatch";
 import {writeQualifies, type TokenWrite} from "../src/lib/server/live/universeStore";
+
+type Row = {
+  address: string;
+  launchpad: TokenWrite["launchpad"] | null;
+  quote_kind: TokenWrite["quote_kind"];
+  reward_rwa: string | null;
+  bonded_at: string | null;
+};
 
 async function count(apply: (q: any) => any) {
   const {count, error} = await apply(
@@ -24,71 +33,64 @@ async function main() {
     throw new Error("tokens.eligible missing — paste scripts/schema-eligible.sql first");
   }
 
-  let last: string | null = null;
-  let scanned = 0;
-  let markedTrue = 0;
-  for (;;) {
-    let request = db()
-      .from("tokens")
-      .select("address, launchpad, quote_kind, reward_rwa, bonded_at")
-      .order("address", {ascending: true})
-      .limit(500);
-    if (last) request = request.gt("address", last);
-    const {data, error} = await request;
-    if (error) throw error;
-    const rows = (data ?? []) as {
-      address: string;
-      launchpad: TokenWrite["launchpad"] | null;
-      quote_kind: TokenWrite["quote_kind"];
-      reward_rwa: string | null;
-      bonded_at: string | null;
-    }[];
-    if (rows.length === 0) break;
-    last = rows[rows.length - 1]!.address;
-    scanned += rows.length;
-
-    const yes: string[] = [];
-    const no: string[] = [];
-    for (const row of rows) {
-      const ok =
-        row.launchpad === "pons" || row.launchpad === "long"
-          ? writeQualifies({
-              launchpad: row.launchpad,
-              quote_kind: row.quote_kind,
-              reward_rwa: row.reward_rwa,
-              bonded_at: row.bonded_at,
-            })
-          : false;
-      if (ok) yes.push(row.address);
-      else no.push(row.address);
-    }
-    if (yes.length > 0) {
-      const {error: err} = await db()
-        .from("tokens")
-        .update({eligible: true})
-        .in("address", normalizeAddresses(yes));
-      if (err) throw err;
-      markedTrue += yes.length;
-    }
-    if (no.length > 0) {
-      const {error: err} = await db()
-        .from("tokens")
-        .update({eligible: false})
-        .in("address", normalizeAddresses(no));
-      if (err) throw err;
-    }
-    console.log(JSON.stringify({scanned, markedTrue}));
-  }
+  const result = await runKeysetBatch<Row>({
+    name: "backfill:eligible",
+    loadPage: pageByAddress<Row>(
+      "tokens",
+      "address, launchpad, quote_kind, reward_rwa, bonded_at",
+    ),
+    keyOf: (row) => row.address,
+    async onPage(page) {
+      const yes: string[] = [];
+      const no: string[] = [];
+      for (const row of page) {
+        const ok =
+          row.launchpad === "pons" || row.launchpad === "long"
+            ? writeQualifies({
+                launchpad: row.launchpad,
+                quote_kind: row.quote_kind,
+                reward_rwa: row.reward_rwa,
+                bonded_at: row.bonded_at,
+              })
+            : false;
+        if (ok) yes.push(row.address);
+        else no.push(row.address);
+      }
+      if (yes.length > 0) {
+        const {error} = await db()
+          .from("tokens")
+          .update({eligible: true})
+          .in("address", normalizeAddresses(yes));
+        if (error) throw error;
+      }
+      if (no.length > 0) {
+        const {error} = await db()
+          .from("tokens")
+          .update({eligible: false})
+          .in("address", normalizeAddresses(no));
+        if (error) throw error;
+      }
+      return {markedTrue: yes.length};
+    },
+  });
 
   const eligible = await count((q) => q.is("eligible", true));
   const ineligible = await count((q) => q.is("eligible", false));
+  const listed = await count((q) => q.eq("status", "listed"));
   const listedEligible = await count((q) =>
-    q.is("eligible", true).eq("status", "listed").not("quote_kind", "is", null),
+    q.or("eligible.is.null,eligible.is.true").eq("status", "listed"),
   );
 
   console.log(
     JSON.stringify(
-      {done: true, scanned, markedTrue, eligible, ineligible, listedEligible},
+      {
+        done: true,
+        ...result,
+        eligible,
+        ineligible,
+        listed,
+        listedEligible,
+      },
       null,
       2,
     ),

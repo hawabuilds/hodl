@@ -3,8 +3,7 @@
 -- locked `tokens`, which emptied the app.
 --
 -- THREE-STATE: true = show, false = hide, null = not yet evaluated = show.
--- Never filter `.eq("eligible", true)` / `AND eligible`.
--- Reads: `column IS DISTINCT FROM false`.
+-- Reads: hide only when the flag is an evaluated false.
 
 -- 1. Column only. Instant. Then run: npm run backfill:eligible
 ALTER TABLE tokens ADD COLUMN IF NOT EXISTS eligible boolean;

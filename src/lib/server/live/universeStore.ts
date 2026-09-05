@@ -201,13 +201,11 @@ export function writeQualifies(
 }
 
 /**
- * Live Supabase does not have `tokens.eligible` yet. Do not mention that
- * column in a filter — a missing column emptied the feed. After
- * scripts/schema-eligible.sql is pasted, switch this to
- * `applyThreeStateFilter(request, "eligible")`.
+ * Universe membership is three-state: hide only an evaluated false.
+ * Null (not yet evaluated) still shows.
  */
 function applyUniverseFilter<T>(request: T): T {
-  return applyLegacyUniverseFilter(request);
+  return applyThreeStateFilter(request, "eligible");
 }
 
 function applyLegacyUniverseFilter<T>(request: T): T {
@@ -351,6 +349,26 @@ export async function listTokensPage(
   }
 
   let {data, error} = await request;
+  if (error && /eligible/i.test(error.message)) {
+    console.error("tokens.eligible filter failed; falling back to quote_kind");
+    request = applyLegacyUniverseFilter(
+      db()
+        .from("tokens")
+        .select(statsBound ? TOKEN_STATS_INNER : "*")
+        .eq("status", "listed")
+        .not("launchpad", "is", null)
+        .not("listed_at", "is", null)
+        .order("listed_at", {ascending: false})
+        .order("address", {ascending: false})
+        .limit(limit + 1),
+    );
+    if (REQUIRE_MEASURED_MCAP_ON_NEW) {
+      request = applyMeasuredMcapFilter(request, "token_stats");
+    }
+    const retry = await request;
+    data = retry.data;
+    error = retry.error;
+  }
   if (error && /is_tradeable|liquidity_usd/i.test(error.message)) {
     console.error("tokens tradeable columns missing — run scripts/schema-tradeable.sql");
     const retry = await request;

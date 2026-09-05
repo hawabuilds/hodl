@@ -386,11 +386,26 @@ async function writeLong(
   return row;
 }
 
+function capByBlock<T>(
+  items: T[],
+  blockOf: (item: T) => bigint,
+  cap: number | undefined,
+): {items: T[]; endAt: bigint | null} {
+  if (!cap || items.length <= cap) return {items, endAt: null};
+  const sorted = [...items].sort((a, b) => {
+    const delta = blockOf(a) - blockOf(b);
+    return delta < 0n ? -1 : delta > 0n ? 1 : 0;
+  });
+  const slice = sorted.slice(0, cap);
+  return {items: slice, endAt: blockOf(slice[slice.length - 1])};
+}
+
 async function indexFactory(
   factory: FactorySpec,
   maxBlocks: bigint,
   deadline: number,
   cursorName = `tokens:${factory.id}`,
+  extras: {skipImages?: boolean; writeCap?: number} = {},
 ): Promise<IndexPass> {
   const tip = await head();
   const stored = await cursorFor(cursorName);
@@ -398,6 +413,7 @@ async function indexFactory(
   const end = start + maxBlocks > tip ? tip : start + maxBlocks;
   const unresolved: string[] = [];
   const writes: TokenWrite[] = [];
+  let cursorTo = end;
 
   if (Date.now() > deadline || end <= start) {
     return {factory: factory.id, from: start.toString(), to: start.toString(), upserts: 0, unresolvedRewards: []};
@@ -464,13 +480,17 @@ async function indexFactory(
         addJob(asAddress(log.args?.token), null, null, log.blockNumber, true);
       }
     }
-    const rows = await mapLimit(jobs, 8, (job) =>
+    const capped = capByBlock(jobs, (job) => job.block, extras.writeCap);
+    if (capped.endAt != null) cursorTo = capped.endAt;
+    const rows = await mapLimit(capped.items, 8, (job) =>
       writePons(factory, job.token, job.pair, job.curve, job.block, job.bonded, unresolved),
     );
     for (const row of rows) if (row) writes.push(row);
   } else if (factory.id === "long-airlock") {
     const created = await logs(factory.address, AIRLOCK_CREATE, start, end);
-    const rows = await mapLimit(created, 8, (log) => {
+    const capped = capByBlock(created, (log) => log.blockNumber, extras.writeCap);
+    if (capped.endAt != null) cursorTo = capped.endAt;
+    const rows = await mapLimit(capped.items, 8, (log) => {
       const token = asAddress(log.args?.asset);
       if (!token) return Promise.resolve(null);
       return writeLong(
@@ -499,11 +519,13 @@ async function indexFactory(
         console.error("token_pools write failed", error);
       }
     }
-    await persistResolvedImages(
-      writes.map((row) => ({address: row.address, launchpad: row.launchpad})),
-    );
+    if (!extras.skipImages) {
+      await persistResolvedImages(
+        writes.map((row) => ({address: row.address, launchpad: row.launchpad})),
+      );
+    }
   }
-  await writeCursor(cursorName, end);
+  await writeCursor(cursorName, cursorTo);
   return {
     factory: cursorName.replace(/^tokens:/, ""),
     from: start.toString(),
@@ -528,6 +550,12 @@ export interface IndexOptions {
    * for a 20-million-block backfill cursor to arrive.
    */
   live?: boolean;
+  /** Cron sets false — history is a different job and blows the 60s limit. */
+  historical?: boolean;
+  /** Cron skips — images are a separate backfill and blow the RPC budget. */
+  skipImages?: boolean;
+  /** Cap new rows per factory so one busy window cannot eat the whole minute. */
+  writeCap?: number;
 }
 
 /**
@@ -543,9 +571,14 @@ const LIVE_LOOKBACK = 12_000n;
  * row) and keeps its own cursors so a historical pass cannot forget a coin
  * that launched this minute.
  */
-async function indexLiveTip(deadline: number): Promise<IndexPass[]> {
+async function indexLiveTip(
+  deadline: number,
+  maxBlocks: bigint,
+  extras: {skipImages?: boolean; writeCap?: number} = {},
+): Promise<IndexPass[]> {
   const tip = await head();
   const out: IndexPass[] = [];
+  const window = maxBlocks > 0n ? maxBlocks : LIVE_LOOKBACK;
 
   for (const factory of ALL_FACTORIES) {
     if (Date.now() > deadline) break;
@@ -561,7 +594,7 @@ async function indexLiveTip(deadline: number): Promise<IndexPass[]> {
       await writeCursor(liveKey, seed);
     }
 
-    const pass = await indexFactory(factory, LIVE_LOOKBACK, deadline, liveKey);
+    const pass = await indexFactory(factory, window, deadline, liveKey, extras);
     out.push(pass);
   }
 
@@ -588,7 +621,10 @@ export async function indexTokens(
 
   if (opts.live !== false) {
     try {
-      const live = await indexLiveTip(deadline);
+      const live = await indexLiveTip(deadline, maxBlocks, {
+        skipImages: opts.skipImages,
+        writeCap: opts.writeCap,
+      });
       for (const pass of live) {
         passes.push(pass);
         for (const address of pass.unresolvedRewards) unresolved.add(address);
@@ -596,6 +632,10 @@ export async function indexTokens(
     } catch (error) {
       console.error("live tip index failed; historical pass still runs", error);
     }
+  }
+
+  if (opts.historical === false) {
+    return {passes, stats: 0, unresolvedRewards: [...unresolved], head: tip.toString()};
   }
 
   const factories = opts.factoryId
@@ -620,7 +660,10 @@ export async function indexTokens(
       });
       continue;
     }
-    const pass = await indexFactory(factory, maxBlocks, deadline);
+    const pass = await indexFactory(factory, maxBlocks, deadline, `tokens:${factory.id}`, {
+      skipImages: opts.skipImages,
+      writeCap: opts.writeCap,
+    });
     passes.push(pass);
     for (const address of pass.unresolvedRewards) unresolved.add(address);
   }
