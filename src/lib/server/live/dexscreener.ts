@@ -1,4 +1,5 @@
 import {usdPriceFor} from "@/lib/pairOrientation";
+import type {ChartPoint} from "@/lib/types";
 import {cached, getJson, stale} from "./cache";
 import {RWA_BY_ADDRESS, RWA_REGISTRY} from "./robinhood";
 import {
@@ -341,16 +342,25 @@ export function classify(pair: DexPair): PairSide | null {
   };
 }
 
+const SERIES_AGES_MS = [
+  ["h24", 24 * 60 * 60 * 1000],
+  ["h6", 6 * 60 * 60 * 1000],
+  ["h1", 60 * 60 * 1000],
+  ["m5", 5 * 60 * 1000],
+] as const;
+
 /**
- * A price series from the change buckets DexScreener returns.
+ * Timed prices from DexScreener's change buckets.
  *
- * Four real observations — 24h, 6h, 1h and 5m ago — plus the current price.
- * Coarse, but every point is a price that actually existed, which a smooth
- * interpolation between two endpoints would not be. Returns an empty array
- * rather than inventing shape when the buckets are missing.
+ * Each bucket is a price that actually existed at that window — not an
+ * invented OHLC bar. Empty when the pair has no usable change data.
  */
-export function seriesFrom(pair: DexPair, token?: string): number[] {
-  const now = token
+export function chartPointsFromPair(
+  pair: DexPair,
+  token?: string,
+  opts?: {now?: number; includeLive?: boolean},
+): ChartPoint[] {
+  const live = token
     ? usdPriceFor(
         {
           base: pair.baseToken?.address,
@@ -362,20 +372,38 @@ export function seriesFrom(pair: DexPair, token?: string): number[] {
         token,
       )
     : Number(pair.priceUsd ?? 0);
-  if (!now || !Number.isFinite(now) || now <= 0) return [];
+  if (!live || !Number.isFinite(live) || live <= 0) return [];
 
   const change = pair.priceChange;
   if (!change) return [];
 
   const at = (pct: number | undefined) =>
     typeof pct === "number" && Number.isFinite(pct) && 1 + pct / 100 !== 0
-      ? now / (1 + pct / 100)
+      ? live / (1 + pct / 100)
       : null;
 
-  const points = [at(change.h24), at(change.h6), at(change.h1), at(change.m5), now];
-  const usable = points.filter((v): v is number => v !== null && v > 0);
+  const now = opts?.now ?? Date.now();
+  const includeLive = opts?.includeLive !== false;
+  const points: ChartPoint[] = [];
+  for (const [key, age] of SERIES_AGES_MS) {
+    const price = at(change[key]);
+    if (price != null && price > 0) points.push({t: now - age, price});
+  }
+  if (includeLive) points.push({t: now, price: live});
 
-  return usable.length >= 2 ? usable : [];
+  return points.length >= 2 ? points : [];
+}
+
+/**
+ * A price series from the change buckets DexScreener returns.
+ *
+ * Four real observations — 24h, 6h, 1h and 5m ago — plus the current price.
+ * Coarse, but every point is a price that actually existed, which a smooth
+ * interpolation between two endpoints would not be. Returns an empty array
+ * rather than inventing shape when the buckets are missing.
+ */
+export function seriesFrom(pair: DexPair, token?: string): number[] {
+  return chartPointsFromPair(pair, token).map((point) => point.price);
 }
 
 /** Socials in the shape the token page expects. */

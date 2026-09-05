@@ -18,6 +18,8 @@ import * as headlines from "./live/news";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {quotePriceUsd} from "@/lib/server/quotePrice";
 import {reorientPoints} from "@/lib/pairOrientation";
+import {mergeTradesIntoChart} from "@/lib/chartLive";
+import {chartPointsFromPair, pairsForToken} from "./live/dexscreener";
 import {underFeature} from "./live/rpcMeter";
 import {type FeedQuery} from "./newsfeed";
 import {hasDatabase} from "./db";
@@ -26,6 +28,58 @@ import {searchPeople} from "./social";
 import {searchUsers as searchUsersLive} from "./social-live";
 
 const TRADES_LIMIT = 300;
+
+function geckoMissIsRetryable(error: string | null | undefined): boolean {
+  if (!error) return false;
+  return /rate-limited|Could not reach|network error|returned 5\d\d/i.test(error);
+}
+
+async function liveSwapsFor(
+  target: {pool: string; token: string; quote: string},
+  priceUsd: number | null,
+): Promise<Trade[]> {
+  if (!target.quote || priceUsd == null || priceUsd <= 0) return [];
+  const quoteUsd = await quotePriceUsd(target.quote);
+  return swaps.recentSwaps(
+    target.pool,
+    target.token,
+    target.quote,
+    priceUsd,
+    quoteUsd,
+  );
+}
+
+/**
+ * Chart from DexScreener buckets and on-chain fills — never invented OHLC.
+ * Used when Gecko 429s or has no pair for this pool.
+ */
+async function fallbackTokenChart(
+  asset: TokenAsset,
+  target: {pool: string; token: string; quote: string} | null,
+): Promise<ChartPoint[]> {
+  const [pair, trades] = await Promise.all([
+    pairsForToken(asset.address).then((pools) => {
+      if (!target) return pools[0] ?? null;
+      return (
+        pools.find(
+          (row) => row.pairAddress.toLowerCase() === target.pool.toLowerCase(),
+        ) ??
+        pools[0] ??
+        null
+      );
+    }),
+    target ? liveSwapsFor(target, asset.priceUsd) : Promise.resolve([] as Trade[]),
+  ]);
+
+  const history = pair
+    ? chartPointsFromPair(pair, asset.address, {includeLive: false})
+    : [];
+  const fromFills = mergeTradesIntoChart(history, trades);
+  if (fromFills.length > 1) return fromFills;
+
+  const withLive = pair ? chartPointsFromPair(pair, asset.address) : [];
+  return withLive.length > 1 ? withLive : [];
+}
 
 /**
  * The seam between the app and its data.
@@ -189,8 +243,11 @@ export async function fetchChart(
     return {data: [], seeded: false};
   }
 
+  let geckoError: string | null = null;
+  let target: Awaited<ReturnType<typeof live.poolFor>> = null;
+
   try {
-    const target = await live.poolFor(asset.kind, asset.id);
+    target = await live.poolFor(asset.kind, asset.id);
     if (target) {
       const side = target.tokenIsBase === false ? "quote" : "base";
       const raw = await gecko.candles(target.pool, timeframe, side);
@@ -201,27 +258,27 @@ export async function fetchChart(
         asset.symbol,
       );
       if (points.length > 1) return {data: points, seeded: false};
-      if (raw.error) {
-        return {data: [], seeded: false, error: raw.error};
-      }
+      geckoError = raw.error;
     }
   } catch (error) {
     console.error("live chart failed", error);
-    return {data: [], seeded: false, error: "Could not load the chart."};
+    geckoError = "Could not load the chart.";
   }
+
+  const fallback = await fallbackTokenChart(asset, target);
+  if (fallback.length > 1) return {data: fallback, seeded: false};
 
   /**
    * A real token with no candles gets an empty chart, not an invented one.
    *
-   * The simulated series is a random walk anchored to the current clock, so
-   * for a live token it did three wrong things at once: it drew prices in the
-   * wrong range entirely — a fifth of a cent against a real four ten-thousandths
-   * — it redrew itself on every poll, which is what made charts flicker between
-   * red and green, and scrubbing it multiplied a fictional price by the real
-   * supply and reported market caps in the billions. None of that is better
-   * than an honest empty chart, and a token that has actually traded now has
-   * candles to show since the bucket ladder above reaches its first minutes.
+   * Gecko 429 / missing pair used to stop here and paint a retry panel even
+   * when DexScreener buckets or on-chain fills existed. Those are the
+   * fallback above. Empty without an error means nothing traded. A
+   * retryable Gecko miss with no fallback is still an error.
    */
+  if (geckoMissIsRetryable(geckoError)) {
+    return {data: [], seeded: false, error: geckoError ?? "Could not load the chart."};
+  }
   return {data: [], seeded: false};
 }
 
@@ -241,21 +298,10 @@ export async function fetchTrades(
     const target = await live.poolFor(asset.kind, asset.id);
     if (target) {
       const cap = limit ?? TRADES_LIMIT;
-      const quoteUsd = target.quote
-        ? await quotePriceUsd(target.quote)
-        : null;
 
       const [indexedSettled, liveSettled] = await Promise.allSettled([
         gecko.trades(target.pool, target.token, cap),
-        target.quote && asset.priceUsd != null && asset.priceUsd > 0
-          ? swaps.recentSwaps(
-              target.pool,
-              target.token,
-              target.quote,
-              asset.priceUsd,
-              quoteUsd,
-            )
-          : Promise.resolve([] as Trade[]),
+        liveSwapsFor(target, asset.priceUsd),
       ]);
 
       const indexed =
@@ -282,8 +328,13 @@ export async function fetchTrades(
       if (geckoDown && alchemyDown) {
         return {data: [], seeded: false, error: "Could not load trades."};
       }
-      if (geckoDown && live_.length === 0 && !alchemyDown) {
-        return {data: [], seeded: false};
+      const geckoError = indexed?.error ?? null;
+      if (geckoMissIsRetryable(geckoError) || indexedSettled.status === "rejected") {
+        return {
+          data: [],
+          seeded: false,
+          error: geckoError ?? "Could not load trades.",
+        };
       }
       return {data: [], seeded: false};
     }

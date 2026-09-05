@@ -45,6 +45,8 @@ import {loadDecoratedFeedPage} from "./feedDecorate";
 import {feedImageUrl} from "@/lib/tokenImage";
 import {looksInvertedMemecoin, usdPriceFor} from "@/lib/pairOrientation";
 import {isTradeableFromLiquidity} from "@/lib/priceState";
+import {resolveV4PoolKeys} from "./v4Pools";
+import {resolveBestV3Pool} from "./v3Pools";
 
 function storedPfp(url: string | null | undefined): string | null {
   return feedImageUrl({image_url: url ?? null});
@@ -1373,7 +1375,7 @@ async function resolvePoolFor(
 
   const deepest = deepestPoolForToken(address, candidates);
 
-  if (!deepest) return null;
+  if (!deepest) return onchainPoolFor(address);
 
   // The other side of the pool, needed to work out which of a swap's two
   // amounts belongs to this asset.
@@ -1382,6 +1384,48 @@ async function resolvePoolFor(
   const quote = (base === address ? quoteSide : base) ?? "";
 
   return {pool: deepest.pairAddress, token: address, quote, tokenIsBase: base === address};
+}
+
+/**
+ * Pool from the launchpad factory when DexScreener and Gecko have no pair.
+ *
+ * Read-only `eth_call`. Does not write tokens, cursors, or images.
+ */
+async function onchainPoolFor(
+  address: string,
+): Promise<{pool: string; token: string; quote: string; tokenIsBase?: boolean} | null> {
+  try {
+    const v4 = await resolveV4PoolKeys({token: address});
+    const hit = v4[0];
+    if (hit) {
+      return {
+        pool: hit.poolId,
+        token: address,
+        quote: hit.quote,
+        tokenIsBase: hit.tokenIsCurrency0,
+      };
+    }
+  } catch (error) {
+    console.error("on-chain v4 pool resolve failed", error);
+  }
+
+  try {
+    const v3 = await resolveBestV3Pool(address);
+    if (v3) {
+      const token = address.toLowerCase();
+      const quote = v3.quote.toLowerCase();
+      return {
+        pool: v3.pool,
+        token,
+        quote,
+        tokenIsBase: token < quote,
+      };
+    }
+  } catch (error) {
+    console.error("on-chain v3 pool resolve failed", error);
+  }
+
+  return null;
 }
 
 export async function poolFor(
