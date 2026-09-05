@@ -101,14 +101,15 @@ export interface TokenAsset {
    */
   tradeable: boolean | null;
   /**
-   * Pool fees earned over the last 24 hours and paid back to liquidity
-   * providers.
+   * Proven RWA holder payouts over the last 24 hours, rolled up from
+   * `reward_distributions`. Home Rewards and New `?rewards=rwa` select on
+   * this amount. Zero means none indexed in the window, not "unmeasured".
    */
   rewards24hUsd: number;
   /**
-   * Whether this token's trading fees are routed back to the people holding
-   * it, rather than to the creator's wallet. What the Rewards filter selects
-   * on — see `server/live/holderRewards.ts`.
+   * Whether a catalog flag says this token routes fees to holders
+   * (`reward_rwa`). Search and universe membership still use it; the Rewards
+   * feeds do not.
    */
   rewardsToHolders: boolean;
   /**

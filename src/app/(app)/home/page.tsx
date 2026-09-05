@@ -38,7 +38,7 @@ const TOKEN_SORTS: FilterOption<TokenSort>[] = [
   {
     value: "rewards",
     label: "Rewards",
-    title: "Tokens routing their trading fees back to holders",
+    title: "Tokens with indexed 24h RWA holder payouts",
   },
 ];
 
@@ -108,7 +108,13 @@ function HomeFeed() {
     }
   }, [tab, tokenSort, rwaSort, sector, watchFilter, filters.minMarketCap, filters.maxMarketCap, filters.minLiquidity, filters.maxLiquidity, filters.minVolume, filters.maxVolume, filters.minAgeHours, filters.maxAgeHours, pathname, router, searchParams]);
 
-  const market = useMarket(tokenSort === "marketCap" ? "marketCap" : "volume", {
+  const market = useMarket(
+    tokenSort === "marketCap"
+      ? "marketCap"
+      : tokenSort === "rewards"
+        ? "rewards"
+        : "volume",
+    {
     minLiq: filters.minLiquidity ?? initial.minLiq,
     maxLiq: filters.maxLiquidity ?? initial.maxLiq,
     minMcap: filters.minMarketCap ?? initial.minMcap,
@@ -184,16 +190,9 @@ function HomeFeed() {
       case "marketCap":
         return list.sort((a, b) => (b.marketCapUsd ?? 0) - (a.marketCapUsd ?? 0));
       case "rewards":
-        // Tokens whose trading fees are routed back to holders, read from the
-        // launch's fee recipient. Ordered by volume, because that is what the
-        // fee is a share of — the payout amounts themselves are not indexed.
         return list
-          .filter((token) => token.rewardsToHolders)
-          .sort(
-            (a, b) =>
-              b.windows[filters.window].volumeUsd -
-              a.windows[filters.window].volumeUsd,
-          );
+          .filter((token) => token.rewards24hUsd > 0)
+          .sort((a, b) => b.rewards24hUsd - a.rewards24hUsd);
       default:
         return list.sort(
           (a, b) =>
@@ -340,9 +339,9 @@ function EmptyFeed({
   if (reason === "rewards") {
     return (
       <div className="px-6 py-12 text-center">
-        <p className="text-[14px] font-bold">No fee-sharing tokens here</p>
+        <p className="text-[14px] font-bold">No 24h RWA payouts yet</p>
         <p className="mx-auto mt-1.5 max-w-[34ch] text-[13px] leading-[1.5] text-muted">
-          Nothing in the current feed routes its trading fees back to holders.
+          The indexer has not recorded a holder payout in the last day.
         </p>
       </div>
     );

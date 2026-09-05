@@ -15,11 +15,22 @@ export async function GET(request: Request) {
   const started = Date.now();
   try {
     const pass = await refreshOnchainPrices({
-      hotLimit: 200,
-      unpricedLimit: 400,
-      budgetMs: 50_000,
+      hotLimit: 80,
+      unpricedLimit: 80,
+      budgetMs: 45_000,
     });
-    const coverage = await pricingCoverage();
+    let coverage = {
+      listedEligible: 0,
+      measured: 0,
+      ratio: 0,
+      noPool: 0,
+      failed: 0,
+    };
+    try {
+      coverage = await pricingCoverage();
+    } catch (error) {
+      console.error("price cron coverage failed", error);
+    }
     const crossed = coverage.ratio > NEW_MCAP_COVERAGE_GATE;
     if (crossed && !REQUIRE_MEASURED_MCAP_ON_NEW) {
       console.warn("pricing coverage crossed 90% — New filter still off", coverage);

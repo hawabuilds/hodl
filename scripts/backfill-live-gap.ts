@@ -10,7 +10,9 @@
 import dns from "node:dns";
 import pg from "pg";
 import {ALL_FACTORIES} from "../src/lib/contracts";
+import {upsertTokensAdmin} from "../src/lib/server/live/adminCatalogue";
 import {indexTokens} from "../src/lib/server/live/tokenIndexer";
+import type {TokenWrite} from "../src/lib/server/live/universeStore";
 
 dns.setDefaultResultOrder("ipv4first");
 
@@ -38,20 +40,37 @@ function databaseUrl(): string {
 async function connectAdmin(): Promise<pg.Client> {
   const url = databaseUrl();
   const local = /localhost|127\.0\.0\.1/i.test(url);
-  const client = new pg.Client({
-    connectionString: url,
-    ssl: local ? undefined : {rejectUnauthorized: false},
-    connectionTimeoutMillis: 60_000,
-  });
-  try {
-    await client.connect();
-    await client.query("SET statement_timeout = 0");
-  } catch (error) {
-    await client.end().catch(() => undefined);
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`admin postgres connect failed: ${redact(message)}`);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const client = new pg.Client({
+      connectionString: url,
+      ssl: local ? undefined : {rejectUnauthorized: false},
+      connectionTimeoutMillis: 60_000,
+    });
+    client.on("error", (error) => {
+      console.warn(`admin pg error: ${redact(error.message).slice(0, 160)}`);
+    });
+    try {
+      await client.connect();
+      await client.query("SET statement_timeout = 0");
+      return client;
+    } catch (error) {
+      lastError = error;
+      await client.end().catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 3_000 * (attempt + 1)));
+    }
   }
-  return client;
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`admin postgres connect failed: ${redact(message)}`);
+}
+
+async function withAdmin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
+  const client = await connectAdmin();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end().catch(() => undefined);
+  }
 }
 
 function supabaseUrl(): string {
@@ -63,17 +82,26 @@ function serviceKey(): string {
 }
 
 async function chainHead(): Promise<bigint> {
-  const res = await fetch(PUBLIC_RPC, {
-    method: "POST",
-    headers: {"content-type": "application/json"},
-    body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: []}),
-    signal: AbortSignal.timeout(12_000),
-  });
-  if (!res.ok) throw new Error(`public head HTTP ${res.status}`);
-  const body = (await res.json()) as {result?: string};
-  const tip = body.result ? BigInt(body.result) : 0n;
-  if (tip === 0n) throw new Error("public RPC returned empty head");
-  return tip;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const res = await fetch(PUBLIC_RPC, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: []}),
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!res.ok) throw new Error(`public head HTTP ${res.status}`);
+      const body = (await res.json()) as {result?: string};
+      const tip = body.result ? BigInt(body.result) : 0n;
+      if (tip === 0n) throw new Error("public RPC returned empty head");
+      return tip;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 1_000 * (attempt + 1)));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("public head failed");
 }
 
 type CursorRow = {name: string; last_block: string};
@@ -178,35 +206,40 @@ process.on("SIGTERM", () => {
   console.warn("SIGTERM — finishing current window");
 });
 
-async function main() {
-  const client = await connectAdmin();
+async function snapshot(label: string) {
+  const head = await chainHead();
+  const cursors = await withAdmin(readCursors);
+  reportGaps(label, head, factoryGaps(cursors));
   try {
-    const head0 = await chainHead();
-    const cursors0 = await readCursors(client);
-    const gaps0 = factoryGaps(cursors0);
-    reportGaps("before", head0, gaps0);
+    console.warn(JSON.stringify({newest: await restNewest()}));
+    console.warn(JSON.stringify({ponsAfterInvestment: await restPonsAfter("2026-09-05T00:49:00Z")}));
+  } catch (error) {
+    console.warn(`newest snapshot skipped: ${redact(String(error)).slice(0, 160)}`);
+  }
+  return {head, cursors};
+}
+
+async function main() {
+  const {cursors: cursors0} = await snapshot("before");
+  const gaps0 = factoryGaps(cursors0);
+  if (remainingOf(gaps0) === 0n) {
+    console.warn("live-gap already caught the live tip");
+    return;
+  }
+
+  let idle = 0;
+  let rounds = 0;
+  let upserts = 0;
+  while (!stop) {
+    const remainBefore = remainingOf(factoryGaps(await withAdmin(readCursors)));
+    if (remainBefore === 0n) break;
+
+    const started = Date.now();
     try {
-      console.warn(JSON.stringify({newest: await restNewest()}));
-      console.warn(JSON.stringify({ponsAfterInvestment: await restPonsAfter("2026-09-05T00:49:00Z")}));
-    } catch (error) {
-      console.warn(`newest snapshot skipped: ${redact(String(error)).slice(0, 160)}`);
-    }
-
-    if (remainingOf(gaps0) === 0n) {
-      console.warn("live-gap already caught the live tip");
-      return;
-    }
-
-    let idle = 0;
-    let rounds = 0;
-    let upserts = 0;
-    while (!stop) {
-      const before = factoryGaps(await readCursors(client));
-      const remainBefore = remainingOf(before);
-      if (remainBefore === 0n) break;
-
-      const started = Date.now();
-      const held = await readCursors(client);
+      const held = await withAdmin(readCursors);
+      const persistWrites = async (rows: TokenWrite[]) => {
+        await withAdmin((client) => upsertTokensAdmin(client, rows));
+      };
       const result = await indexTokens({
         live: false,
         historical: false,
@@ -217,20 +250,23 @@ async function main() {
         maxBlocks: WINDOW,
         budgetMs: PASS_BUDGET_MS,
         heldCursors: held,
+        persistWrites,
       });
-      for (const pass of result.passes) {
-        const key = pass.factory.startsWith("tokens:") ? pass.factory : `tokens:${pass.factory}`;
-        if (!key.endsWith(":live-gap")) continue;
-        const next = BigInt(pass.cursorTo || "0");
-        const prev = held.get(key) ?? 0n;
-        if (next > prev) await writeGapCursor(client, key, next);
-      }
+      await withAdmin(async (client) => {
+        for (const pass of result.passes) {
+          const key = pass.factory.startsWith("tokens:") ? pass.factory : `tokens:${pass.factory}`;
+          if (!key.endsWith(":live-gap")) continue;
+          const next = BigInt(pass.cursorTo || "0");
+          const prev = held.get(key) ?? 0n;
+          if (next > prev) await writeGapCursor(client, key, next);
+        }
+      });
       rounds += 1;
       const passUpserts = result.passes.reduce((n, pass) => n + pass.upserts, 0);
       upserts += passUpserts;
 
       const head = await chainHead();
-      const after = factoryGaps(await readCursors(client));
+      const after = factoryGaps(await withAdmin(readCursors));
       const remainAfter = remainingOf(after);
       console.warn(
         JSON.stringify({
@@ -264,28 +300,27 @@ async function main() {
       } else {
         idle = 0;
       }
-    }
-
-    const head1 = await chainHead();
-    const gaps1 = factoryGaps(await readCursors(client));
-    reportGaps(stop ? "stopped" : "after", head1, gaps1);
-    try {
-      console.warn(JSON.stringify({newest: await restNewest()}));
-      console.warn(JSON.stringify({ponsAfterInvestment: await restPonsAfter("2026-09-05T00:49:00Z")}));
     } catch (error) {
-      console.warn(`newest snapshot skipped: ${redact(String(error)).slice(0, 160)}`);
+      idle += 1;
+      const wait = Math.min(8_000 * idle, 60_000);
+      console.warn(
+        `gap round failed; reconnecting in ${wait}ms: ${redact(String(error)).slice(0, 200)}`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      if (once) throw error;
     }
-    console.log(
-      JSON.stringify({
-        done: !stop && remainingOf(gaps1) === 0n,
-        rounds,
-        upserts,
-        remaining: remainingOf(gaps1).toString(),
-      }),
-    );
-  } finally {
-    await client.end();
   }
+
+  const {cursors: cursors1} = await snapshot(stop ? "stopped" : "after");
+  const gaps1 = factoryGaps(cursors1);
+  console.log(
+    JSON.stringify({
+      done: !stop && remainingOf(gaps1) === 0n,
+      rounds,
+      upserts,
+      remaining: remainingOf(gaps1).toString(),
+    }),
+  );
 }
 
 main().catch((error) => {

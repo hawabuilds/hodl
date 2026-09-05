@@ -73,9 +73,14 @@ export async function runKeysetBatch<T>(opts: {
   loadPage: (after: string | null, limit: number) => Promise<T[]>;
   keyOf: (row: T) => string;
   onPage: (page: T[]) => Promise<Record<string, number> | void>;
+  readCursor?: (name: string) => Promise<BatchCursor>;
+  writeCursor?: (name: string, lastKey: string | null, scanned: number) => Promise<void>;
+  continueOnPageError?: boolean;
 }): Promise<KeysetBatchResult> {
   const pageSize = opts.pageSize ?? batchPageSize();
-  const held = await readBatchCursor(opts.name);
+  const readCursor = opts.readCursor ?? readBatchCursor;
+  const writeCursor = opts.writeCursor ?? writeBatchCursor;
+  const held = await readCursor(opts.name);
   let after = held.lastKey;
   let scanned = held.scanned;
   let pages = 0;
@@ -86,16 +91,29 @@ export async function runKeysetBatch<T>(opts: {
   }
 
   for (;;) {
-    const page = await opts.loadPage(after, pageSize);
+    let page: T[];
+    try {
+      page = await opts.loadPage(after, pageSize);
+    } catch (error) {
+      console.error("keyset page load failed; stopping", error);
+      extra.pageLoadFailed = (extra.pageLoadFailed ?? 0) + 1;
+      break;
+    }
     if (page.length === 0) break;
-    const counts = (await opts.onPage(page)) ?? {};
-    for (const [key, value] of Object.entries(counts)) {
-      extra[key] = (extra[key] ?? 0) + value;
+    try {
+      const counts = (await opts.onPage(page)) ?? {};
+      for (const [key, value] of Object.entries(counts)) {
+        extra[key] = (extra[key] ?? 0) + value;
+      }
+    } catch (error) {
+      console.error("keyset page failed; continuing", error);
+      extra.pageFailed = (extra.pageFailed ?? 0) + 1;
+      if (!opts.continueOnPageError) throw error;
     }
     after = opts.keyOf(page[page.length - 1]!);
     scanned += page.length;
     pages += 1;
-    await writeBatchCursor(opts.name, after, scanned);
+    await writeCursor(opts.name, after, scanned);
     const ms = Date.now() - started;
     const tokensPerMin = ms > 0 ? Math.round(scanned / (ms / 60_000)) : 0;
     console.log(

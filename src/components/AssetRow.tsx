@@ -108,7 +108,9 @@ export function AssetRow({
           ) : (
             <>
               <span className="text-faint">
-                {formatVolumeUsd(asset.volume24hUsd)} Vol
+                {token && token.rewards24hUsd > 0
+                  ? `${formatVolumeUsd(token.rewards24hUsd)} Rewards`
+                  : `${formatVolumeUsd(asset.volume24hUsd)} Vol`}
               </span>
               <span className="text-muted">{tokenAge(asset.createdAt)}</span>
             </>

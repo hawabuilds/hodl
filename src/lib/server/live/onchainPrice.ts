@@ -15,6 +15,7 @@ import {cachedQuotes, quotes, RWA_BY_ADDRESS} from "./robinhood";
 import {resolveV4PoolKeysBatch, type V4PoolHit} from "./v4Pools";
 import {MIN_LIQUIDITY_USD} from "@/config/liquidity";
 import {
+  CRON_PRICE_PAGE,
   listListedForPricing,
   statsFor,
   upsertStats,
@@ -456,8 +457,8 @@ export interface RefreshPricesResult extends PriceBatchResult {
 }
 
 /**
- * Hot pools every tick, then a slice of the unpriced tail.
- * Vercel cron is one minute — that is the floor, not 30s.
+ * Hot pools every tick, then a small unpriced keyset page.
+ * Must finish well under Vercel 60s — never walk the full listed table.
  */
 export async function refreshOnchainPrices(opts?: {
   hotLimit?: number;
@@ -466,11 +467,22 @@ export async function refreshOnchainPrices(opts?: {
   budgetMs?: number;
 }): Promise<RefreshPricesResult> {
   const started = Date.now();
-  const deadline = started + (opts?.budgetMs ?? 50_000);
-  const hotLimit = opts?.hotLimit ?? 200;
-  const unpricedLimit = opts?.unpricedLimit ?? 400;
+  const deadline = started + (opts?.budgetMs ?? 45_000);
+  const hotLimit = opts?.hotLimit ?? 80;
+  const unpricedLimit = opts?.unpricedLimit ?? 80;
+  const pageSize = CRON_PRICE_PAGE;
   const seen = new Set<string>();
   const batch: TokenRow[] = [];
+  const empty: RefreshPricesResult = {
+    rows: [],
+    priced: 0,
+    noPool: 0,
+    failed: 0,
+    unevaluated: 0,
+    scanned: 0,
+    ms: 0,
+    tokensPerMin: 0,
+  };
 
   const take = (rows: TokenRow[]) => {
     for (const row of rows) {
@@ -495,33 +507,40 @@ export async function refreshOnchainPrices(opts?: {
 
   let after = opts?.afterAddress ?? null;
   while (batch.length < hotLimit + unpricedLimit && Date.now() < deadline) {
-    const page = await listListedForPricing({
-      afterAddress: after,
-      limit: 400,
-    });
-    if (page.length === 0) break;
-    after = page[page.length - 1]!.address;
-    const stats = await statsFor(page.map((row) => row.address));
-    take(
-      page.filter((row) => {
-        const stat = stats.get(normalizeAddress(row.address));
-        if (stat?.price_status === "no_pool" || stat?.price_status === "failed") {
-          return false;
-        }
-        return stat?.priced_at == null;
-      }),
-    );
-    if (page.length < 400) break;
+    try {
+      const page = await listListedForPricing({
+        afterAddress: after,
+        limit: pageSize,
+        onlyUnpriced: true,
+      });
+      if (page.length === 0) break;
+      after = page[page.length - 1]!.address;
+      take(page);
+      if (page.length < pageSize) break;
+    } catch (error) {
+      console.error("unpriced price page failed; continuing", error);
+      break;
+    }
   }
 
-  const held = await statsFor(batch.map((row) => row.address));
-  const result = await priceTokensBatch(batch.map(asPriceable), held);
-  await writePricedStats(result);
-  const ms = Date.now() - started;
-  return {
-    ...result,
-    scanned: batch.length,
-    ms,
-    tokensPerMin: ms > 0 ? result.rows.length / (ms / 60_000) : 0,
-  };
+  if (batch.length === 0) {
+    return {...empty, ms: Date.now() - started};
+  }
+
+  try {
+    const held = await statsFor(batch.map((row) => row.address));
+    const result = await priceTokensBatch(batch.map(asPriceable), held);
+    await writePricedStats(result);
+    const ms = Date.now() - started;
+    return {
+      ...result,
+      scanned: batch.length,
+      ms,
+      tokensPerMin: ms > 0 ? result.rows.length / (ms / 60_000) : 0,
+    };
+  } catch (error) {
+    console.error("price batch failed; continuing", error);
+    const ms = Date.now() - started;
+    return {...empty, scanned: batch.length, failed: batch.length, ms};
+  }
 }

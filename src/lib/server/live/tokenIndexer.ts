@@ -23,6 +23,7 @@ import {rpc, erc20Abi} from "./chain";
 import {
   cursorsFor,
   replaceTokenPools,
+  upsertTokens,
   writeCursor,
   writeCursors,
   type TokenWrite,
@@ -375,18 +376,37 @@ async function writePons(
   forceBonded: boolean,
   unresolved: string[],
 ): Promise<TokenWrite | null> {
-  const record = await ponsRecord(factory.address, token);
+  const record = await withTimeout(
+    ponsRecord(factory.address, token),
+    8_000,
+    "pons record",
+  ).catch(() => null);
   const pair = asAddress(record?.pairToken) ?? pairHint;
   const quote = quoteOf(pair);
-  const bonded = forceBonded || (await ponsBonded(factory.address, token, record?.phase ?? null));
-  const reward = await rewardRwaFor(token, record?.creatorFeeRecipient ?? null);
+  const bonded =
+    forceBonded ||
+    (await withTimeout(
+      ponsBonded(factory.address, token, record?.phase ?? null),
+      6_000,
+      "pons bonded",
+    ).catch(() => false));
+  const reward = await withTimeout(
+    rewardRwaFor(token, record?.creatorFeeRecipient ?? null),
+    4_000,
+    "reward detect",
+  ).catch(() => null);
   if (
     (quote.kind === "eth" || quote.kind === "usdg") &&
     !reward
   ) {
     unresolved.push(token);
   }
-  const info = await meta(token);
+  const info = await withTimeout(meta(token), 6_000, "token meta").catch(() => ({
+    symbol: "???",
+    name: "Unknown",
+    decimals: 18,
+    supply: null,
+  }));
   const at = await blockTime(block);
   const status = statusFor({launchpad: "pons", bonded});
   const launchpadContract = curveHint;
@@ -440,11 +460,18 @@ async function writeLong(
     }
   }
   const quote = quoteOf(quoteAddr ?? null);
-  const reward = await rewardRwaFor(token, null);
+  const reward = await withTimeout(rewardRwaFor(token, null), 4_000, "reward detect").catch(
+    () => null,
+  );
   if ((quote.kind === "eth" || quote.kind === "usdg") && !reward) {
     unresolved.push(token);
   }
-  const info = await meta(token);
+  const info = await withTimeout(meta(token), 6_000, "token meta").catch(() => ({
+    symbol: "???",
+    name: "Unknown",
+    decimals: 18,
+    supply: null,
+  }));
   const at = await blockTime(block);
   const row: TokenWrite = {
     address: token,
@@ -496,6 +523,10 @@ async function indexFactory(
     bondedOnly?: boolean;
     /** Stop at this block even if head is further (gap walks toward live). */
     untilBlock?: bigint;
+    /** Gap job may spend longer than the cron's 12s write cap. */
+    writeTimeoutMs?: number;
+    /** Admin gap job writes tokens via DATABASE_URL, not PostgREST. */
+    persistWrites?: (rows: TokenWrite[]) => Promise<void>;
   } = {},
 ): Promise<IndexPass> {
   const tip = await head();
@@ -626,8 +657,18 @@ async function indexFactory(
       console.error("v3 pool resolve failed; tokens still upserted", error);
     }
     const writeBudget =
-      deadline === Number.POSITIVE_INFINITY ? 180_000 : Math.min(remain(), 12_000);
-    await withTimeout(commitListedWithPrice(writes), writeBudget, "token upsert");
+      extras.writeTimeoutMs ??
+      (deadline === Number.POSITIVE_INFINITY ? 180_000 : Math.min(remain(), 12_000));
+    if (extras.persistWrites) {
+      await extras.persistWrites(writes);
+    } else {
+      try {
+        await withTimeout(commitListedWithPrice(writes), writeBudget, "token upsert");
+      } catch (error) {
+        console.error("priced token upsert failed; listing without price", error);
+        await withTimeout(upsertTokens(writes), Math.min(remain(), 30_000), "token upsert fallback");
+      }
+    }
     if (poolRows.length > 0) {
       try {
         await replaceTokenPools(poolRows);
@@ -641,7 +682,7 @@ async function indexFactory(
       );
     }
   }
-  if (cursorTo !== stored) {
+  if (cursorTo !== stored && !extras.persistWrites) {
     try {
       await withTimeout(writeCursor(cursorName, cursorTo), 8_000, "cursor write");
     } catch (error) {
@@ -686,6 +727,8 @@ export interface IndexOptions {
   drainGap?: boolean;
   /** Admin gap job preloads from Postgres so a slow PostgREST cannot stall. */
   heldCursors?: Map<string, bigint>;
+  /** Admin gap job persists tokens via DATABASE_URL. Cron must omit this. */
+  persistWrites?: (rows: TokenWrite[]) => Promise<void>;
 }
 
 /**
@@ -811,7 +854,12 @@ async function indexLiveTip(
 export async function indexLiveGaps(
   deadline: number,
   maxBlocks: bigint,
-  extras: {skipImages?: boolean; writeCap?: number; heldCursors?: Map<string, bigint>} = {},
+  extras: {
+    skipImages?: boolean;
+    writeCap?: number;
+    heldCursors?: Map<string, bigint>;
+    persistWrites?: (rows: TokenWrite[]) => Promise<void>;
+  } = {},
 ): Promise<IndexPass[]> {
   const tip = await head();
   const liveFactories = liveFactoryList();
@@ -829,6 +877,7 @@ export async function indexLiveGaps(
     const liveStored = held.get(liveKey) ?? 0n;
     const until = liveStored > 0n ? liveStored : tip;
     if (gapStored === 0n || until <= gapStored + REORG) continue;
+    console.warn(`live-gap ${gapKey} ${gapStored} -> ${until} window ${window}`);
     try {
       const pass = await indexFactory(factory, window, deadline, gapKey, {
         skipImages: extras.skipImages,
@@ -836,6 +885,8 @@ export async function indexLiveGaps(
         storedCursor: gapStored,
         untilBlock: until,
         bondedOnly: true,
+        writeTimeoutMs: 45_000,
+        persistWrites: extras.persistWrites,
       });
       out.push(pass);
     } catch (error) {
@@ -886,6 +937,7 @@ export async function indexTokens(
         skipImages: opts.skipImages,
         writeCap: opts.writeCap,
         heldCursors: opts.heldCursors,
+        persistWrites: opts.persistWrites,
       });
       for (const pass of gaps) {
         passes.push(pass);

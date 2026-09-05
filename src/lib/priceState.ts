@@ -38,6 +38,15 @@ export function isUnpriceableStatus(
   return status === "no_pool" || status === "failed";
 }
 
+/** Cron / backfill: skip priced and evaluated no_pool/failed. */
+export function needsPriceAttempt(stat: {
+  priced_at?: string | null;
+  price_status?: string | null;
+} | null | undefined): boolean {
+  if (isUnpriceableStatus(stat?.price_status)) return false;
+  return stat?.priced_at == null;
+}
+
 /**
  * New hides unpriced rows. Coverage was reported at 41.4% of listed
  * universe before this flip (13,544 / 32,676).

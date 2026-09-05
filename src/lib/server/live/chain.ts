@@ -27,6 +27,7 @@ export function rpc(): PublicClient {
         // meant a failing batch cost six requests, and since the provider
         // limits on compute rather than requests, the response to being
         // throttled was to spend five more attempts making it worse.
+        timeout: 12_000,
         retryCount: 0,
         onFetchRequest: async (request) => {
           try {

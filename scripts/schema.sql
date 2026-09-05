@@ -118,6 +118,10 @@ CREATE INDEX IF NOT EXISTS tokens_status
 CREATE INDEX IF NOT EXISTS tokens_launchpad
   ON tokens (launchpad);
 
+CREATE INDEX IF NOT EXISTS tokens_rewards_24h
+  ON tokens (rewards_24h_usd DESC)
+  WHERE rewards_24h_usd > 0;
+
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS tokens_name_trgm
   ON tokens USING gin (name gin_trgm_ops);

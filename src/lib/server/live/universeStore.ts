@@ -208,6 +208,14 @@ function applyUniverseFilter<T>(request: T): T {
   return applyThreeStateFilter(request, "eligible");
 }
 
+/** Home Rewards and New `?rewards=rwa` — indexed 24h USD, not a routing flag. */
+function applyRewardsAmountFilter<T>(request: T): T {
+  return (request as {gt: (column: string, value: number) => T}).gt(
+    "rewards_24h_usd",
+    0,
+  );
+}
+
 function applyLegacyUniverseFilter<T>(request: T): T {
   return (request as {or: (filter: string) => T}).or(
     "quote_kind.eq.rwa,reward_rwa.not.is.null",
@@ -292,6 +300,9 @@ export async function listTokensPage(
   if (sort === "volume" || sort === "mcap") {
     return listStatsOrderedPage(query, sort === "mcap" ? "last_mcap" : "vol_24h");
   }
+  if (sort === "rewards") {
+    return listRewardsOrderedPage(query);
+  }
 
   const limit = Math.min(Math.max(query.limit ?? 50, 1), 100);
   const statsBound =
@@ -344,9 +355,7 @@ export async function listTokensPage(
   if (query.cursorListedAt) request = request.lt("listed_at", query.cursorListedAt);
   if (query.launchpad) request = request.eq("launchpad", query.launchpad);
   if (query.quoteKind) request = request.eq("quote_kind", query.quoteKind);
-  if (query.rewardsOnly || sort === "rewards") {
-    request = request.not("reward_rwa", "is", null);
-  }
+  if (query.rewardsOnly) request = applyRewardsAmountFilter(request);
 
   let {data, error} = await request;
   if (error && /eligible/i.test(error.message)) {
@@ -416,6 +425,93 @@ export async function listTokensPage(
   return {rows: filtered, stats, next};
 }
 
+/** Home Rewards: listed tokens with a persisted 24h payout, largest first. */
+async function listRewardsOrderedPage(
+  query: TokenPageQuery,
+): Promise<{rows: TokenRow[]; stats: Map<string, TokenStatRow>; next: string | null}> {
+  const limit = Math.min(Math.max(query.limit ?? 50, 1), 100);
+  const statsBound =
+    isUserBound(query.minMarketCap, query.maxMarketCap) ||
+    isUserBound(query.minVolume, query.maxVolume) ||
+    REQUIRE_MEASURED_MCAP_ON_NEW;
+  const liqBound = isUserBound(query.minLiquidity, query.maxLiquidity);
+
+  let request: any = db()
+    .from("tokens")
+    .select(statsBound ? TOKEN_STATS_INNER : "*")
+    .eq("status", "listed")
+    .not("launchpad", "is", null)
+    .order("rewards_24h_usd", {ascending: false, nullsFirst: false})
+    .order("address", {ascending: false})
+    .limit(limit + 1);
+  request = applyUniverseFilter(request);
+  request = applyRewardsAmountFilter(request);
+  if (REQUIRE_MEASURED_MCAP_ON_NEW) {
+    request = applyMeasuredMcapFilter(request, "token_stats");
+  }
+  if (statsBound) {
+    request = applyNumericBounds(
+      request,
+      "token_stats.last_mcap",
+      query.minMarketCap,
+      query.maxMarketCap,
+    );
+    request = applyNumericBounds(
+      request,
+      "token_stats.vol_24h",
+      query.minVolume,
+      query.maxVolume,
+    );
+    if (liqBound) {
+      request = applyNumericBounds(
+        request,
+        "token_stats.liquidity_usd",
+        query.minLiquidity,
+        query.maxLiquidity,
+      );
+    } else {
+      request = applyThreeStateFilter(request, "is_tradeable");
+    }
+  } else {
+    request = applyTradeableFilter(request, query.minLiquidity, query.maxLiquidity);
+  }
+  request = applyAgeBounds(request, query.minAgeHours, query.maxAgeHours);
+  if (query.launchpad) request = request.eq("launchpad", query.launchpad);
+  if (query.quoteKind) request = request.eq("quote_kind", query.quoteKind);
+
+  const {data, error} = await request;
+  if (error) throw error;
+  const fetched = ((data as TokenRow[]) ?? []).map(flattenTokenRow);
+  const page = fetched.slice(0, limit);
+  const stats = await statsFor(page.map((row) => row.address));
+  const filtered = page.filter((row) => {
+    const stat = stats.get(normalizeAddress(row.address));
+    if (
+      !rowPassesFeedBounds({
+        mcap: finiteOrNull(stat?.last_mcap),
+        liq: finiteOrNull(stat?.liquidity_usd ?? row.liquidity_usd),
+        tradeable: row.is_tradeable,
+        volume: finiteOrNull(stat?.vol_24h),
+        createdAt: row.created_at,
+        minMarketCap: query.minMarketCap,
+        maxMarketCap: query.maxMarketCap,
+        minLiquidity: query.minLiquidity,
+        maxLiquidity: query.maxLiquidity,
+        minVolume: query.minVolume,
+        maxVolume: query.maxVolume,
+        minAgeHours: query.minAgeHours,
+        maxAgeHours: query.maxAgeHours,
+      })
+    ) {
+      return false;
+    }
+    if (!showsOnNew(stat)) return false;
+    return rowPassesUniverse(row);
+  });
+
+  return {rows: filtered, stats, next: null};
+}
+
 async function listStatsOrderedPage(
   query: TokenPageQuery,
   column: "vol_24h" | "last_mcap",
@@ -461,7 +557,7 @@ async function listStatsOrderedPage(
   tokensQuery = applyAgeBounds(tokensQuery, query.minAgeHours, query.maxAgeHours);
   if (query.launchpad) tokensQuery = tokensQuery.eq("launchpad", query.launchpad);
   if (query.quoteKind) tokensQuery = tokensQuery.eq("quote_kind", query.quoteKind);
-  if (query.rewardsOnly) tokensQuery = tokensQuery.not("reward_rwa", "is", null);
+  if (query.rewardsOnly) tokensQuery = applyRewardsAmountFilter(tokensQuery);
 
   let {data, error} = await tokensQuery;
   if (error && /is_tradeable|liquidity_usd/i.test(error.message)) {
@@ -477,7 +573,7 @@ async function listStatsOrderedPage(
     tokensQuery = applyAgeBounds(tokensQuery, query.minAgeHours, query.maxAgeHours);
     if (query.launchpad) tokensQuery = tokensQuery.eq("launchpad", query.launchpad);
     if (query.quoteKind) tokensQuery = tokensQuery.eq("quote_kind", query.quoteKind);
-    if (query.rewardsOnly) tokensQuery = tokensQuery.not("reward_rwa", "is", null);
+    if (query.rewardsOnly) tokensQuery = applyRewardsAmountFilter(tokensQuery);
     const retry = await tokensQuery;
     data = retry.data;
     error = retry.error;
@@ -1079,6 +1175,11 @@ export async function listNewestListed(limit: number): Promise<TokenRow[]> {
   return (data as TokenRow[]) ?? [];
 }
 
+/** Slim columns for the minute price cron. Never star or image blobs. */
+export const PRICE_LIST_COLUMNS =
+  "address,launchpad,decimals,total_supply,quote_token,quote_kind,status,eligible,liquidity_usd";
+export const CRON_PRICE_PAGE = 80;
+
 export async function listListedForPricing(opts: {
   afterAddress?: string | null;
   limit: number;
@@ -1088,7 +1189,7 @@ export async function listListedForPricing(opts: {
   if (!hasDatabase) return [];
   let request: any = db()
     .from("tokens")
-    .select("*")
+    .select(PRICE_LIST_COLUMNS)
     .eq("status", "listed")
     .not("launchpad", "is", null)
     .order("address", {ascending: true})
