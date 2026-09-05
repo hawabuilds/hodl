@@ -1,0 +1,9 @@
+[variables]
+NIXPACKS_NODE_VERSION = "22"
+
+# Skip Next.js's `npm run build`. This image only runs the worker.
+[phases.build]
+cmds = ["echo skip-next-build"]
+
+[start]
+cmd = "npm run worker"

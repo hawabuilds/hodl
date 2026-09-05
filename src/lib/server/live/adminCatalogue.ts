@@ -7,6 +7,7 @@
 import pg from "pg";
 import {normalizeAddress} from "@/lib/address";
 import type {LaunchpadId, QuoteKind} from "@/lib/universe";
+import {adminPgConfig} from "./adminPg";
 import type {BatchCursor} from "./keysetBatch";
 import type {PricingCoverage, TokenRow, TokenWrite} from "./universeStore";
 import {writeQualifies} from "./universeStore";
@@ -15,20 +16,10 @@ function redact(text: string): string {
   return text.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[redacted]");
 }
 
-function databaseUrl(): string {
-  const raw = process.env.DATABASE_URL?.trim() ?? "";
-  if (!raw) throw new Error("DATABASE_URL is not set");
-  return (raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))
-    ? raw.slice(1, -1)
-    : raw;
-}
-
 export async function connectAdmin(): Promise<pg.Client> {
-  const url = databaseUrl();
-  const local = /localhost|127\.0\.0\.1/i.test(url);
+  const config = await adminPgConfig();
   const client = new pg.Client({
-    connectionString: url,
-    ssl: local ? undefined : {rejectUnauthorized: false},
+    ...config,
     connectionTimeoutMillis: 60_000,
   });
   try {

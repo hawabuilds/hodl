@@ -171,6 +171,30 @@ export function recordPayload(body: unknown): void {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * One worker, one budget. Sleeps while this process is over
+ * `RATE_BUDGET_PER_MINUTE` so a catch-up burst cannot melt the plan.
+ */
+export async function waitForRpcBudget(): Promise<void> {
+  let waited = 0;
+  while (ratePerMinute() > RATE_BUDGET_PER_MINUTE) {
+    const wait = Math.min(1_000 + (ratePerMinute() - RATE_BUDGET_PER_MINUTE) * 10, 8_000);
+    if (waited === 0) {
+      console.warn(
+        `rpc budget: waiting at ${ratePerMinute().toFixed(0)} calls/min ` +
+          `(cap ${RATE_BUDGET_PER_MINUTE})`,
+      );
+    }
+    await sleep(wait);
+    waited += wait;
+    if (waited > 60_000) break;
+  }
+}
+
 export function rpcSnapshot(): RpcSnapshot {
   const s = state();
   const uptimeSeconds = (Date.now() - s.startedAt) / 1000;

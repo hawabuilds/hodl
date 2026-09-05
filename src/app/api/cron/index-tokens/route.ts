@@ -1,5 +1,5 @@
 import {json} from "@/lib/server/http";
-import {indexTokens} from "@/lib/server/live/tokenIndexer";
+import {indexLiveTipPass} from "@/lib/server/live/liveTip";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -14,16 +14,7 @@ export async function GET(request: Request) {
     const started = Date.now();
     // Live tip only. Gap catch-up is a local/admin job — sequential gap
     // scans are why the tip never wrote before the 60s kill.
-    const result = await indexTokens({
-      live: true,
-      historical: false,
-      refreshStats: false,
-      skipImages: true,
-      drainGap: false,
-      writeCap: 8,
-      maxBlocks: 1_000n,
-      budgetMs: 45_000,
-    });
+    const result = await indexLiveTipPass();
     const ms = Date.now() - started;
     console.info(
       `index-tokens ms=${ms} head=${result.head} upserts=${result.passes.reduce((n, p) => n + p.upserts, 0)}`,

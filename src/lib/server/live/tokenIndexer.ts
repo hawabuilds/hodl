@@ -527,6 +527,8 @@ async function indexFactory(
     writeTimeoutMs?: number;
     /** Admin gap job writes tokens via DATABASE_URL, not PostgREST. */
     persistWrites?: (rows: TokenWrite[]) => Promise<void>;
+    /** Process-lifetime dedupe so a 30-block reorg overlap does not re-fetch. */
+    seenTokens?: Set<string>;
   } = {},
 ): Promise<IndexPass> {
   const tip = await head();
@@ -583,6 +585,7 @@ async function indexFactory(
       bonded: boolean,
     ) => {
       if (!token) return;
+      if (extras.seenTokens?.has(token) && !bonded) return;
       const held = jobs.find((job) => job.token === token);
       if (held) {
         if (bonded) held.bonded = true;
@@ -634,6 +637,7 @@ async function indexFactory(
     const rows = await mapLimit(capped.items, 8, (log) => {
       const token = asAddress(log.args?.asset);
       if (!token) return Promise.resolve(null);
+      if (extras.seenTokens?.has(token)) return Promise.resolve(null);
       return writeLong(
         token,
         asAddress(log.args?.numeraire),
@@ -643,6 +647,10 @@ async function indexFactory(
       );
     });
     for (const row of rows) if (row) writes.push(row);
+  }
+
+  if (extras.seenTokens) {
+    for (const row of writes) extras.seenTokens.add(normalizeAddress(row.address));
   }
 
   if (writes.length > 0) {
@@ -729,6 +737,8 @@ export interface IndexOptions {
   heldCursors?: Map<string, bigint>;
   /** Admin gap job persists tokens via DATABASE_URL. Cron must omit this. */
   persistWrites?: (rows: TokenWrite[]) => Promise<void>;
+  /** Process-lifetime dedupe across live-tip ticks. */
+  seenTokens?: Set<string>;
 }
 
 /**
@@ -738,6 +748,22 @@ export interface IndexOptions {
  * to cover a missed cron without walking the whole chain.
  */
 const LIVE_LOOKBACK = 12_000n;
+
+export function invalidateHeadCache(): void {
+  cachedHead = null;
+}
+
+/** Public chain tip. Live indexing must not use Alchemy for this. */
+export async function readChainHead(): Promise<bigint> {
+  return head();
+}
+
+export function liveTipCursorNames(): string[] {
+  return liveFactoryList().flatMap((factory) => [
+    `tokens:${factory.id}:live`,
+    `tokens:${factory.id}:live-gap`,
+  ]);
+}
 
 function liveFactoryList(): FactorySpec[] {
   return [
@@ -767,11 +793,19 @@ async function readCursors(names: string[], held?: Map<string, bigint>): Promise
 async function indexLiveTip(
   deadline: number,
   maxBlocks: bigint,
-  extras: {skipImages?: boolean; writeCap?: number} = {},
+  extras: {
+    skipImages?: boolean;
+    writeCap?: number;
+    heldCursors?: Map<string, bigint>;
+    persistWrites?: (rows: TokenWrite[]) => Promise<void>;
+    seenTokens?: Set<string>;
+  } = {},
 ): Promise<IndexPass[]> {
   const factoryExtras = {
     skipImages: extras.skipImages,
     writeCap: extras.writeCap,
+    persistWrites: extras.persistWrites,
+    seenTokens: extras.seenTokens,
     bondedOnly: true,
   };
   const tip = await head();
@@ -781,7 +815,7 @@ async function indexLiveTip(
 
   const liveKeys = liveFactories.map((factory) => `tokens:${factory.id}:live`);
   const gapKeys = liveFactories.map((factory) => `tokens:${factory.id}:live-gap`);
-  const held = await readCursors([...liveKeys, ...gapKeys]);
+  const held = await readCursors([...liveKeys, ...gapKeys], extras.heldCursors);
 
   const latchWrites: {name: string; block: bigint}[] = [];
   for (const factory of liveFactories) {
@@ -920,6 +954,9 @@ export async function indexTokens(
       const live = await indexLiveTip(deadline, maxBlocks, {
         skipImages: opts.skipImages,
         writeCap: opts.writeCap,
+        heldCursors: opts.heldCursors,
+        persistWrites: opts.persistWrites,
+        seenTokens: opts.seenTokens,
       });
       for (const pass of live) {
         passes.push(pass);

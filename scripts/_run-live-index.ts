@@ -7,7 +7,9 @@
 import dns from "node:dns";
 import pg from "pg";
 import {ALL_FACTORIES} from "../src/lib/contracts";
+import {upsertTokensAdmin} from "../src/lib/server/live/adminCatalogue";
 import {indexTokens} from "../src/lib/server/live/tokenIndexer";
+import type {TokenWrite} from "../src/lib/server/live/universeStore";
 
 dns.setDefaultResultOrder("ipv4first");
 
@@ -33,59 +35,42 @@ function redact(text: string): string {
 async function withDb<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
   const url = databaseUrl();
   const local = /localhost|127\.0\.0\.1/i.test(url);
-  const client = new pg.Client({
-    connectionString: url,
-    ssl: local ? undefined : {rejectUnauthorized: false},
-    connectionTimeoutMillis: 8_000,
-    statement_timeout: 8_000,
-    query_timeout: 8_000,
-  });
-  try {
-    await client.connect();
-    await client.query("SET statement_timeout = '15s'");
-    return await fn(client);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(redact(message));
-  } finally {
-    await client.end().catch(() => undefined);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const client = new pg.Client({
+      connectionString: url,
+      ssl: local ? undefined : {rejectUnauthorized: false},
+      connectionTimeoutMillis: 60_000,
+    });
+    try {
+      await client.connect();
+      await client.query("SET statement_timeout = '30s'");
+      try {
+        return await fn(client);
+      } finally {
+        await client.end().catch(() => undefined);
+      }
+    } catch (error) {
+      lastError = error;
+      await client.end().catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 3_000 * (attempt + 1)));
+    }
   }
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(redact(message));
 }
 
 async function chainHead(): Promise<bigint> {
-  const alchemyUrl = process.env.ALCHEMY_RPC_URL?.trim() ?? "";
-  const reads = await Promise.allSettled(
-    [
-      alchemyUrl
-        ? fetch(alchemyUrl, {
-            method: "POST",
-            headers: {"content-type": "application/json"},
-            body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: []}),
-            signal: AbortSignal.timeout(8_000),
-          }).then(async (res) => {
-            if (!res.ok) throw new Error(`alchemy HTTP ${res.status}`);
-            return BigInt(((await res.json()) as {result: string}).result);
-          })
-        : Promise.resolve(0n),
-      fetch(PUBLIC_RPC, {
-        method: "POST",
-        headers: {"content-type": "application/json"},
-        body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: []}),
-        signal: AbortSignal.timeout(8_000),
-      }).then(async (res) => {
-        if (!res.ok) throw new Error(`public HTTP ${res.status}`);
-        return BigInt(((await res.json()) as {result: string}).result);
-      }),
-    ],
-  );
-  const alchemy = reads[0].status === "fulfilled" ? reads[0].value : 0n;
-  const pub = reads[1].status === "fulfilled" ? reads[1].value : 0n;
-  const best = alchemy > pub ? alchemy : pub;
-  if (best === 0n) throw new Error("could not read chain head");
-  if (alchemy > 0n && pub > 0n && (alchemy > pub ? alchemy - pub : pub - alchemy) > 30n) {
-    console.warn(`chain head mismatch alchemy=${alchemy} public=${pub} using=${best}`);
-  }
-  return best;
+  const res = await fetch(PUBLIC_RPC, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: []}),
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!res.ok) throw new Error(`public HTTP ${res.status}`);
+  const pub = BigInt(((await res.json()) as {result: string}).result);
+  if (pub === 0n) throw new Error("could not read public chain head");
+  return pub;
 }
 
 function supabaseUrl(): string {
@@ -110,10 +95,10 @@ async function restUpsertCursor(name: string, block: bigint): Promise<void> {
       last_block: Number(block),
       updated_at: new Date().toISOString(),
     }),
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`rest cursor ${name} HTTP ${res.status}`);
-}
+        signal: AbortSignal.timeout(45_000),
+      });
+      if (!res.ok) throw new Error(`rest cursor ${name} HTTP ${res.status}`);
+    }
 
 async function restReadCursors(): Promise<Record<string, string>> {
   const res = await fetch(`${supabaseUrl()}/rest/v1/indexer_state?select=name,last_block`, {
@@ -121,9 +106,9 @@ async function restReadCursors(): Promise<Record<string, string>> {
       apikey: serviceKey(),
       Authorization: `Bearer ${serviceKey()}`,
     },
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`rest cursors HTTP ${res.status}`);
+      signal: AbortSignal.timeout(45_000),
+    });
+    if (!res.ok) throw new Error(`rest cursors HTTP ${res.status}`);
   const rows = (await res.json()) as {name: string; last_block: number}[];
   const out: Record<string, string> = {};
   for (const id of LIVE_IDS) {
@@ -142,10 +127,10 @@ async function restNewest() {
         apikey: serviceKey(),
         Authorization: `Bearer ${serviceKey()}`,
       },
-      signal: AbortSignal.timeout(20_000),
-    },
-  );
-  if (!res.ok) throw new Error(`rest newest HTTP ${res.status}`);
+        signal: AbortSignal.timeout(45_000),
+      },
+    );
+    if (!res.ok) throw new Error(`rest newest HTTP ${res.status}`);
   return res.json();
 }
 
@@ -168,7 +153,7 @@ async function latchViaRest(tip: bigint) {
   return {
     latched,
     cursors: await restReadCursors(),
-    newest: await restNewest(),
+    newest: [] as {symbol: string; listed_at: string; address: string}[],
   };
 }
 
@@ -220,12 +205,7 @@ async function latchAndRead(tip: bigint) {
       `select name, last_block::text as last_block from indexer_state
        where name like 'tokens:%live%' order by name`,
     );
-    const {rows: newest} = await client.query<{symbol: string; listed_at: string; address: string}>(
-      `select symbol, listed_at::text as listed_at, address
-       from tokens where listed_at is not null
-       order by listed_at desc limit 5`,
-    );
-    return {latched, cursors, newest};
+    return {latched, cursors, newest: [] as {symbol: string; listed_at: string; address: string}[]};
     });
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
@@ -242,24 +222,48 @@ async function main() {
   for (const line of snapshot.latched) console.warn(line);
   if (snapshot.latched.length === 0) console.warn("live cursors already near head");
 
+  const heldCursors = new Map<string, bigint>();
+  const cursorRows = Array.isArray(snapshot.cursors)
+    ? snapshot.cursors
+    : Object.entries(snapshot.cursors ?? {}).map(([name, last_block]) => ({name, last_block}));
+  for (const row of cursorRows as {name: string; last_block: string}[]) {
+    heldCursors.set(row.name, BigInt(row.last_block));
+  }
+
   let result: unknown = {skipped: "index after snapshot"};
   try {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    result = await Promise.race([
-      indexTokens({
-        live: true,
-        historical: false,
-        refreshStats: false,
-        skipImages: true,
-        writeCap: 8,
-        maxBlocks: WINDOW,
-        budgetMs: 25_000,
-      }),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("indexTokens timed out after 50s")), 50_000);
-      }),
-    ]).finally(() => {
-      if (timer) clearTimeout(timer);
+    const persistWrites = async (rows: TokenWrite[]) => {
+      await withDb((client) => upsertTokensAdmin(client, rows));
+    };
+    result = await indexTokens({
+      live: true,
+      historical: false,
+      refreshStats: false,
+      skipImages: true,
+      writeCap: 8,
+      drainGap: false,
+      heldCursors,
+      persistWrites,
+      maxBlocks: 1_000n,
+      budgetMs: 45_000,
+    });
+    const passes = (result as {passes?: {factory: string; cursorTo: string}[]}).passes ?? [];
+    await withDb(async (client) => {
+      for (const pass of passes) {
+        const key = pass.factory.startsWith("tokens:") ? pass.factory : `tokens:${pass.factory}`;
+        if (!key.endsWith(":live") || key.endsWith(":live-gap")) continue;
+        const next = BigInt(pass.cursorTo || "0");
+        const prev = heldCursors.get(key) ?? 0n;
+        if (next <= prev) continue;
+        await client.query(
+          `insert into indexer_state (name, last_block, updated_at)
+           values ($1, $2, now())
+           on conflict (name) do update
+             set last_block = excluded.last_block, updated_at = excluded.updated_at
+           where excluded.last_block > indexer_state.last_block`,
+          [key, next.toString()],
+        );
+      }
     });
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
@@ -267,9 +271,17 @@ async function main() {
     result = {error: text.slice(0, 180)};
   }
 
+  let newest: unknown = [];
+  try {
+    newest = await restNewest();
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    newest = {error: text.slice(0, 120)};
+  }
+
   console.log(
     JSON.stringify(
-      {head: tip.toString(), ...snapshot, result},
+      {head: tip.toString(), ...snapshot, newest, result},
       (_key, value) => (typeof value === "bigint" ? value.toString() : value),
       2,
     ),

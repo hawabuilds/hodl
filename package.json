@@ -17,9 +17,15 @@
     "backfill:pools": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-pools.ts",
     "audit:charts": "node --import ./test/resolver.mjs --env-file=.env.local scripts/audit-chart-inversion.ts",
     "backfill:eligible": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-eligible.ts",
-    "backfill:prices": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-prices.ts"
+    "backfill:prices": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-prices.ts",
+    "worker": "node --import ./test/resolver.mjs src/worker/index.ts"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   },
   "dependencies": {
+    "@base-org/account": "^2.5.10",
+    "@coinbase/wallet-sdk": "^4.3.7",
     "@privy-io/react-auth": "^3.37.1",
     "@privy-io/server-auth": "^1.32.5",
     "@supabase/supabase-js": "^2.112.4",

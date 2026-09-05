@@ -178,10 +178,15 @@ CREATE INDEX IF NOT EXISTS reward_distributions_token_address
 -- ── indexer cursor ─────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS indexer_state (
-  name       text PRIMARY KEY,
-  last_block bigint NOT NULL DEFAULT 0,
-  updated_at timestamptz NOT NULL DEFAULT now()
+  name           text PRIMARY KEY,
+  last_block     bigint NOT NULL DEFAULT 0,
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+  last_run_at    timestamptz,
+  blocks_behind  bigint
 );
+
+ALTER TABLE indexer_state ADD COLUMN IF NOT EXISTS last_run_at timestamptz;
+ALTER TABLE indexer_state ADD COLUMN IF NOT EXISTS blocks_behind bigint;
 
 INSERT INTO indexer_state (name, last_block)
 VALUES

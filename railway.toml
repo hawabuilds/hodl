@@ -1,0 +1,11 @@
+[build]
+builder = "NIXPACKS"
+# Install only. Do not run `next build` — this service is the live-tip
+# worker, not the Vercel app. `npm install` stays in sync when scripts
+# change; `npm ci` aborts if the lockfile lags package.json.
+buildCommand = "npm install"
+
+[deploy]
+startCommand = "npm run worker"
+numReplicas = 1
+restartPolicyType = "ON_FAILURE"

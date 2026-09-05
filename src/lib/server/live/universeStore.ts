@@ -1250,6 +1250,47 @@ export async function writeCursor(name: string, block: bigint): Promise<void> {
   await writeCursors([{name, block}]);
 }
 
+export async function readLiveTipHeartbeat(): Promise<{
+  last_run_at: string | null;
+  blocks_behind: number | null;
+} | null> {
+  if (!hasDatabase) return null;
+  const full = await db()
+    .from("indexer_state")
+    .select("last_block, updated_at, last_run_at, blocks_behind")
+    .eq("name", "live-tip")
+    .maybeSingle();
+  if (full.error && /last_run_at|blocks_behind/i.test(full.error.message)) {
+    const fallback = await db()
+      .from("indexer_state")
+      .select("last_block, updated_at")
+      .eq("name", "live-tip")
+      .maybeSingle();
+    if (fallback.error || !fallback.data) return null;
+    const row = fallback.data as {last_block: number | string | null; updated_at: string | null};
+    return {
+      last_run_at: row.updated_at ?? null,
+      blocks_behind: row.last_block != null ? Number(row.last_block) : null,
+    };
+  }
+  if (full.error || !full.data) return null;
+  const row = full.data as {
+    last_block: number | string | null;
+    updated_at: string | null;
+    last_run_at?: string | null;
+    blocks_behind?: number | string | null;
+  };
+  return {
+    last_run_at: row.last_run_at ?? row.updated_at ?? null,
+    blocks_behind:
+      row.blocks_behind != null
+        ? Number(row.blocks_behind)
+        : row.last_block != null
+          ? Number(row.last_block)
+          : null,
+  };
+}
+
 export function rowToAsset(row: TokenRow, stats: TokenStatRow | undefined): TokenAsset {
   const address = normalizeAddress(row.address);
   const launchpad = launchpadFor(row.launchpad, address);
