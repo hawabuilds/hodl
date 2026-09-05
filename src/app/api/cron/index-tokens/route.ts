@@ -12,16 +12,17 @@ export async function GET(request: Request) {
 
   try {
     const started = Date.now();
-    // One bounded live slice. History and stats are other jobs.
-    // Must finish well under Vercel's 60s — 12k-block live + hist + prices did not.
+    // Live tip only. Gap catch-up is a local/admin job — sequential gap
+    // scans are why the tip never wrote before the 60s kill.
     const result = await indexTokens({
       live: true,
       historical: false,
       refreshStats: false,
       skipImages: true,
+      drainGap: false,
       writeCap: 8,
-      maxBlocks: 800n,
-      budgetMs: 20_000,
+      maxBlocks: 1_000n,
+      budgetMs: 45_000,
     });
     const ms = Date.now() - started;
     console.info(

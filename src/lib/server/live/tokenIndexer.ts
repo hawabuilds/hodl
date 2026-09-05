@@ -21,9 +21,10 @@ import {
 import {RWA_BY_ADDRESS} from "./robinhood";
 import {rpc, erc20Abi} from "./chain";
 import {
-  cursorFor,
+  cursorsFor,
   replaceTokenPools,
   writeCursor,
+  writeCursors,
   type TokenWrite,
 } from "./universeStore";
 import {discoverV3Pools, pickBestPool} from "./v3Pools";
@@ -41,8 +42,31 @@ const BUDGET_MS = 45_000;
 
 const logsClient = createPublicClient({
   chain: robinhoodMainnet,
-  transport: http(PUBLIC_RPC, {timeout: 30_000}),
+  transport: http(PUBLIC_RPC, {timeout: 30_000, retryCount: 0}),
 });
+
+const HEAD_TIMEOUT_MS = 8_000;
+const HEAD_CACHE_MS = 8_000;
+let cachedHead: {value: bigint; at: number} | null = null;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  // Node clamps setTimeout(Infinity) to a tiny delay, so an unbounded
+  // admin job would abort on the first getLogs.
+  if (!Number.isFinite(ms) || ms <= 0) return promise;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const PONS_V2_LAUNCHED = parseAbiItem(
   "event TokenLaunched(address indexed token, address indexed curve, address indexed deployer, address pairToken, uint256 launchConfigId, uint256 graduationThreshold)",
@@ -74,13 +98,41 @@ export interface IndexPass {
   factory: string;
   from: string;
   to: string;
+  /** Block written to the cursor. Differs from `to` when writeCap truncates. */
+  cursorTo: string;
   upserts: number;
   unresolvedRewards: string[];
 }
 
 async function head(): Promise<bigint> {
-  // Public RPC is Cloudflare-gated; Alchemy is fine for a single block number.
-  return rpc().getBlockNumber();
+  // Public RPC is the live tip. Alchemy has sat hundreds of thousands of
+  // blocks behind and waiting on it ate the cron budget. Logs already go
+  // through this client; block number must too. Never fall back to Alchemy
+  // — a stale tip freezes live cursors as if the chain had stopped.
+  if (cachedHead && Date.now() - cachedHead.at < HEAD_CACHE_MS) {
+    return cachedHead.value;
+  }
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const pub = await withTimeout(
+        logsClient.getBlockNumber(),
+        HEAD_TIMEOUT_MS,
+        "public head",
+      );
+      if (pub === 0n) {
+        throw new Error("token indexer could not read chain head");
+      }
+      cachedHead = {value: pub, at: Date.now()};
+      return pub;
+    } catch (error) {
+      lastError = error;
+      await sleep(400 * (attempt + 1));
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("token indexer could not read chain head");
 }
 
 interface LaunchLog {
@@ -104,6 +156,7 @@ async function logs(
   const out: LaunchLog[] = [];
   let window = START_WINDOW;
   let cursor = from;
+  let challenged = 0;
   while (cursor <= to) {
     const end = cursor + window - 1n > to ? to : cursor + window - 1n;
     try {
@@ -119,12 +172,26 @@ async function logs(
     } catch (error) {
       const text = String(error);
       if (/403|cloudflare|just a moment|cf-mitigated/i.test(text)) {
+        challenged += 1;
+        if (challenged > 2) {
+          throw new Error(`public RPC challenged repeatedly at ${cursor}-${end}`);
+        }
         console.error("public RPC challenged; retrying getLogs in 20s", cursor.toString(), end.toString());
-        await new Promise((resolve) => setTimeout(resolve, 20_000));
+        await sleep(20_000);
+        continue;
+      }
+      if (/429|too many requests|rate limit/i.test(text)) {
+        challenged += 1;
+        if (challenged > 6) {
+          throw new Error(`public RPC rate-limited repeatedly at ${cursor}-${end}`);
+        }
+        const wait = Math.min(4_000 * 2 ** (challenged - 1), 30_000);
+        console.error("public RPC 429; backing off", wait, cursor.toString(), end.toString());
+        await sleep(wait);
         continue;
       }
       const capped =
-        /exceeds|limit|too many|range|invalid parameters|query returned more/i.test(
+        /exceeds|limit|range|invalid parameters|query returned more/i.test(
           text,
         );
       if (!capped || window <= MIN_WINDOW) {
@@ -186,10 +253,27 @@ async function blockTime(block: bigint): Promise<string> {
   const key = block.toString();
   const hit = blockTimes.get(key);
   if (hit) return hit;
-  const header = await logsClient.getBlock({blockNumber: block});
-  const iso = new Date(Number(header.timestamp) * 1000).toISOString();
-  blockTimes.set(key, iso);
-  return iso;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const header = await logsClient.getBlock({blockNumber: block});
+      const iso = new Date(Number(header.timestamp) * 1000).toISOString();
+      blockTimes.set(key, iso);
+      return iso;
+    } catch (error) {
+      lastError = error;
+      const text = String(error);
+      if (/429|too many requests|rate limit/i.test(text)) {
+        await sleep(Math.min(4_000 * 2 ** attempt, 20_000));
+        continue;
+      }
+      if (attempt < 3) {
+        await sleep(400 * (attempt + 1));
+        continue;
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`blockTime ${key} failed`);
 }
 
 async function mapLimit<T, R>(
@@ -405,27 +489,52 @@ async function indexFactory(
   maxBlocks: bigint,
   deadline: number,
   cursorName = `tokens:${factory.id}`,
-  extras: {skipImages?: boolean; writeCap?: number} = {},
+  extras: {
+    skipImages?: boolean;
+    writeCap?: number;
+    storedCursor?: bigint;
+    bondedOnly?: boolean;
+    /** Stop at this block even if head is further (gap walks toward live). */
+    untilBlock?: bigint;
+  } = {},
 ): Promise<IndexPass> {
   const tip = await head();
-  const stored = await cursorFor(cursorName);
+  const stored = extras.storedCursor ?? (await readCursors([cursorName])).get(cursorName) ?? 0n;
   const start = stored > 0n ? (stored > REORG ? stored - REORG : 0n) : factory.deployedAtBlock;
-  const end = start + maxBlocks > tip ? tip : start + maxBlocks;
+  const cap = extras.untilBlock != null && extras.untilBlock < tip ? extras.untilBlock : tip;
+  const end = start + maxBlocks > cap ? cap : start + maxBlocks;
   const unresolved: string[] = [];
   const writes: TokenWrite[] = [];
   let cursorTo = end;
 
   if (Date.now() > deadline || end <= start) {
-    return {factory: factory.id, from: start.toString(), to: start.toString(), upserts: 0, unresolvedRewards: []};
+    return {
+      factory: factory.id,
+      from: start.toString(),
+      to: start.toString(),
+      cursorTo: stored.toString(),
+      upserts: 0,
+      unresolvedRewards: [],
+    };
   }
+
+  const remain = () => Math.max(deadline - Date.now(), 1);
+  const logsUntil = (
+    address: `0x${string}`,
+    event: ReturnType<typeof parseAbiItem>,
+    from: bigint,
+    to: bigint,
+    label: string,
+  ) => withTimeout(logs(address, event, from, to), remain(), label);
 
   if (factory.launchpad === "pons") {
     const v2 = factory.address === PONS_V2_FACTORY.address;
-    const launched = await logs(
+    const launched = await logsUntil(
       factory.address,
       v2 ? PONS_V2_LAUNCHED : PONS_V1_LAUNCHED,
       start,
       end,
+      `${factory.id} launched logs`,
     );
     const jobs: {
       token: string;
@@ -454,7 +563,7 @@ async function indexFactory(
       jobs.push({token, pair, curve, block, bonded});
     };
     if (!v2 && launched.length === 0) {
-      const alt = await logs(factory.address, PONS_V2_LAUNCHED, start, end);
+      const alt = await logsUntil(factory.address, PONS_V2_LAUNCHED, start, end, `${factory.id} alt launched logs`);
       for (const log of alt) {
         addJob(
           asAddress(log.args?.token),
@@ -475,19 +584,20 @@ async function indexFactory(
       );
     }
     if (v2) {
-      const graduated = await logs(factory.address, PONS_V2_GRADUATED, start, end);
+      const graduated = await logsUntil(factory.address, PONS_V2_GRADUATED, start, end, `${factory.id} graduated logs`);
       for (const log of graduated) {
         addJob(asAddress(log.args?.token), null, null, log.blockNumber, true);
       }
     }
-    const capped = capByBlock(jobs, (job) => job.block, extras.writeCap);
+    const persist = extras.bondedOnly ? jobs.filter((job) => job.bonded) : jobs;
+    const capped = capByBlock(persist, (job) => job.block, extras.writeCap);
     if (capped.endAt != null) cursorTo = capped.endAt;
     const rows = await mapLimit(capped.items, 8, (job) =>
       writePons(factory, job.token, job.pair, job.curve, job.block, job.bonded, unresolved),
     );
     for (const row of rows) if (row) writes.push(row);
   } else if (factory.id === "long-airlock") {
-    const created = await logs(factory.address, AIRLOCK_CREATE, start, end);
+    const created = await logsUntil(factory.address, AIRLOCK_CREATE, start, end, `${factory.id} create logs`);
     const capped = capByBlock(created, (log) => log.blockNumber, extras.writeCap);
     if (capped.endAt != null) cursorTo = capped.endAt;
     const rows = await mapLimit(capped.items, 8, (log) => {
@@ -507,11 +617,17 @@ async function indexFactory(
   if (writes.length > 0) {
     let poolRows: {token: string; pool: string; fee: number; quote: string; liquidity: bigint}[] = [];
     try {
-      poolRows = await attachResolvedPools(writes);
+      poolRows = await withTimeout(
+        attachResolvedPools(writes),
+        Math.min(remain(), 6_000),
+        "v3 pool resolve",
+      );
     } catch (error) {
       console.error("v3 pool resolve failed; tokens still upserted", error);
     }
-    await commitListedWithPrice(writes);
+    const writeBudget =
+      deadline === Number.POSITIVE_INFINITY ? 180_000 : Math.min(remain(), 12_000);
+    await withTimeout(commitListedWithPrice(writes), writeBudget, "token upsert");
     if (poolRows.length > 0) {
       try {
         await replaceTokenPools(poolRows);
@@ -525,11 +641,18 @@ async function indexFactory(
       );
     }
   }
-  await writeCursor(cursorName, cursorTo);
+  if (cursorTo !== stored) {
+    try {
+      await withTimeout(writeCursor(cursorName, cursorTo), 8_000, "cursor write");
+    } catch (error) {
+      console.error(`cursor write ${cursorName} failed; tokens still upserted`, error);
+    }
+  }
   return {
     factory: cursorName.replace(/^tokens:/, ""),
     from: start.toString(),
     to: end.toString(),
+    cursorTo: cursorTo.toString(),
     upserts: writes.length,
     unresolvedRewards: unresolved,
   };
@@ -556,6 +679,13 @@ export interface IndexOptions {
   skipImages?: boolean;
   /** Cap new rows per factory so one busy window cannot eat the whole minute. */
   writeCap?: number;
+  /**
+   * Drain parked `live-gap` cursors. Cron must leave this false — sequential
+   * gap scans are why the tip never persisted before the 60s kill.
+   */
+  drainGap?: boolean;
+  /** Admin gap job preloads from Postgres so a slow PostgREST cannot stall. */
+  heldCursors?: Map<string, bigint>;
 }
 
 /**
@@ -566,38 +696,153 @@ export interface IndexOptions {
  */
 const LIVE_LOOKBACK = 12_000n;
 
+function liveFactoryList(): FactorySpec[] {
+  return [
+    ...ALL_FACTORIES.filter((factory) => factory.id === "pons-v2" || factory.id === "long-airlock"),
+    ...ALL_FACTORIES.filter((factory) => factory.id === "pons-v1" || factory.id === "pons-legacy"),
+  ];
+}
+
+function emptyPass(factory: string): IndexPass {
+  return {factory, from: "0", to: "0", cursorTo: "0", upserts: 0, unresolvedRewards: []};
+}
+
+async function readCursors(names: string[], held?: Map<string, bigint>): Promise<Map<string, bigint>> {
+  if (held) {
+    const map = new Map<string, bigint>();
+    for (const name of names) map.set(name, held.get(name) ?? 0n);
+    return map;
+  }
+  return withTimeout(cursorsFor(names), 8_000, "cursor read");
+}
+
 /**
  * Index only the tip. Shares upserts with history (same address is the same
  * row) and keeps its own cursors so a historical pass cannot forget a coin
- * that launched this minute.
+ * that launched this minute. Never drains `live-gap`.
  */
 async function indexLiveTip(
   deadline: number,
   maxBlocks: bigint,
   extras: {skipImages?: boolean; writeCap?: number} = {},
 ): Promise<IndexPass[]> {
+  const factoryExtras = {
+    skipImages: extras.skipImages,
+    writeCap: extras.writeCap,
+    bondedOnly: true,
+  };
   const tip = await head();
   const out: IndexPass[] = [];
   const window = maxBlocks > 0n ? maxBlocks : LIVE_LOOKBACK;
+  const liveFactories = liveFactoryList();
 
-  for (const factory of ALL_FACTORIES) {
-    if (Date.now() > deadline) break;
-    if (factory.id === "long-factory" || factory.id === "pons-v3") continue;
+  const liveKeys = liveFactories.map((factory) => `tokens:${factory.id}:live`);
+  const gapKeys = liveFactories.map((factory) => `tokens:${factory.id}:live-gap`);
+  const held = await readCursors([...liveKeys, ...gapKeys]);
 
-    // Always scan the tip. Skipping once history is caught up is what
-    // froze New for an hour: the historical job exited, live stopped,
-    // and new launches waited for a cron that never walked the tip.
+  const latchWrites: {name: string; block: bigint}[] = [];
+  for (const factory of liveFactories) {
     const liveKey = `tokens:${factory.id}:live`;
-    const stored = await cursorFor(liveKey);
+    const stored = held.get(liveKey) ?? 0n;
     if (stored === 0n) {
       const seed = tip > LIVE_LOOKBACK ? tip - LIVE_LOOKBACK : factory.deployedAtBlock;
-      await writeCursor(liveKey, seed);
+      latchWrites.push({name: liveKey, block: seed});
+      held.set(liveKey, seed);
+    } else if (tip > stored && tip - stored > LIVE_LOOKBACK) {
+      // Small tip windows cannot recover a multi-hour stall. Latch to the
+      // tip so this minute's launches show; park the hole on live-gap for
+      // a local/admin job. Cron must not drain that gap.
+      const gapKey = `tokens:${factory.id}:live-gap`;
+      const gapHeld = held.get(gapKey) ?? 0n;
+      if (gapHeld === 0n || gapHeld > stored) {
+        latchWrites.push({name: gapKey, block: stored});
+        held.set(gapKey, stored);
+      }
+      const seed = tip > window ? tip - window + REORG : 0n;
+      console.warn(
+        `live cursor ${liveKey} lagged ${tip - stored} blocks; latching to ${seed}`,
+      );
+      latchWrites.push({name: liveKey, block: seed});
+      held.set(liveKey, seed);
     }
-
-    const pass = await indexFactory(factory, window, deadline, liveKey, extras);
-    out.push(pass);
+  }
+  if (latchWrites.length > 0) {
+    try {
+      await withTimeout(writeCursors(latchWrites), 8_000, "cursor latch");
+    } catch (error) {
+      console.error("live cursor latch failed; scanning from in-memory seeds", error);
+    }
   }
 
+  const priority = liveFactories.filter(
+    (factory) => factory.id === "pons-v2" || factory.id === "long-airlock",
+  );
+  const secondary = liveFactories.filter(
+    (factory) => factory.id === "pons-v1" || factory.id === "pons-legacy",
+  );
+  // Scan budget starts after PostgREST latch chatter, not at cron start.
+  const scanDeadline =
+    deadline === Number.POSITIVE_INFINITY ? deadline : Math.min(deadline, Date.now() + 18_000);
+  async function scanLive(factory: FactorySpec): Promise<IndexPass> {
+    const liveKey = `tokens:${factory.id}:live`;
+    try {
+      return await indexFactory(factory, window, scanDeadline, liveKey, {
+        ...factoryExtras,
+        storedCursor: held.get(liveKey),
+      });
+    } catch (error) {
+      console.error(`live tip ${liveKey} failed; continuing`, error);
+      return emptyPass(`${factory.id}:live`);
+    }
+  }
+  // Sequential: parallel tip scans 429 the public RPC and both factories miss.
+  for (const factory of [...priority, ...secondary]) {
+    if (Date.now() > scanDeadline) break;
+    out.push(await scanLive(factory));
+  }
+
+  return out;
+}
+
+/**
+ * Drain parked `live-gap` cursors toward the live tip. Does not read or
+ * write `tokens:<factory>:live` — the minute cron owns those.
+ */
+export async function indexLiveGaps(
+  deadline: number,
+  maxBlocks: bigint,
+  extras: {skipImages?: boolean; writeCap?: number; heldCursors?: Map<string, bigint>} = {},
+): Promise<IndexPass[]> {
+  const tip = await head();
+  const liveFactories = liveFactoryList();
+  const liveKeys = liveFactories.map((factory) => `tokens:${factory.id}:live`);
+  const gapKeys = liveFactories.map((factory) => `tokens:${factory.id}:live-gap`);
+  const held = await readCursors([...liveKeys, ...gapKeys], extras.heldCursors);
+  const window = maxBlocks > 0n ? maxBlocks : 4_000n;
+  const out: IndexPass[] = [];
+
+  for (const factory of liveFactories) {
+    if (Date.now() > deadline) break;
+    const gapKey = `tokens:${factory.id}:live-gap`;
+    const liveKey = `tokens:${factory.id}:live`;
+    const gapStored = held.get(gapKey) ?? 0n;
+    const liveStored = held.get(liveKey) ?? 0n;
+    const until = liveStored > 0n ? liveStored : tip;
+    if (gapStored === 0n || until <= gapStored + REORG) continue;
+    try {
+      const pass = await indexFactory(factory, window, deadline, gapKey, {
+        skipImages: extras.skipImages,
+        writeCap: extras.writeCap,
+        storedCursor: gapStored,
+        untilBlock: until,
+        bondedOnly: true,
+      });
+      out.push(pass);
+    } catch (error) {
+      console.error(`live-gap ${gapKey} failed; continuing`, error);
+      out.push(emptyPass(`${factory.id}:live-gap`));
+    }
+  }
   return out;
 }
 
@@ -631,6 +876,24 @@ export async function indexTokens(
       }
     } catch (error) {
       console.error("live tip index failed; historical pass still runs", error);
+      if (opts.historical === false && opts.drainGap !== true) throw error;
+    }
+  }
+
+  if (opts.drainGap === true) {
+    try {
+      const gaps = await indexLiveGaps(deadline, maxBlocks, {
+        skipImages: opts.skipImages,
+        writeCap: opts.writeCap,
+        heldCursors: opts.heldCursors,
+      });
+      for (const pass of gaps) {
+        passes.push(pass);
+        for (const address of pass.unresolvedRewards) unresolved.add(address);
+      }
+    } catch (error) {
+      console.error("live-gap index failed; continuing", error);
+      if (opts.live === false && opts.historical === false) throw error;
     }
   }
 
@@ -647,14 +910,15 @@ export async function indexTokens(
     if (factory.id === "long-factory") {
       // Same txs as Airlock Create; no ABI we can prove. Cursor still advances
       // so a later generation can be added without rescanning from zero.
-      const stored = await cursorFor(`tokens:${factory.id}`);
+      const stored = (await readCursors([`tokens:${factory.id}`])).get(`tokens:${factory.id}`) ?? 0n;
       const start = stored > 0n ? stored : factory.deployedAtBlock;
       const end = start + maxBlocks > tip ? tip : start + maxBlocks;
-      await writeCursor(`tokens:${factory.id}`, end);
+      if (end !== stored) await writeCursor(`tokens:${factory.id}`, end);
       passes.push({
         factory: factory.id,
         from: start.toString(),
         to: end.toString(),
+        cursorTo: end.toString(),
         upserts: 0,
         unresolvedRewards: [],
       });

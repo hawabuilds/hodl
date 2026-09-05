@@ -1113,23 +1113,40 @@ export async function listListedForPricing(opts: {
 }
 
 export async function cursorFor(name: string): Promise<bigint> {
-  if (!hasDatabase) return 0n;
-  const {data} = await db()
+  const held = await cursorsFor([name]);
+  return held.get(name) ?? 0n;
+}
+
+export async function cursorsFor(names: string[]): Promise<Map<string, bigint>> {
+  const map = new Map<string, bigint>();
+  for (const name of names) map.set(name, 0n);
+  if (!hasDatabase || names.length === 0) return map;
+  const {data, error} = await db()
     .from("indexer_state")
-    .select("last_block")
-    .eq("name", name)
-    .maybeSingle();
-  return data?.last_block ? BigInt(data.last_block) : 0n;
+    .select("name, last_block")
+    .in("name", names);
+  if (error) throw error;
+  for (const row of (data ?? []) as {name: string; last_block: number | string | null}[]) {
+    map.set(row.name, row.last_block ? BigInt(row.last_block) : 0n);
+  }
+  return map;
+}
+
+export async function writeCursors(rows: {name: string; block: bigint}[]): Promise<void> {
+  if (!hasDatabase || rows.length === 0) return;
+  const now = new Date().toISOString();
+  const {error} = await db().from("indexer_state").upsert(
+    rows.map((row) => ({
+      name: row.name,
+      last_block: Number(row.block),
+      updated_at: now,
+    })),
+  );
+  if (error) throw error;
 }
 
 export async function writeCursor(name: string, block: bigint): Promise<void> {
-  if (!hasDatabase) return;
-  const {error} = await db().from("indexer_state").upsert({
-    name,
-    last_block: Number(block),
-    updated_at: new Date().toISOString(),
-  });
-  if (error) throw error;
+  await writeCursors([{name, block}]);
 }
 
 export function rowToAsset(row: TokenRow, stats: TokenStatRow | undefined): TokenAsset {
