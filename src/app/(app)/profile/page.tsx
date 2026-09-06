@@ -1,6 +1,6 @@
 "use client";
 
-import {useMemo, useState} from "react";
+import {useState} from "react";
 import {ConnectionsSheet} from "@/components/ConnectionsSheet";
 import {EditProfileSheet} from "@/components/EditProfileSheet";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
@@ -10,15 +10,14 @@ import {PriceChart} from "@/components/PriceChart";
 import {SettingsMenu} from "@/components/SettingsMenu";
 import {SocialRow} from "@/components/SocialRow";
 import {Avatar} from "@/components/ui/Avatar";
-import {SectionLabel} from "@/components/ui/Card";
 import {PencilIcon} from "@/components/ui/Icons";
 import {usePortfolio} from "@/hooks/usePortfolio";
 import {useMe} from "@/hooks/useMe";
 import {useMyFollowers, usePeople} from "@/hooks/usePeople";
 import {useFollows} from "@/hooks/useProfile";
 import {cn} from "@/lib/cn";
-import {compact, money, percent, relativeTime, shortAddress, units} from "@/lib/format";
-import {RANGES, type ChartPoint, type Range} from "@/lib/types";
+import {compact, money, percent, shortAddress} from "@/lib/format";
+import {PORTFOLIO_RANGES, type ChartPoint, type PortfolioRange} from "@/lib/types";
 
 type Side = "rwa" | "token";
 
@@ -27,18 +26,9 @@ const SIDES: FilterOption<Side>[] = [
   {value: "token", label: "Tokens"},
 ];
 
-/** How far back each range reaches, for spacing the points along the x axis. */
-const RANGE_SPAN_MS: Record<Range, number> = {
-  "1D": 86_400_000,
-  "1W": 7 * 86_400_000,
-  "1M": 30 * 86_400_000,
-  "1Y": 365 * 86_400_000,
-  ALL: 730 * 86_400_000,
-};
-
 export default function ProfilePage() {
   const me = useMe();
-  const [range, setRange] = useState<Range>("1D");
+  const [range, setRange] = useState<PortfolioRange>("1D");
   const book = usePortfolio(range);
   const [side, setSide] = useState<Side>("rwa");
   const [editOpen, setEditOpen] = useState(false);
@@ -53,21 +43,11 @@ export default function ProfilePage() {
   const followers = useMyFollowers();
   const following = usePeople(follows.following, connections === "following");
 
-  // Shaped like an asset chart so the two can share a component; the timestamps
-  // only exist to space the points evenly across the window.
-  const points: ChartPoint[] = useMemo(() => {
-    const span = RANGE_SPAN_MS[range];
-    const now = Date.now();
-    const last = Math.max(book.series.length - 1, 1);
-    return book.series.map((value, i) => ({
-      t: now - span + (span * i) / last,
-      price: value,
-    }));
-  }, [book.series, range]);
+  const points: ChartPoint[] = book.points;
 
   const positive = book.changePct >= 0;
   const shownValue = scrubbed?.price ?? book.totalValue;
-  const openValue = book.series[0] ?? book.totalValue;
+  const openValue = points[0]?.price ?? book.totalValue;
   const shownChangeUsd = scrubbed ? scrubbed.price - openValue : book.changeUsd;
   const shownChangePct =
     openValue > 0 ? (shownChangeUsd / openValue) * 100 : 0;
@@ -164,7 +144,7 @@ export default function ProfilePage() {
         <span className="ml-1.5 font-semibold text-faint">{range}</span>
       </div>
 
-      {points.length > 1 ? (
+      {book.connected ? (
         <>
           <PriceChart
             points={points}
@@ -176,7 +156,7 @@ export default function ProfilePage() {
           />
           <PillRail
             label="Portfolio range"
-            options={RANGES}
+            options={PORTFOLIO_RANGES}
             value={range}
             onChange={setRange}
             positive={positive}

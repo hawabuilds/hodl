@@ -2,9 +2,7 @@
 
 import {useEffect, useMemo} from "react";
 import {keepPreviousData, useQuery} from "@tanstack/react-query";
-import {MARKET_REFRESH_MS} from "@/config/market";
-import {applyCachedAssets, rememberTokens} from "@/lib/tokenCache";
-import type {Asset, Holding, Range, TokenAsset} from "@/lib/types";
+import type {ChartPoint, Holding, PortfolioRange} from "@/lib/types";
 import {readKnownHoldings, writeKnownHoldings} from "@/lib/localStore";
 import {useEthPrice} from "./useEthPrice";
 import {useUser} from "./useUser";
@@ -20,9 +18,14 @@ interface PortfolioResponse {
   degraded: boolean;
 }
 
+interface HistoryResponse {
+  range: PortfolioRange;
+  snapshots: ChartPoint[];
+}
+
 const PORTFOLIO_TTL_MS = 15_000;
 
-export function usePortfolio(range: Range = "1D") {
+export function usePortfolio(range: PortfolioRange = "1D") {
   const user = useUser();
   const imported = useWallet();
   const wallets = useMemo(() => {
@@ -90,42 +93,24 @@ export function usePortfolio(range: Range = "1D") {
     [book.data?.holdings],
   );
 
-  const ids = useMemo(
-    () =>
-      holdings
-        .map((holding) => `${holding.kind}:${holding.assetId}`)
-        .sort()
-        .join(","),
-    [holdings],
-  );
-
-  const priced = useQuery({
-    queryKey: ["portfolio-series", ids, range],
-    enabled: ids.length > 0,
+  const history = useQuery({
+    queryKey: ["portfolio-history", walletKey, range],
+    enabled: wallets.length > 0 && book.isSuccess,
     staleTime: PORTFOLIO_TTL_MS,
-    refetchInterval: MARKET_REFRESH_MS,
+    refetchInterval: 60_000,
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const res = await fetch(
-        `/api/assets?range=${range}&ids=${encodeURIComponent(ids)}`,
-        {cache: "no-store"},
-      );
-      if (!res.ok) throw new Error("Could not price your holdings.");
-      const data = (await res.json()) as {assets: Asset[]};
-      rememberTokens(
-        data.assets.filter((asset): asset is TokenAsset => asset.kind === "token"),
-      );
-      return {assets: applyCachedAssets(data.assets)};
+      const params = new URLSearchParams({
+        wallets: walletKey,
+        range,
+      });
+      const res = await fetch(`/api/portfolio/history?${params}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Could not read portfolio history.");
+      return (await res.json()) as HistoryResponse;
     },
   });
-
-  const assets = useMemo(() => {
-    const map = new Map<string, Asset>();
-    for (const asset of priced.data?.assets ?? []) {
-      map.set(`${asset.kind}:${asset.id}`, asset);
-    }
-    return map;
-  }, [priced.data]);
 
   const ethBalance = book.data?.ethBalance ?? native.data?.ethBalance ?? 0;
   const ethValueUsd = ethBalance * (eth.ethUsd ?? 0);
@@ -135,28 +120,18 @@ export function usePortfolio(range: Range = "1D") {
   );
   const totalValue = positionsValue + ethValueUsd;
 
-  const series = useMemo(() => {
-    if (holdings.length === 0) return [];
+  const points = useMemo(() => {
+    const snapshots = history.data?.snapshots ?? [];
+    const live: ChartPoint = {t: Date.now(), price: totalValue};
+    const last = snapshots[snapshots.length - 1];
+    if (!last) return book.isSuccess ? [live] : [];
+    if (live.t - last.t < 1_000) {
+      return [...snapshots.slice(0, -1), live];
+    }
+    return [...snapshots, live];
+  }, [history.data?.snapshots, totalValue, book.isSuccess]);
 
-    const length = Math.max(
-      0,
-      ...holdings.map((holding) => {
-        const asset = assets.get(`${holding.kind}:${holding.assetId}`);
-        return asset?.series?.length ?? 0;
-      }),
-    );
-    if (length < 2) return [];
-
-    return Array.from({length}, (_, i) => {
-      let value = ethValueUsd;
-      for (const holding of holdings) {
-        const asset = assets.get(`${holding.kind}:${holding.assetId}`);
-        value += holding.amount * (asset?.series?.[i] ?? asset?.priceUsd ?? 0);
-      }
-      return value;
-    });
-  }, [holdings, assets, ethValueUsd]);
-
+  const series = useMemo(() => points.map((point) => point.price), [points]);
   const openValue = series[0] ?? totalValue;
   const changeUsd = totalValue - openValue;
 
@@ -170,6 +145,7 @@ export function usePortfolio(range: Range = "1D") {
     ethValueUsd,
     positionsValue,
     totalValue,
+    points,
     series,
     changeUsd,
     changePct: openValue > 0 ? (changeUsd / openValue) * 100 : 0,

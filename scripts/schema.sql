@@ -240,9 +240,30 @@ CREATE TRIGGER indexer_state_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION set_updated_at();
 
+-- ── portfolio value over time ──────────────────────────────────────
+-- One row per wallet per UTC hour. Written on portfolio load, not on
+-- every refetch. The chart is this series, not a reconstructed token tape.
+
+CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+  id            bigserial PRIMARY KEY,
+  wallet        text NOT NULL,
+  captured_at   timestamptz NOT NULL DEFAULT now(),
+  hour_bucket   timestamptz NOT NULL,
+  total_usd     numeric(24, 6) NOT NULL,
+  positions_usd numeric(24, 6),
+  eth_usd       numeric(24, 6)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS portfolio_snapshots_wallet_hour
+  ON portfolio_snapshots (wallet, hour_bucket);
+
+CREATE INDEX IF NOT EXISTS portfolio_snapshots_wallet_captured
+  ON portfolio_snapshots (wallet, captured_at DESC);
+
 -- ── RLS ────────────────────────────────────────────────────────────
 -- Service role bypasses these. Anon sees nothing until policies exist.
 
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE follows ENABLE ROW LEVEL SECURITY;
+ALTER TABLE portfolio_snapshots ENABLE ROW LEVEL SECURITY;

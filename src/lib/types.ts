@@ -206,9 +206,19 @@ export function timeframeLabel(
   return requested;
 }
 
-/** Windows for the portfolio chart, which is read over months rather than hours. */
+/** Windows for the seeded / simulator book, which is read over days rather than hours. */
 export const RANGES = ["1D", "1W", "1M", "1Y", "ALL"] as const;
 export type Range = (typeof RANGES)[number];
+
+/**
+ * Windows for the live portfolio equity chart.
+ *
+ * Includes 1H so an hourly snapshot series can be read inside a day, not only
+ * across weeks. Token price charts keep using `TIMEFRAMES`; this is total
+ * wallet value over time.
+ */
+export const PORTFOLIO_RANGES = ["1H", "1D", "1W", "1M", "1Y", "ALL"] as const;
+export type PortfolioRange = (typeof PORTFOLIO_RANGES)[number];
 
 export interface Trade {
   id: string;

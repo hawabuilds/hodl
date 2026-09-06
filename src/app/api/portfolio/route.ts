@@ -1,6 +1,8 @@
 import type {NextRequest} from "next/server";
 import {badRequest, json} from "@/lib/server/http";
 import {holdingsFor, nativeOnly} from "@/lib/server/live/holdings";
+import {maybeWritePortfolioSnapshot} from "@/lib/server/live/portfolioSnapshots";
+import {fetchEthPrice} from "@/lib/server/sources";
 
 export const dynamic = "force-dynamic";
 
@@ -28,5 +30,22 @@ export async function GET(request: NextRequest) {
     .split(",")
     .filter((value) => /^0x[0-9a-fA-F]{40}$/.test(value.trim()));
 
-  return json(await holdingsFor(wallets, known));
+  const book = await holdingsFor(wallets, known);
+  const positionsUsd = book.holdings.reduce((sum, row) => sum + row.valueUsd, 0);
+  const eth = await fetchEthPrice();
+  const ethUsd = book.ethBalance * (eth.data > 0 ? eth.data : 0);
+  // A missing ETH print would understate a native-only book; skip the row.
+  const priced = book.ethBalance <= 0 || eth.data > 0;
+
+  if (!book.degraded && priced) {
+    await maybeWritePortfolioSnapshot({
+      wallets,
+      totalUsd: positionsUsd + ethUsd,
+      positionsUsd,
+      ethUsd,
+      degraded: book.degraded,
+    });
+  }
+
+  return json(book);
 }
