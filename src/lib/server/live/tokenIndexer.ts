@@ -18,7 +18,7 @@ import {
   LogScanLimiter,
   resumeIfPersisted,
   shrinkLogWindow,
-  useAlchemyForLogs,
+  shouldUseAlchemyForLogs,
 } from "./logScan";
 import {
   ALL_FACTORIES,
@@ -237,7 +237,7 @@ async function logsUnlocked(
   if (to < from) return emptyFetch(true);
   const span = to - from + 1n;
   const alchemy = alchemyLogsClient();
-  const preferAlchemy = useAlchemyForLogs({
+  const preferAlchemy = shouldUseAlchemyForLogs({
     hasAlchemy: Boolean(alchemy),
     caughtUp: Boolean(opts.caughtUp),
     span,

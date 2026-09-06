@@ -248,7 +248,11 @@ export async function getJson<T>(
       cache: "no-store",
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+    if (!res.ok) {
+      // Drop the query string so tokens in `?token=` never land in logs.
+      const safe = url.split("?")[0] ?? url;
+      throw new Error(`${safe} -> ${res.status}`);
+    }
     return (await res.json()) as T;
   } finally {
     clearTimeout(timer);

@@ -7,8 +7,51 @@
 
 const STORAGE_MARK = "/storage/v1/object/public/token-images/";
 
+/**
+ * Gateways the browser can actually paint. w3s.link is what the worker
+ * stores (server fetches succeed) but it 403s from the page origin, so
+ * Pinata and Cloudflare come first for <img>.
+ */
+const BROWSER_IPFS_GATEWAYS = [
+  "https://gateway.pinata.cloud/ipfs/",
+  "https://cloudflare-ipfs.com/ipfs/",
+  "https://w3s.link/ipfs/",
+  "https://ipfs.io/ipfs/",
+];
+
 export function isStoredImage(url: string | null | undefined): boolean {
   return Boolean(url && url.includes(STORAGE_MARK));
+}
+
+/** CID + optional path from ipfs://, /ipfs/, or *.ipfs.* subdomain URLs. */
+export function ipfsPath(uri: string | null | undefined): string | null {
+  const value = uri?.trim();
+  if (!value) return null;
+  if (value.startsWith("ipfs://")) {
+    return value.slice("ipfs://".length).replace(/^ipfs\//, "");
+  }
+  const embedded = value.match(/\/ipfs\/([^?#]+)/);
+  if (embedded) return embedded[1];
+  const subdomain = value.match(
+    /^https?:\/\/([a-z0-9]+)\.ipfs\.[^/?#]+(?:\/([^?#]*))?/i,
+  );
+  if (subdomain) {
+    return subdomain[2] ? `${subdomain[1]}/${subdomain[2]}` : subdomain[1];
+  }
+  if (
+    /^Qm[1-9A-HJ-NP-Za-km-z]{44}/.test(value) ||
+    /^baf[a-z0-9]+/i.test(value)
+  ) {
+    return value;
+  }
+  return null;
+}
+
+/** Browser-safe gateway URLs for one IPFS image. Empty when the URL is not IPFS. */
+export function ipfsGatewayCandidates(url: string | null | undefined): string[] {
+  const path = ipfsPath(url);
+  if (!path) return [];
+  return BROWSER_IPFS_GATEWAYS.map((gate) => gate + path);
 }
 
 function isBrandLogo(url: string): boolean {
@@ -52,7 +95,13 @@ export function tokenImageCandidates(row: TokenImageRow): string[] {
   if (isStoredImage(row.image_64)) push(row.image_64);
   if (isStoredImage(row.image_128)) push(row.image_128);
   if (isStoredImage(row.image_url)) push(row.image_url);
-  push(usableRemoteImage(row.image_url));
+  const remote = usableRemoteImage(row.image_url);
+  const gates = ipfsGatewayCandidates(remote);
+  if (gates.length > 0) {
+    for (const url of gates) push(url);
+  } else {
+    push(remote);
+  }
   return out;
 }
 

@@ -5,6 +5,7 @@ import {
   isUsableCachedValue,
   resetLiveCacheForTests,
 } from "../src/lib/server/live/cache.ts";
+import {hasArticles} from "../src/lib/server/live/news.ts";
 
 describe("live cache empty arrays", () => {
   beforeEach(() => {
@@ -57,6 +58,18 @@ describe("live cache empty arrays", () => {
     assert.deepEqual(items, [{id: "story"}]);
     assert.deepEqual(again, [{id: "story"}]);
     assert.equal(loads, 1);
+  });
+
+  it("treats an X-only feed as not a cached wire win", () => {
+    assert.equal(hasArticles([]), false);
+    assert.equal(
+      hasArticles([{id: "x-1", kind: "account"} as never]),
+      false,
+    );
+    assert.equal(
+      hasArticles([{id: "fh-1", kind: "article"} as never]),
+      true,
+    );
   });
 
   it("still caches empty arrays by default", async () => {

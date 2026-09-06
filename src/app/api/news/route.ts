@@ -19,10 +19,18 @@ export const dynamic = "force-dynamic";
  * rather than each warming their own.
  */
 const feed = unstable_cache(
-  async () => fetchFeed({window: "all", topic: "all"}),
+  async () => {
+    const result = await fetchFeed({window: "all", topic: "all"});
+    // X-only is not a cacheable win — Finnhub missed and posts filled the
+    // array. Throwing skips the Data Cache so the next request retries.
+    if (!result.data.some((item) => item.kind === "article")) {
+      throw new Error("news wire empty");
+    }
+    return result;
+  },
   // Bumped whenever sort/source logic changes: Vercel's Data Cache outlives
   // a deploy, so an old key would keep serving the previous feed.
-  ["news-feed-v5"],
+  ["news-feed-v6"],
   {revalidate: 300},
 );
 
@@ -40,7 +48,13 @@ export async function GET(request: NextRequest) {
   const topic =
     (NEWS_TOPICS.find((t) => t === params.get("topic")) as NewsTopic) ?? "all";
 
-  const {data, seeded} = await feed();
+  let data: Awaited<ReturnType<typeof fetchFeed>>["data"];
+  let seeded: boolean;
+  try {
+    ({data, seeded} = await feed());
+  } catch {
+    ({data, seeded} = await fetchFeed({window: "all", topic: "all"}));
+  }
 
   const cutoff = Date.now() - WINDOW_MS[window];
   const items = data

@@ -8,4 +8,7 @@ buildCommand = "npm install"
 [deploy]
 startCommand = "npm run worker"
 numReplicas = 1
-restartPolicyType = "ON_FAILURE"
+# ALWAYS: a crash or unexpected exit 0 must come back. ON_FAILURE left the
+# worker dead after a clean-looking exit. Lock waits already retry in-process;
+# this is the platform net for uncaught exits. One replica only.
+restartPolicyType = "ALWAYS"

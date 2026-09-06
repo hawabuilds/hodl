@@ -3,6 +3,7 @@
 
 import {useEffect, useMemo, useState} from "react";
 import {cn} from "@/lib/cn";
+import {ipfsGatewayCandidates} from "@/lib/tokenImage";
 import {loadedLogoFor, rememberLoadedLogo} from "@/lib/tokenLogoCache";
 
 const GRADIENTS = [
@@ -70,12 +71,20 @@ export function Avatar({
     };
     // Session-held first so a decorate miss cannot replace a decoded logo.
     push(held ?? sessionUrl);
+    const remote = (url: string | null | undefined) => {
+      const gates = ipfsGatewayCandidates(url);
+      if (gates.length > 0) {
+        for (const gate of gates) push(gate);
+        return;
+      }
+      push(url);
+    };
     if (size <= 64) {
-      push(src64);
-      push(src);
+      remote(src64);
+      remote(src);
     } else {
-      push(src);
-      push(src64);
+      remote(src);
+      remote(src64);
     }
     push(fallbackSrc);
     for (const url of fallbacks ?? []) push(url);
@@ -124,6 +133,7 @@ export function Avatar({
           loading={eager ? "eager" : "lazy"}
           fetchPriority={eager ? "high" : "low"}
           decoding="async"
+          referrerPolicy="no-referrer"
           onLoad={() => {
             setLoaded(true);
             if (shown) {

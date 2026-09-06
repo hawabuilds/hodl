@@ -45,7 +45,7 @@ export function isLiveCaughtUp(behind: number | bigint): boolean {
   return Number.isFinite(n) && n <= CAUGHT_UP_BEHIND;
 }
 
-export function useAlchemyForLogs(opts: {
+export function shouldUseAlchemyForLogs(opts: {
   hasAlchemy: boolean;
   caughtUp?: boolean;
   span?: bigint;

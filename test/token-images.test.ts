@@ -114,4 +114,12 @@ describe("token image resolution", () => {
       "https://gateway.pinata.cloud/ipfs/QmVw7iQB7eFF5xggs2WDaoopPY3FBzFkFNsVqNrTs2Ki3w",
     );
   });
+
+  it("does not serve w3s.link first — the browser 403s that gateway", () => {
+    const cid = "bafkreie2mo4dzpjslsoj6zskxjefg23v5txztjq64qn4xyb2zq6lxake7e";
+    assert.equal(
+      feedImageUrl({image_url: `https://w3s.link/ipfs/${cid}`}),
+      `https://gateway.pinata.cloud/ipfs/${cid}`,
+    );
+  });
 });

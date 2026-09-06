@@ -30,7 +30,7 @@ import {
   resumeIfPersisted,
   shouldSkipRateLimitedRange,
   shrinkLogWindow,
-  useAlchemyForLogs,
+  shouldUseAlchemyForLogs,
 } from "../src/lib/server/live/logScan";
 import {rememberSeenAfterImages} from "../src/lib/server/live/tokenIndexer";
 import {
@@ -139,7 +139,7 @@ describe("live tip shared pass", () => {
     assert.match(indexer, /token image persist failed; tokens still upserted/);
     assert.match(indexer, /from "\.\/logScan"/);
     assert.match(indexer, /alchemyLogsClient/);
-    assert.match(indexer, /useAlchemyForLogs/);
+    assert.match(indexer, /shouldUseAlchemyForLogs/);
     assert.match(indexer, /cursorAfterLogScan/);
     assert.match(indexer, /resumeIfPersisted/);
     assert.match(indexer, /logScanBackingOff/);
@@ -400,10 +400,10 @@ describe("live tip backoff and errors", () => {
       getLogsStartWindow({caughtUp: false, alchemy: true, live: true, span: 900n}),
       ALCHEMY_GETLOGS_MAX,
     );
-    assert.equal(useAlchemyForLogs({hasAlchemy: true, caughtUp: true, span: 40n}), true);
-    assert.equal(useAlchemyForLogs({hasAlchemy: true, caughtUp: false, span: 900n}), true);
-    assert.equal(useAlchemyForLogs({hasAlchemy: false, caughtUp: true, span: 40n}), false);
-    assert.equal(useAlchemyForLogs({hasAlchemy: false, caughtUp: false, span: 900n}), false);
+    assert.equal(shouldUseAlchemyForLogs({hasAlchemy: true, caughtUp: true, span: 40n}), true);
+    assert.equal(shouldUseAlchemyForLogs({hasAlchemy: true, caughtUp: false, span: 900n}), true);
+    assert.equal(shouldUseAlchemyForLogs({hasAlchemy: false, caughtUp: true, span: 40n}), false);
+    assert.equal(shouldUseAlchemyForLogs({hasAlchemy: false, caughtUp: false, span: 900n}), false);
     assert.equal(
       cursorAfterLogScan({stored: 100n, plannedEnd: 200n, scannedTo: null, complete: false}),
       100n,
