@@ -7,7 +7,11 @@ import {
   upsertStats,
   type TokenPageQuery,
 } from "./universeStore";
-import {isTradeableFromLiquidity, rowPassesFeedBounds} from "@/lib/priceState";
+import {
+  isTradeableFromLiquidity,
+  rowPassesFeedBounds,
+  showsWithVolume24h,
+} from "@/lib/priceState";
 import {marketCapAt} from "@/lib/marketCap";
 
 function round(value: number, dp = 6): number {
@@ -219,22 +223,28 @@ export async function loadDecoratedFeedPage(query: TokenPageQuery): Promise<{
       rowToAsset(row, page.stats.get(row.address.toLowerCase())),
     );
   }
-  const tokens = decorated.filter((token) =>
-    rowPassesFeedBounds({
-      mcap: token.marketCapUsd,
-      liq: token.liquidityUsd,
-      tradeable: token.tradeable,
-      volume: token.volume24hUsd,
-      createdAt: token.createdAt,
-      minMarketCap: query.minMarketCap,
-      maxMarketCap: query.maxMarketCap,
-      minLiquidity: query.minLiquidity,
-      maxLiquidity: query.maxLiquidity,
-      minVolume: query.minVolume,
-      maxVolume: query.maxVolume,
-      minAgeHours: query.minAgeHours,
-      maxAgeHours: query.maxAgeHours,
-    }),
+  const allowNewGrace = (query.sort ?? "new") === "new";
+  const tokens = decorated.filter(
+    (token) =>
+      rowPassesFeedBounds({
+        mcap: token.marketCapUsd,
+        liq: token.liquidityUsd,
+        tradeable: token.tradeable,
+        volume: token.volume24hUsd,
+        createdAt: token.createdAt,
+        minMarketCap: query.minMarketCap,
+        maxMarketCap: query.maxMarketCap,
+        minLiquidity: query.minLiquidity,
+        maxLiquidity: query.maxLiquidity,
+        minVolume: query.minVolume,
+        maxVolume: query.maxVolume,
+        minAgeHours: query.minAgeHours,
+        maxAgeHours: query.maxAgeHours,
+      }) &&
+      showsWithVolume24h(token.volume24hUsd, {
+        listedAt: token.listedAt,
+        allowNewGrace,
+      }),
   );
   return {
     tokens,

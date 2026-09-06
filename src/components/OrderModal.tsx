@@ -21,6 +21,7 @@ import {useLocalStore} from "@/hooks/useLocalStore";
 import {useSwap} from "@/hooks/useSwap";
 import {
   HODL_ROUTER_ADDRESS,
+  hodlCanExecuteQuote,
   isHodlRouterConfigured,
   isLiveTrader,
 } from "@/lib/liveTrade";
@@ -92,7 +93,8 @@ export function OrderModal({
       ? (asset.address.toLowerCase() as `0x${string}`)
       : null;
   const eth = settings.currency === "ETH";
-  const live = isLiveTrader(swap.address ?? hodl.address);
+  const live =
+    isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote);
   const ticket = live ? hodl : swap;
   const wallet = ticket.address ?? undefined;
 
@@ -130,7 +132,7 @@ export function OrderModal({
     query: {enabled: Boolean(wallet && token)},
   });
   const payNativePreview = Boolean(
-    activeSide === "buy" && (eth || quote?.quoteIsNative || quote?.quoteIsWeth),
+    activeSide === "buy" && (quote?.quoteIsNative || quote?.quoteIsWeth),
   );
   const spendForApproval =
     live && quote && token
@@ -195,7 +197,9 @@ export function OrderModal({
     tokenBal.data != null ? Number(formatUnits(tokenBal.data, tokenDecimals)) : 0;
   const heldUsd =
     asset && isPriced(asset.priceUsd) ? heldUnits * asset.priceUsd : 0;
-  const paysNative = Boolean(eth || quote?.quoteIsNative || quote?.quoteIsWeth);
+  const paysNative = quote
+    ? Boolean(quote.quoteIsNative || quote.quoteIsWeth)
+    : eth;
   const spendUnits =
     spendBal.data != null
       ? Number(formatUnits(spendBal.data, quoteDecimals))
@@ -232,12 +236,16 @@ export function OrderModal({
 
   const quoteAmountIn = useMemo(() => {
     if (!valid) return undefined;
-    if (buying && eth) return humanToRaw(entered, 18);
+    // ETH-denomination is only raw wei when the venue actually takes ETH/WETH.
+    // RWA-paired New tokens must size via amountUsd so the server can convert.
+    if (buying && (quote?.quoteIsNative || quote?.quoteIsWeth) && eth) {
+      return humanToRaw(entered, 18);
+    }
     if (!buying && asset && isPriced(asset.priceUsd)) {
       return humanToRaw(amountUsd / asset.priceUsd, tokenDecimals);
     }
     return undefined;
-  }, [valid, buying, eth, entered, asset, amountUsd, tokenDecimals]);
+  }, [valid, buying, eth, entered, asset, amountUsd, tokenDecimals, quote]);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 250);
@@ -394,7 +402,11 @@ export function OrderModal({
       return;
     }
     if (!token || !quote) {
-      setError("No Uniswap pool for this token.");
+      setError(
+        quoteMiss
+          ? "No Uniswap pool for this token."
+          : "Enter an amount.",
+      );
       return;
     }
     if (!isPriced(asset.priceUsd)) {
@@ -419,7 +431,7 @@ export function OrderModal({
           side: activeSide,
           token,
           slippagePct: settings.slippagePct,
-          payNative: buying && (eth || quote.quoteIsNative || quote.quoteIsWeth),
+          payNative: buying && (quote.quoteIsNative || quote.quoteIsWeth),
           permit2Blocked: asset.kind === "token" && asset.launchpad?.id === "long",
         });
         setTxHash(hash);
@@ -430,11 +442,11 @@ export function OrderModal({
         return;
       }
 
-      const payNative = buying && (eth || quote.quoteIsNative || quote.quoteIsWeth);
       let q = quote;
       if (quoteExpired) {
         q = await pullFreshQuote();
       }
+      const payNative = buying && (q.quoteIsNative || q.quoteIsWeth);
       const spend = approvalSpendToken({
         side: activeSide,
         payNative,

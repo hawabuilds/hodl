@@ -4,14 +4,17 @@ import type {LaunchpadId, QuoteKind, TokenStatus} from "@/lib/universe";
 import {isListed, qualifiesForUniverse} from "@/lib/universe";
 import {
   applyAgeBounds,
+  applyLiveVolumeFilter,
   applyLiquidityBoundFilter,
   applyMeasuredMcapFilter,
   applyNumericBounds,
   isTradeableFromLiquidity,
   isUserBound,
+  NEW_VOLUME_GRACE_MS,
   REQUIRE_MEASURED_MCAP_ON_NEW,
   rowPassesFeedBounds,
   showsOnNew,
+  showsWithVolume24h,
 } from "@/lib/priceState";
 import {feedImageUrl, hexColor, isStoredImage, tokenImageCandidates} from "@/lib/tokenImage";
 import {normalizeAddress, normalizeAddresses} from "@/lib/address";
@@ -368,6 +371,10 @@ export async function listTokensPage(
     request = applyTradeableFilter(request, query.minLiquidity, query.maxLiquidity);
   }
   request = applyAgeBounds(request, query.minAgeHours, query.maxAgeHours);
+  request = applyLiveVolumeFilter(request, {
+    columnPrefix: statsBound ? "token_stats" : undefined,
+    graceListedSince: new Date(Date.now() - NEW_VOLUME_GRACE_MS).toISOString(),
+  });
 
   if (query.cursorListedAt) request = request.lt("listed_at", query.cursorListedAt);
   if (query.launchpad) request = request.eq("launchpad", query.launchpad);
@@ -391,6 +398,10 @@ export async function listTokensPage(
     if (REQUIRE_MEASURED_MCAP_ON_NEW) {
       request = applyMeasuredMcapFilter(request, "token_stats");
     }
+    request = applyLiveVolumeFilter(request, {
+      columnPrefix: statsBound ? "token_stats" : undefined,
+      graceListedSince: new Date(Date.now() - NEW_VOLUME_GRACE_MS).toISOString(),
+    });
     const retry = await request;
     data = retry.data;
     error = retry.error;
@@ -430,6 +441,14 @@ export async function listTokensPage(
       return false;
     }
     if (!showsOnNew(stat)) return false;
+    if (
+      !showsWithVolume24h(finiteOrNull(stat?.vol_24h), {
+        listedAt: row.listed_at,
+        allowNewGrace: true,
+      })
+    ) {
+      return false;
+    }
     return rowPassesUniverse(row);
   });
 
@@ -493,6 +512,9 @@ async function listRewardsOrderedPage(
     request = applyTradeableFilter(request, query.minLiquidity, query.maxLiquidity);
   }
   request = applyAgeBounds(request, query.minAgeHours, query.maxAgeHours);
+  request = applyLiveVolumeFilter(request, {
+    columnPrefix: statsBound ? "token_stats" : undefined,
+  });
   if (query.launchpad) request = request.eq("launchpad", query.launchpad);
   if (query.quoteKind) request = request.eq("quote_kind", query.quoteKind);
 
@@ -523,6 +545,7 @@ async function listRewardsOrderedPage(
       return false;
     }
     if (!showsOnNew(stat)) return false;
+    if (!showsWithVolume24h(finiteOrNull(stat?.vol_24h))) return false;
     return rowPassesUniverse(row);
   });
 
@@ -558,6 +581,7 @@ async function listStatsOrderedPage(
     query.minVolume,
     query.maxVolume,
   );
+  statsQuery = applyLiveVolumeFilter(statsQuery);
   const {data: hot, error: statsError} = await statsQuery;
   if (statsError) throw statsError;
   const statRows = (hot ?? []) as TokenStatRow[];
@@ -631,6 +655,7 @@ async function listStatsOrderedPage(
         return false;
       }
       if (!showsOnNew(stat)) return false;
+      if (!showsWithVolume24h(finiteOrNull(stat?.vol_24h))) return false;
       return true;
     })
     .slice(0, limit);

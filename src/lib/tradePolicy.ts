@@ -27,7 +27,9 @@ export function ticketBlockReason(input: {
     return "Sign in to trade from your wallet.";
   }
   if (input.quotePending) return null;
-  if (input.venue == null) {
+  // Three-state: undefined = not quoted yet (keep the button usable),
+  // null = quote ran and found no venue, v3/v4 = a real pool.
+  if (input.venue === null) {
     return "No Uniswap pool for this token.";
   }
   return null;

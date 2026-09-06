@@ -165,6 +165,18 @@ describe("trade policy", () => {
       }),
       null,
     );
+    assert.equal(
+      ticketBlockReason({
+        kind: "token",
+        authenticated: true,
+        demo: false,
+        wallet: "0x1",
+        venue: undefined,
+        quotePending: false,
+      }),
+      null,
+      "undefined venue means not quoted yet, not a missing pool",
+    );
   });
 
   it("applies slippage to the quoter output", () => {
@@ -192,5 +204,30 @@ describe("swap quote parse", () => {
     });
     assert.equal(parsed.ok, true);
     if (parsed.ok) assert.equal(parsed.quote.amountIn, "1000000");
+  });
+
+  it("accepts a V4 quote paired with a tokenized stock, not USDG", () => {
+    const ibm = "0x980dcf6766fa79f5cf0c4aadb3ab477ff15a9619";
+    const parsed = parseSwapQuote({
+      venue: "v4",
+      amountIn: "106464526019930160",
+      amountOut: "147002329996137738092522",
+      quoteToken: ibm,
+      quoteIsNative: false,
+      quoteIsWeth: false,
+      poolKey: {
+        currency0: ibm,
+        currency1: "0xf2e122a481b440c40eee7a7ca6d5eef65a591b76",
+        fee: 0,
+        tickSpacing: 200,
+        hooks: "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044",
+      },
+    });
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) {
+      assert.equal(parsed.quote.quoteToken, ibm);
+      assert.equal(parsed.quote.venue, "v4");
+      assert.ok(parsed.quote.poolKey);
+    }
   });
 });

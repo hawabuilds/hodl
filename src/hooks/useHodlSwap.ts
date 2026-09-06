@@ -22,6 +22,7 @@ import {
   hintFromQuote,
 } from "@/lib/hodlRouter";
 import {erc20Abi, type PreparedTx} from "@/lib/swapTx";
+import {estimatePreparedGas, readTxFeeFields, rpcTxRequest} from "@/lib/txGas";
 import {useTradeBatching, type TradePhase} from "./useTradeBatching";
 import {useUser} from "./useUser";
 import {useWallet} from "./useWallet";
@@ -44,6 +45,9 @@ export function explainHodlError(error: unknown): string {
   }
   if (/insufficient funds|exceeds the balance of the account/i.test(message)) {
     return "Not enough ETH for gas.";
+  }
+  if (/intrinsic gas too low/i.test(message)) {
+    return "The wallet set a gas limit that was too low. Retry the transaction.";
   }
   if (/transfer amount exceeds|insufficient balance|ERC20InsufficientBalance/i.test(message)) {
     return "Insufficient token balance for this size.";
@@ -97,14 +101,47 @@ export function useHodlSwap() {
 
   const sendTx = useCallback(
     async (tx: PreparedTx): Promise<`0x${string}`> => {
+      if (!address) throw new Error("Sign in to trade from your wallet.");
+      const [gas, fees] = await Promise.all([
+        estimatePreparedGas({
+          tx,
+          account: address,
+          estimateGas: publicClient
+            ? (args) => publicClient.estimateGas(args)
+            : undefined,
+        }),
+        readTxFeeFields(publicClient),
+      ]);
       if (imported) {
         await wallet.ensureCorrectChain();
-        const hash = await sendTransactionAsync({
-          to: tx.to,
-          data: tx.data,
-          value: tx.value,
-          chainId: RH_MAINNET_ID,
-        });
+        const hash = await sendTransactionAsync(
+          fees.maxFeePerGas && fees.maxPriorityFeePerGas != null
+            ? {
+                to: tx.to,
+                data: tx.data,
+                value: tx.value,
+                gas,
+                maxFeePerGas: fees.maxFeePerGas,
+                maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+                chainId: RH_MAINNET_ID,
+              }
+            : fees.gasPrice
+              ? {
+                  to: tx.to,
+                  data: tx.data,
+                  value: tx.value,
+                  gas,
+                  gasPrice: fees.gasPrice,
+                  chainId: RH_MAINNET_ID,
+                }
+              : {
+                  to: tx.to,
+                  data: tx.data,
+                  value: tx.value,
+                  gas,
+                  chainId: RH_MAINNET_ID,
+                },
+        );
         return asHash(hash);
       }
       const provider = await session.getEmbeddedProvider();
@@ -112,17 +149,19 @@ export function useHodlSwap() {
       const hash = await provider.request({
         method: "eth_sendTransaction",
         params: [
-          {
+          rpcTxRequest({
             from: address,
             to: tx.to,
             data: tx.data,
-            value: `0x${tx.value.toString(16)}`,
-          },
+            value: tx.value,
+            gas,
+            fees,
+          }),
         ],
       });
       return asHash(hash);
     },
-    [address, imported, sendTransactionAsync, session, wallet],
+    [address, imported, publicClient, sendTransactionAsync, session, wallet],
   );
 
   const wait = useCallback(

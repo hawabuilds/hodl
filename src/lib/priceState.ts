@@ -283,6 +283,69 @@ export function formatVolumeUsd(value: number | null | undefined): string {
   return formatUsdStat(value);
 }
 
+/**
+ * Live 24h volume for browse lists. Null / non-finite / zero all mean
+ * "no trades in the window" — hide from home, New (after the launch
+ * grace), trending, market cap, and rewards. Search does not use this.
+ */
+export function hasVolume24h(volume: number | null | undefined): boolean {
+  return volume != null && Number.isFinite(Number(volume)) && Number(volume) > 0;
+}
+
+/**
+ * New can keep a just-listed token with no volume yet. Same 6h window as
+ * `RECENT_MISSING_IMAGE_MAX_AGE_MS` — after that, `vol_24h` must be > 0.
+ */
+export const NEW_VOLUME_GRACE_MS = 6 * 60 * 60 * 1000;
+
+export function inNewVolumeGrace(
+  listedAt: string | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (listedAt == null || listedAt === "") return false;
+  const ms = Date.parse(listedAt);
+  if (!Number.isFinite(ms)) return false;
+  const age = now - ms;
+  return age >= 0 && age < NEW_VOLUME_GRACE_MS;
+}
+
+/** Browse-list volume gate. Search must not call this. */
+export function showsWithVolume24h(
+  volume: number | null | undefined,
+  opts?: {
+    listedAt?: string | null;
+    now?: number;
+    allowNewGrace?: boolean;
+  },
+): boolean {
+  if (hasVolume24h(volume)) return true;
+  if (opts?.allowNewGrace) {
+    return inNewVolumeGrace(opts.listedAt, opts.now ?? Date.now());
+  }
+  return false;
+}
+
+/**
+ * PostgREST: `vol_24h > 0`. With grace, `vol_24h > 0 OR listed_at >= since`.
+ * `.gt` drops null — that is the hide. Never emit a standalone IS NOT NULL.
+ */
+export function applyLiveVolumeFilter<T>(
+  request: T,
+  opts?: {columnPrefix?: string; graceListedSince?: string | null},
+): T {
+  const col = opts?.columnPrefix ? `${opts.columnPrefix}.vol_24h` : "vol_24h";
+  const next = request as T & {
+    gt: (column: string, value: number) => T;
+    or: (filter: string) => T;
+  };
+  if (opts?.graceListedSince) {
+    return next.or(
+      `${col}.gt.0,listed_at.gte."${opts.graceListedSince}"`,
+    ) as T;
+  }
+  return next.gt(col, 0) as T;
+}
+
 function formatUsdStat(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value <= 0) return "—";
   if (value < 0.01) return "<$0.01";

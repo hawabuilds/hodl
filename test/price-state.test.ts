@@ -4,6 +4,7 @@ import {describe, it} from "node:test";
 import {MIN_LIQUIDITY_USD} from "../src/config/liquidity.ts";
 import {
   applyAgeBounds,
+  applyLiveVolumeFilter,
   applyLiquidityBoundFilter,
   applyMeasuredMcapFilter,
   applyNumericBounds,
@@ -12,14 +13,18 @@ import {
   formatMarketCapUsd,
   formatPriceUsd,
   formatVolumeUsd,
+  hasVolume24h,
+  inNewVolumeGrace,
   isMeasuredMcap,
   isPriced,
   isTradeableFromLiquidity,
   isUserBound,
   meetsBound,
+  NEW_VOLUME_GRACE_MS,
   rowPassesFeedBounds,
   rowPassesMarketBounds,
   showsOnNew,
+  showsWithVolume24h,
 } from "../src/lib/priceState.ts";
 
 const token = (over: Record<string, unknown> = {}) =>
@@ -314,5 +319,69 @@ describe("explicit numeric bounds", () => {
       "gt:token_stats.last_mcap:0",
     ]);
     assert.ok(!q.calls.some((call) => /last_mcap.*is:null/i.test(call)));
+  });
+});
+
+describe("live 24h volume browse gate", () => {
+  const now = Date.parse("2026-01-02T06:00:00.000Z");
+  const freshListed = "2026-01-02T05:00:00.000Z";
+  const staleListed = "2026-01-01T00:00:00.000Z";
+
+  it("hides zero and null volume, shows a positive print", () => {
+    assert.equal(hasVolume24h(0), false);
+    assert.equal(hasVolume24h(null), false);
+    assert.equal(hasVolume24h(undefined), false);
+    assert.equal(hasVolume24h(Number.NaN), false);
+    assert.equal(hasVolume24h(1), true);
+    assert.equal(showsWithVolume24h(0), false);
+    assert.equal(showsWithVolume24h(null), false);
+    assert.equal(showsWithVolume24h(12), true);
+  });
+
+  it("lets a just-listed token onto New before it has volume", () => {
+    assert.equal(inNewVolumeGrace(freshListed, now), true);
+    assert.equal(inNewVolumeGrace(staleListed, now), false);
+    assert.equal(inNewVolumeGrace(null, now), false);
+    assert.equal(
+      showsWithVolume24h(0, {listedAt: freshListed, now, allowNewGrace: true}),
+      true,
+    );
+    assert.equal(
+      showsWithVolume24h(null, {listedAt: freshListed, now, allowNewGrace: true}),
+      true,
+    );
+    assert.equal(
+      showsWithVolume24h(0, {listedAt: staleListed, now, allowNewGrace: true}),
+      false,
+    );
+    assert.equal(
+      showsWithVolume24h(0, {listedAt: freshListed, now, allowNewGrace: false}),
+      false,
+    );
+    assert.equal(
+      now - Date.parse(staleListed) > NEW_VOLUME_GRACE_MS,
+      true,
+    );
+  });
+
+  it("builds vol_24h > 0, or volume-or-listed_at on New", () => {
+    const trending = recordingQuery();
+    applyLiveVolumeFilter(trending);
+    assert.deepEqual(trending.calls, ["gt:vol_24h:0"]);
+
+    const prefixed = recordingQuery();
+    applyLiveVolumeFilter(prefixed, {columnPrefix: "token_stats"});
+    assert.deepEqual(prefixed.calls, ["gt:token_stats.vol_24h:0"]);
+
+    const since = new Date(now - NEW_VOLUME_GRACE_MS).toISOString();
+    const neu = recordingQuery();
+    applyLiveVolumeFilter(neu, {
+      columnPrefix: "token_stats",
+      graceListedSince: since,
+    });
+    assert.deepEqual(neu.calls, [
+      `or:token_stats.vol_24h.gt.0,listed_at.gte."${since}"`,
+    ]);
+    assert.ok(!neu.calls.some((call) => /eligible|is_tradeable/i.test(call)));
   });
 });

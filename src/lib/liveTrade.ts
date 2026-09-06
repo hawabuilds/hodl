@@ -1,7 +1,9 @@
+import {QUOTE_USDG} from "./contracts";
+
 /**
- * Live HodlRouter ticket. Off for everyone until an allowlisted wallet
- * is set. Production stays on the existing ticket until the contract is
- * reviewed and the cap is raised.
+ * Live HodlRouter ticket. Master switch is NEXT_PUBLIC_LIVE_TRADE=1 plus a
+ * configured router. An optional wallet list still restricts; empty or
+ * absent means every signed-in wallet.
  */
 export const HODL_ROUTER_ADDRESS = (
   process.env.NEXT_PUBLIC_HODL_ROUTER ?? ""
@@ -29,15 +31,30 @@ export function liveTraderAllowed(
   opts: {flag: boolean; router: string; wallets: string[]},
 ): boolean {
   if (!opts.flag || !isHodlRouterConfigured(opts.router) || !wallet) return false;
-  if (opts.wallets.length === 0) return false;
+  if (opts.wallets.length === 0) return true;
   return opts.wallets.includes(wallet.toLowerCase());
 }
 
-/** Visible only to wallets on the allowlist, and only when the router is set. */
+/** On for every signed-in wallet when the flag and router are set. */
 export function isLiveTrader(wallet: string | null | undefined): boolean {
   return liveTraderAllowed(wallet, {
     flag: LIVE_TRADE_FLAG,
     router: HODL_ROUTER_ADDRESS,
     wallets: allowlist(),
   });
+}
+
+/**
+ * HodlRouter._isQuote only accepts native ETH, WETH, and USDG.
+ * New-feed launches are usually paired with a tokenized stock — those
+ * quotes must go through Universal Router, not HodlRouter.
+ */
+export function hodlCanExecuteQuote(quote: {
+  quoteIsNative?: boolean;
+  quoteIsWeth?: boolean;
+  quoteToken?: string | null;
+} | null | undefined): boolean {
+  if (!quote) return false;
+  if (quote.quoteIsNative || quote.quoteIsWeth) return true;
+  return quote.quoteToken?.toLowerCase() === QUOTE_USDG;
 }
