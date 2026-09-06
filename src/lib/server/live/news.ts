@@ -199,19 +199,36 @@ function stripOutletLogos(items: FeedItem[]): FeedItem[] {
   );
 }
 
+/**
+ * HOOD and the general wire first, then per-ticker pages.
+ *
+ * Firing every Finnhub call at once is how a single 429 emptied the whole
+ * feed: each failure becomes `[]`, and an empty build used to be written to
+ * Redis for an hour. Two cheap queries still fill the tab if the ticker
+ * burst is rate-limited.
+ */
+async function wireNews(): Promise<FeedItem[][]> {
+  const head = await Promise.all([
+    // Company name so "Robinhood" headlines survive isAbout; the ticker
+    // alone drops every story that never writes HOOD.
+    companyNews("HOOD", "robinhood", [], "Robinhood").catch(() => []),
+    marketNews().catch(() => []),
+  ]);
+  const rest = await Promise.all(
+    RWA_REGISTRY.slice(0, COVERED).map((entry) =>
+      companyNews(entry.ticker, "rwa", [entry.ticker], entry.name)
+        .then((items) => items.slice(0, 4))
+        .catch(() => []),
+    ),
+  );
+  return [...head, ...rest];
+}
+
 async function buildFeed(): Promise<FeedItem[]> {
   // Coverage is finite, so spend it on the names people actually open.
   const [wire, accountPosts] = await Promise.all([
     process.env.NEWS_API_KEY
-      ? Promise.all([
-          companyNews("HOOD", "robinhood", []).catch(() => []),
-          marketNews().catch(() => []),
-          ...RWA_REGISTRY.slice(0, COVERED).map((entry) =>
-            companyNews(entry.ticker, "rwa", [entry.ticker], entry.name)
-              .then((items) => items.slice(0, 4))
-              .catch(() => []),
-          ),
-        ])
+      ? wireNews()
       : Promise.resolve([] as FeedItem[][]),
     // Cached on its own fifteen-minute window, so a headline refresh does not
     // spend an X request it does not need.
@@ -255,11 +272,11 @@ export async function feed(
   topic: NewsTopic,
   now: number = Date.now(),
 ): Promise<FeedItem[]> {
-  const key = "fh:feed";
+  const key = "fh:feed:v5";
   let all: FeedItem[] = [];
 
   try {
-    all = await cached(key, TTL_MS, buildFeed);
+    all = await cached(key, TTL_MS, buildFeed, {cacheEmpty: false});
   } catch {
     all = stale<FeedItem[]>(key) ?? [];
   }
@@ -284,8 +301,11 @@ export async function newsForTicker(ticker: string): Promise<FeedItem[]> {
   const key = `fh:ticker:${ticker}`;
   const name = RWA_REGISTRY.find((entry) => entry.ticker === ticker)?.name ?? null;
   try {
-    const loaded = await cached(key, TTL_MS, () =>
-      companyNews(ticker, "rwa", [ticker], name).then((items) => items.slice(0, 8)),
+    const loaded = await cached(
+      key,
+      TTL_MS,
+      () => companyNews(ticker, "rwa", [ticker], name).then((items) => items.slice(0, 8)),
+      {cacheEmpty: false},
     );
     if (loaded.length > 0) return loaded;
   } catch (error) {

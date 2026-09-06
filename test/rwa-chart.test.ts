@@ -2,10 +2,13 @@ import {describe, it} from "node:test";
 import assert from "node:assert/strict";
 import {
   pickEnoughHistory,
+  pickEnoughHistoryResolved,
   realHistoricalPoints,
+  rhIntervalToTimeframe,
   RH_ENOUGH_TO_DRAW,
   type HistoricalBar,
 } from "../src/lib/server/live/robinhood";
+import {RWA_TIMEFRAMES, TIMEFRAMES, timeframeLabel} from "../src/lib/types";
 
 function bar(
   t: string,
@@ -59,5 +62,38 @@ describe("RWA historical candles", () => {
 
   it("does not pad a lone close into a chart", () => {
     assert.deepEqual(pickEnoughHistory([[{t: 1, price: 10}]]), []);
+  });
+
+  it("reports the bucket actually drawn when the daily ladder steps down", () => {
+    const daily = Array.from({length: 3}, (_, i) => ({
+      t: i * 86_400_000,
+      price: 100 + i,
+    }));
+    const hourly = Array.from({length: 25}, (_, i) => ({
+      t: i * 3_600_000,
+      price: 100 + i * 0.1,
+    }));
+    const picked = pickEnoughHistoryResolved([
+      {points: daily, timeframe: "1D"},
+      {points: hourly, timeframe: "1h"},
+    ]);
+    assert.equal(picked.resolvedTimeframe, "1h");
+    assert.equal(picked.points.length, 25);
+    assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D · 1h");
+  });
+
+  it("maps Robinhood intervals onto app timeframes", () => {
+    assert.equal(rhIntervalToTimeframe("day"), "1D");
+    assert.equal(rhIntervalToTimeframe("hour"), "1h");
+    assert.equal(rhIntervalToTimeframe("5minute"), "5m");
+    assert.equal(rhIntervalToTimeframe("10minute"), "15m");
+  });
+
+  it("offers only 5m / 1h / 1D pills for stock charts", () => {
+    assert.deepEqual([...RWA_TIMEFRAMES], ["5m", "1h", "1D"]);
+    for (const missing of ["1m", "15m", "4h"] as const) {
+      assert.equal((RWA_TIMEFRAMES as readonly string[]).includes(missing), false);
+      assert.equal((TIMEFRAMES as readonly string[]).includes(missing), true);
+    }
   });
 });

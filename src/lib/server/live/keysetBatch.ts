@@ -70,6 +70,8 @@ export interface KeysetBatchResult {
 export async function runKeysetBatch<T>(opts: {
   name: string;
   pageSize?: number;
+  /** Sleep after each page so Dex / RPC are not hammered. */
+  pauseMs?: number;
   loadPage: (after: string | null, limit: number) => Promise<T[]>;
   keyOf: (row: T) => string;
   onPage: (page: T[]) => Promise<Record<string, number> | void>;
@@ -127,6 +129,9 @@ export async function runKeysetBatch<T>(opts: {
       }),
     );
     if (page.length < pageSize) break;
+    if ((opts.pauseMs ?? 0) > 0) {
+      await new Promise((resolve) => setTimeout(resolve, opts.pauseMs));
+    }
   }
 
   const ms = Date.now() - started;

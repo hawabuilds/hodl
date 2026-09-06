@@ -45,6 +45,7 @@ import {loadDecoratedFeedPage} from "./feedDecorate";
 import {feedImageUrl} from "@/lib/tokenImage";
 import {looksInvertedMemecoin, usdPriceFor} from "@/lib/pairOrientation";
 import {isTradeableFromLiquidity} from "@/lib/priceState";
+import {marketCapAt} from "@/lib/marketCap";
 import {resolveV4PoolKeys} from "./v4Pools";
 import {resolveBestV3Pool} from "./v3Pools";
 
@@ -403,8 +404,26 @@ function pairAgainstStock(pair: DexPair, address: string): boolean {
   return other ? RWA_BY_ADDRESS.has(other) : false;
 }
 
-/** Deepest pool for a token, preferring stock-paired markets when they exist. */
-function deepestPoolForToken(
+/** True when any pool is paired against a tokenized stock. */
+export function tokenHasStockPair(
+  address: string,
+  pairs: Iterable<DexPair>,
+): boolean {
+  for (const pair of pairs) {
+    const base = pair.baseToken?.address?.toLowerCase();
+    const quote = pair.quoteToken?.address?.toLowerCase();
+    if ((base === address || quote === address) && pairAgainstStock(pair, address)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Deepest pool by USD liquidity. Stock preference is membership only
+ * (`rwaPaired` / `tokenHasStockPair`) — not the price/chart/trades pool.
+ */
+export function deepestPoolForToken(
   address: string,
   pairs: Iterable<DexPair>,
 ): DexPair | null {
@@ -415,10 +434,7 @@ function deepestPoolForToken(
     if (base === address || quote === address) mine.push(pair);
   }
 
-  const stockPairs = mine.filter((pair) => pairAgainstStock(pair, address));
-  const preferred = stockPairs.length > 0 ? stockPairs : mine;
-
-  return preferred.reduce<DexPair | null>(
+  return mine.reduce<DexPair | null>(
     (best, pair) =>
       !best || (pair.liquidity?.usd ?? 0) > (best.liquidity?.usd ?? 0)
         ? pair
@@ -463,9 +479,10 @@ async function listTokensFromProviders(): Promise<TokenAsset[]> {
     pairs.set(pair.pairAddress, pair);
   }
 
-  // One row per token. Prefer an RWA-paired pool over a deeper stablecoin
-  // pool so `rwaPaired` and the New tab match what the token exists for.
+  // One row per token. Price comes from the deepest USD-liq pool.
+  // `rwaPaired` is membership: any stock pair counts, even if a USDG pool is deeper.
   const best = new Map<string, CommunityToken>();
+  const rwaPairedByAddress = new Map<string, boolean>();
 
   for (const pair of pairs.values()) {
     const side = community(pair);
@@ -476,19 +493,11 @@ async function listTokensFromProviders(): Promise<TokenAsset[]> {
     if (liq < MIN_TOKEN_LIQUIDITY_USD) continue;
 
     const address = side.token.address.toLowerCase();
+    if (side.rwaPaired) rwaPairedByAddress.set(address, true);
     const held = best.get(address);
-    if (!held) {
+    if (!held || liq > (held.pair.liquidity?.usd ?? 0)) {
       best.set(address, side);
-      continue;
     }
-
-    if (side.rwaPaired && !held.rwaPaired) {
-      best.set(address, side);
-      continue;
-    }
-    if (!side.rwaPaired && held.rwaPaired) continue;
-
-    if (liq > (held.pair.liquidity?.usd ?? 0)) best.set(address, side);
   }
 
   const addresses = [...best.keys()];
@@ -550,11 +559,12 @@ async function listTokensFromProviders(): Promise<TokenAsset[]> {
     const version = (pair.labels ?? [])[0] ?? pair.dexId;
     const launchpad = launchpads.get(address) ?? null;
     const onChain = chainGraduated.has(address);
+    const rwaPaired = rwaPairedByAddress.get(address) ?? side.rwaPaired;
     const graduated =
       onChain ||
       (launchpad !== null &&
-        side.rwaPaired &&
-        marketProvesGraduated(pair, side.rwaPaired));
+        rwaPaired &&
+        marketProvesGraduated(pair, rwaPaired));
     const paysRwa = paysRwaRewardsFor(address, dbRewards, payingHolders);
 
     out.push({
@@ -601,7 +611,7 @@ async function listTokensFromProviders(): Promise<TokenAsset[]> {
       createdAt: new Date(pair.pairCreatedAt ?? Date.now()).toISOString(),
       listedAt: new Date(pair.pairCreatedAt ?? Date.now()).toISOString(),
       pairedTicker: quoteSymbol,
-      rwaPaired: side.rwaPaired,
+      rwaPaired,
       // Measured per asset in `getAsset`, not here: it costs several calls a
       // token and is only ever read on a chart page.
       buyTaxPct: null,
@@ -746,7 +756,12 @@ function bestPoolForToken(
 ): CommunityToken | null {
   const candidates = pools.length > 0 ? pools : discovery;
   const deepest = deepestPoolForToken(address, candidates);
-  return deepest ? community(deepest) : null;
+  const side = deepest ? community(deepest) : null;
+  if (!side) return null;
+  return {
+    ...side,
+    rwaPaired: side.rwaPaired || tokenHasStockPair(address, candidates),
+  };
 }
 
 async function resolveTokenAddress(wanted: string): Promise<string | null> {
@@ -862,15 +877,22 @@ async function decorateFromProviders(asset: TokenAsset): Promise<TokenAsset> {
       };
     }
     const series = seriesFrom(deepest, asset.address);
+    const priceUsd =
+      oriented != null && oriented > 0 ? round(oriented, 10) : asset.priceUsd;
+    const marketCapUsd =
+      priceUsd != null && priceUsd > 0
+        ? marketCapAt({...asset, priceUsd}, priceUsd)
+        : asset.marketCapUsd;
     return {
       ...asset,
       holders,
-      priceUsd:
-        oriented != null && oriented > 0 ? round(oriented, 10) : asset.priceUsd,
+      priceUsd,
+      marketCapUsd,
       changePct: round(deepest.priceChange?.h24 ?? asset.changePct, 2),
       volume24hUsd: Math.round(deepest.volume?.h24 ?? asset.volume24hUsd ?? 0),
       liquidityUsd,
       tradeable: isTradeableFromLiquidity(liquidityUsd),
+      rwaPaired: asset.rwaPaired || tokenHasStockPair(asset.address, pools),
       imageUrl: asset.imageUrl,
       series: series.length > 0 ? series.map((value) => round(value, 10)) : asset.series,
     };

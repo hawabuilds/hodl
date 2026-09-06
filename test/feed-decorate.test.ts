@@ -93,4 +93,24 @@ describe("home feed decorate", () => {
     const blank = applyDexPair(blankToken(), pair());
     assert.equal(blank.imageUrl, null);
   });
+
+  it("does not clear stored socials when decorate applies a Dex pair", () => {
+    const held = {
+      x: "https://x.com/held",
+      telegram: "https://t.me/held",
+      website: "https://held.example",
+      discord: "https://discord.gg/held",
+    };
+    const decorated = applyDexPair(
+      {...blankToken(), socials: held},
+      pair({
+        info: {
+          imageUrl: "https://dex.example/other.png",
+          websites: [{url: "https://dex-site.example"}],
+          socials: [{type: "twitter", url: "https://x.com/dex"}],
+        },
+      }),
+    );
+    assert.deepEqual(decorated.socials, held);
+  });
 });

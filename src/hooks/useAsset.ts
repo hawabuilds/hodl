@@ -83,11 +83,15 @@ export function useChart(kind: AssetKind, id: string, timeframe: Timeframe) {
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const res = await fetch(`/api/asset/${kind}/${key}/chart?tf=${timeframe}`);
+      const res = await fetch(`/api/asset/${kind}/${key}/chart?tf=${timeframe}`, {
+        cache: "no-store",
+      });
       if (!res.ok) throw new Error("Could not load the chart.");
       return (await res.json()) as {
         points: ChartPoint[];
         changePct: number;
+        timeframe?: Timeframe;
+        resolvedTimeframe?: Timeframe;
         error?: string | null;
       };
     },
@@ -97,6 +101,7 @@ export function useChart(kind: AssetKind, id: string, timeframe: Timeframe) {
   return {
     points: query.data?.points ?? [],
     changePct: query.data?.changePct ?? null,
+    resolvedTimeframe: query.data?.resolvedTimeframe ?? timeframe,
     isLoading: query.isPending && !query.data,
     error:
       query.error?.message ??

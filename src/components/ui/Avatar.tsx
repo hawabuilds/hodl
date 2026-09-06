@@ -3,7 +3,6 @@
 
 import {useEffect, useMemo, useState} from "react";
 import {cn} from "@/lib/cn";
-import {placeholderFromAddress} from "@/lib/tokenImage";
 import {loadedLogoFor, rememberLoadedLogo} from "@/lib/tokenLogoCache";
 
 const GRADIENTS = [
@@ -61,6 +60,7 @@ export function Avatar({
   const [index, setIndex] = useState(0);
   const [held, setHeld] = useState<string | null>(sessionUrl);
   const [loaded, setLoaded] = useState(() => Boolean(sessionUrl));
+  const [exhausted, setExhausted] = useState(false);
 
   const chain = useMemo(() => {
     const urls: string[] = [];
@@ -79,17 +79,12 @@ export function Avatar({
     }
     push(fallbackSrc);
     for (const url of fallbacks ?? []) push(url);
-    // Generated mark only when this token has no artwork at all.
-    const known = Boolean(
-      held || sessionUrl || src || src64 || fallbackSrc || fallbacks?.length,
-    );
-    if (seed && !known) push(placeholderFromAddress(seed));
     return urls;
-  }, [held, sessionUrl, src, src64, fallbackSrc, fallbacks, seed, size]);
+  }, [held, sessionUrl, src, src64, fallbackSrc, fallbacks, size]);
 
   useEffect(() => {
-    if (!chain[0]) return;
     setIndex(0);
+    setExhausted(false);
   }, [chain]);
 
   const shown =
@@ -112,8 +107,8 @@ export function Avatar({
         className,
       )}
     >
-      {loaded || knownUrl ? null : initial}
-      {shown ? (
+      {shown && !exhausted && (loaded || knownUrl) ? null : initial}
+      {shown && !exhausted ? (
         <img
           src={shown}
           alt={name ?? ""}
@@ -142,7 +137,11 @@ export function Avatar({
               setIndex((current) => current + 1);
               return;
             }
-            if (held) setLoaded(true);
+            if (held) {
+              setLoaded(true);
+              return;
+            }
+            setExhausted(true);
           }}
         />
       ) : null}

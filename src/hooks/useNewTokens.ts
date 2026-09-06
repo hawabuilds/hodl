@@ -26,6 +26,23 @@ interface Page {
   hasMore: boolean;
 }
 
+/** Live poll vs first-page query: arrivals vs tokens that later gained art. */
+export function splitNewFeedPoll(
+  incoming: TokenAsset[],
+  seenIds: Set<string>,
+): {fresh: TokenAsset[]; gainedArt: TokenAsset[]} {
+  const fresh: TokenAsset[] = [];
+  const gainedArt: TokenAsset[] = [];
+  for (const token of incoming) {
+    if (!seenIds.has(token.id)) {
+      fresh.push(token);
+      continue;
+    }
+    if (token.imageUrl || token.imageUrl64) gainedArt.push(token);
+  }
+  return {fresh, gainedArt};
+}
+
 function queryString(filters: NewTokenFilters, cursor: string | null): string {
   const params = new URLSearchParams();
   params.set("limit", "50");
@@ -84,16 +101,24 @@ export function useNewTokens(filters: NewTokenFilters, enabled: boolean) {
         });
         if (!res.ok) return;
         const body = (await res.json()) as Page;
-        const fresh = body.tokens.filter((token) => !seen.current.has(token.id));
-        if (fresh.length === 0) return;
-        rememberTokens(fresh);
+        rememberTokens(body.tokens);
+        const {fresh, gainedArt} = splitNewFeedPoll(body.tokens, seen.current);
+        if (fresh.length === 0 && gainedArt.length === 0) return;
         await Promise.all(
-          fresh.map((token) => decodeTokenImage(token.imageUrl64 || token.imageUrl)),
+          [...fresh, ...gainedArt].map((token) =>
+            decodeTokenImage(token.imageUrl64 || token.imageUrl),
+          ),
         );
         for (const token of fresh) seen.current.add(token.id);
+        const incoming = new Map(body.tokens.map((token) => [token.id, token]));
         setLive((held) => [
           ...fresh.map(applyCachedToken),
-          ...held.filter((row) => !fresh.some((item) => item.id === row.id)),
+          ...held
+            .filter((row) => !fresh.some((item) => item.id === row.id))
+            .map((row) => {
+              const next = incoming.get(row.id);
+              return next ? applyCachedToken(next) : row;
+            }),
         ]);
       } catch {
         // next poll

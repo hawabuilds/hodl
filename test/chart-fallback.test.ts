@@ -6,7 +6,12 @@ import {
   seriesFrom,
   type DexPair,
 } from "../src/lib/server/live/dexscreener";
-import type {Trade} from "../src/lib/types";
+import {ENOUGH_TO_DRAW, pickResolvedCandles} from "../src/lib/server/live/geckoterminal";
+import {deepestPoolForToken, tokenHasStockPair} from "../src/lib/server/live/market";
+import {tokenChartFromFills} from "../src/lib/server/sources";
+import {hasRealPool} from "../src/lib/server/live/universeStore";
+import {timeframeLabel} from "../src/lib/types";
+import type {ChartPoint, Trade} from "../src/lib/types";
 
 function pair(change: DexPair["priceChange"], priceUsd = "1"): DexPair {
   return {
@@ -80,5 +85,85 @@ describe("chart fallback series", () => {
     );
     assert.ok(points.length >= 2);
     assert.equal(points[points.length - 1].price, 1.05);
+  });
+
+  it("does not treat Dex change buckets as timeframe candles", () => {
+    const buckets = chartPointsFromPair(
+      pair({h24: 100, h6: 50, h1: 25, m5: 5}),
+      "0xtoken",
+      {now: 1_700_000_000_000, includeLive: true},
+    );
+    assert.ok(buckets.length >= 2);
+    assert.deepEqual(tokenChartFromFills([]), []);
+    const fills = tokenChartFromFills([
+      trade("1", "2026-09-05T12:00:00.000Z", 0.01),
+      trade("2", "2026-09-05T12:00:02.000Z", 0.012),
+    ]);
+    assert.equal(fills.length, 2);
+    assert.equal(fills[0].price, 0.01);
+    assert.notDeepEqual(fills, buckets);
+  });
+});
+
+describe("resolved gecko timeframe", () => {
+  function bars(n: number, price = 1): ChartPoint[] {
+    return Array.from({length: n}, (_, i) => ({t: i * 1_000, price}));
+  }
+
+  it("keeps 1D when the daily series already has a shape", () => {
+    const picked = pickResolvedCandles("1D", {
+      "1D": bars(ENOUGH_TO_DRAW, 2),
+      "1h": bars(80, 1),
+    });
+    assert.equal(picked.resolvedTimeframe, "1D");
+    assert.equal(picked.points.length, ENOUGH_TO_DRAW);
+    assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D");
+  });
+
+  it("reports 1h when 1D is too thin and hours have a shape", () => {
+    const picked = pickResolvedCandles("1D", {
+      "1D": bars(3, 2),
+      "4h": bars(8, 1.5),
+      "1h": bars(25, 1),
+    });
+    assert.equal(picked.resolvedTimeframe, "1h");
+    assert.equal(picked.points.length, 25);
+    assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D · 1h");
+  });
+});
+
+describe("deepest pool and junk clones", () => {
+  it("picks the deepest USD-liq pool, not the stock pair", () => {
+    const stock: DexPair = {
+      chainId: "robinhood",
+      dexId: "uniswap",
+      pairAddress: "0xstock",
+      baseToken: {address: "0xtoken", name: "Tok", symbol: "TOK"},
+      quoteToken: {
+        address: "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+        name: "Apple",
+        symbol: "AAPL",
+      },
+      priceUsd: "0.005726",
+      liquidity: {usd: 8_000},
+    };
+    const usdg: DexPair = {
+      chainId: "robinhood",
+      dexId: "uniswap",
+      pairAddress: "0xusdg",
+      baseToken: {address: "0xtoken", name: "Tok", symbol: "TOK"},
+      quoteToken: {address: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", name: "USDG", symbol: "USDG"},
+      priceUsd: "0.006416",
+      liquidity: {usd: 90_000},
+    };
+    const deepest = deepestPoolForToken("0xtoken", [stock, usdg]);
+    assert.equal(deepest?.pairAddress, "0xusdg");
+    assert.equal(tokenHasStockPair("0xtoken", [stock, usdg]), true);
+  });
+
+  it("drops stats-ranked rows with no real pool", () => {
+    assert.equal(hasRealPool({pair_address: null, pool_address: null}), false);
+    assert.equal(hasRealPool({pair_address: "0xpool", pool_address: null}), true);
+    assert.equal(hasRealPool({pair_address: null, pool_address: "0xpool"}), true);
   });
 });

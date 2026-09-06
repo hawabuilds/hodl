@@ -26,6 +26,37 @@ import {
 const BASE = "https://api.dexscreener.com/tokens/v1/robinhood";
 const BATCH = 30;
 const TTL_MS = 15_000;
+const DEX_MIN_GAP_MS = 2_000;
+const DEX_429_COOLDOWN_MS = 15_000;
+
+export class DexRateLimitError extends Error {
+  readonly status = 429;
+  constructor(message = "DexScreener rate limited") {
+    super(message);
+    this.name = "DexRateLimitError";
+  }
+}
+
+let nextDexAt = 0;
+
+export function isDexRateLimit(error: unknown): boolean {
+  if (error instanceof DexRateLimitError) return true;
+  const text = error instanceof Error ? error.message : String(error);
+  return /\b429\b/.test(text);
+}
+
+async function waitForDexBudget(): Promise<void> {
+  const wait = nextDexAt - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+}
+
+function noteDexCall(): void {
+  nextDexAt = Math.max(nextDexAt, Date.now() + DEX_MIN_GAP_MS);
+}
+
+export function noteDex429(retryAfterMs = DEX_429_COOLDOWN_MS): void {
+  nextDexAt = Date.now() + retryAfterMs;
+}
 
 export interface DexPair {
   chainId: string;
@@ -56,14 +87,20 @@ async function loadPairs(addresses: string[]): Promise<DexPair[]> {
     const key = `ds:tokens:${[...batch].sort().join(",")}`;
     try {
       const rows = await cached(key, TTL_MS, async () => {
+        await waitForDexBudget();
         const body = await getJson<DexPair[] | {pairs?: DexPair[]}>(
           `${BASE}/${batch.join(",")}`,
           8000,
         );
+        noteDexCall();
         return Array.isArray(body) ? body : (body.pairs ?? []);
       });
       out.push(...rows);
-    } catch {
+    } catch (error) {
+      if (isDexRateLimit(error)) {
+        noteDex429();
+        throw error instanceof DexRateLimitError ? error : new DexRateLimitError();
+      }
       // A failed batch costs 30 tokens, not the whole feed.
     }
   }

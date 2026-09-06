@@ -99,6 +99,12 @@ ALTER TABLE tokens ADD COLUMN IF NOT EXISTS bonded_at timestamptz;
 ALTER TABLE tokens ADD COLUMN IF NOT EXISTS listed_at timestamptz;
 ALTER TABLE tokens ADD COLUMN IF NOT EXISTS status text;
 ALTER TABLE tokens ADD COLUMN IF NOT EXISTS image_url text;
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS twitter text;
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS telegram text;
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS website text;
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS discord text;
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS socials_source text;
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS socials_checked_at timestamptz;
 ALTER TABLE tokens ADD COLUMN IF NOT EXISTS indexed_at timestamptz;
 -- eligible is three-state: true = show, false = hide, null = not yet
 -- evaluated = show. See scripts/schema-eligible.sql. Never AND-eligible.
@@ -117,6 +123,11 @@ CREATE INDEX IF NOT EXISTS tokens_status
   ON tokens (status);
 CREATE INDEX IF NOT EXISTS tokens_launchpad
   ON tokens (launchpad);
+
+CREATE INDEX IF NOT EXISTS tokens_socials_checked_at
+  ON tokens (socials_checked_at ASC NULLS FIRST, address ASC)
+  WHERE status = 'listed'
+    AND eligible IS DISTINCT FROM false;
 
 CREATE INDEX IF NOT EXISTS tokens_rewards_24h
   ON tokens (rewards_24h_usd DESC)

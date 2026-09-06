@@ -1,14 +1,23 @@
 import {parseAbi} from "viem";
 import type {Launchpad} from "@/lib/types";
 import {multicallChunked} from "./chain";
+import {
+  anySocial,
+  emptySocials,
+  socialsFromMetadata,
+  socialsFromPonsInfo,
+  type TokenSocials,
+} from "./tokenSocials";
 
 /**
- * The picture a creator uploaded when they launched the token.
+ * The picture and socials a creator uploaded when they launched the token.
  *
  * DexScreener's profile photo is preferred when someone has updated it. Until
  * then the launchpad wrote the original art on-chain: Pons as `logo()` /
- * `getTokenInfo()`, Long as `tokenURI()` JSON. Scraping the launchpad page
- * does not work — Pons serves a site-wide OG image, Long returns 403.
+ * `getTokenInfo()`, Long as `tokenURI()` JSON. Socials live in the same
+ * calls — Pons `getTokenInfo()` 5-string tuple, Long `social_links`.
+ * Scraping the launchpad page does not work — Pons serves a site-wide OG
+ * image, Long returns 403.
  */
 
 const ponsLogoAbi = parseAbi(["function tokenLogo() view returns (string)"]);
@@ -100,8 +109,14 @@ async function fetchViaGateways(path: string): Promise<Response | null> {
   return null;
 }
 
-async function fetchMetadataImage(uri: string): Promise<string | null> {
+async function fetchMetadata(uri: string): Promise<{
+  image: string | null;
+  socials: TokenSocials;
+}> {
+  const blank = {image: null as string | null, socials: emptySocials()};
   const trimmed = uri.trim();
+  if (!trimmed) return blank;
+
   if (trimmed.startsWith("data:application/json")) {
     try {
       const comma = trimmed.indexOf(",");
@@ -109,13 +124,16 @@ async function fetchMetadataImage(uri: string): Promise<string | null> {
       const json = trimmed.includes(";base64")
         ? Buffer.from(raw, "base64").toString("utf8")
         : decodeURIComponent(raw);
-      return imageFromMetadata(JSON.parse(json) as Record<string, unknown>);
+      const body = JSON.parse(json) as Record<string, unknown>;
+      return {image: imageFromMetadata(body), socials: socialsFromMetadata(body)};
     } catch {
-      return null;
+      return blank;
     }
   }
 
-  if (/\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(trimmed)) return toHttp(trimmed);
+  if (/\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(trimmed)) {
+    return {image: toHttp(trimmed), socials: emptySocials()};
+  }
 
   const path = ipfsPath(trimmed);
   const res = path
@@ -126,18 +144,25 @@ async function fetchMetadataImage(uri: string): Promise<string | null> {
         headers: {accept: "application/json,image/*,*/*"},
       }).catch(() => null);
 
-  if (!res?.ok) return null;
+  if (!res?.ok) return blank;
   const type = res.headers.get("content-type") ?? "";
   const url = res.url || toHttp(trimmed);
-  if (type.startsWith("image/")) return url;
+  if (type.startsWith("image/")) return {image: url, socials: emptySocials()};
   try {
-    return imageFromMetadata((await res.json()) as Record<string, unknown>);
+    const body = (await res.json()) as Record<string, unknown>;
+    return {image: imageFromMetadata(body), socials: socialsFromMetadata(body)};
   } catch {
-    return url;
+    return {image: url, socials: emptySocials()};
   }
 }
 
 export type DeployImageHit = {url: string; via: "pons" | "long"};
+
+export type DeployMetaHit = {
+  via: "pons" | "long";
+  image?: DeployImageHit;
+  socials: TokenSocials;
+};
 
 function pickString(...values: unknown[]): string | null {
   for (const value of values) {
@@ -157,17 +182,18 @@ function logoFromInfo(result: unknown): string | null {
 }
 
 /**
- * Read the creator-uploaded picture from the token itself.
+ * Read the creator-uploaded picture and socials from the token itself.
  *
  * Launchpad labels are a hint, not a gate — a Pons row with a null
  * `launchpad` still has `logo()` / `getTokenInfo()`. Tokens with no
- * on-chain URI are left out of the map so the caller can retry later.
+ * on-chain URI are left out of the image map so the caller can retry later.
+ * Socials are recorded even when every link is empty.
  */
-export async function deployImagesFor(
+export async function deployMetaFor(
   addresses: string[],
   _launchpads?: Map<string, Launchpad | null>,
-): Promise<Map<string, DeployImageHit>> {
-  const out = new Map<string, DeployImageHit>();
+): Promise<Map<string, DeployMetaHit>> {
+  const out = new Map<string, DeployMetaHit>();
   if (addresses.length === 0) return out;
 
   const [v2Logos, v1Logos, infos] = await Promise.all([
@@ -197,17 +223,28 @@ export async function deployImagesFor(
     ),
   ]);
 
+  const longs: string[] = [];
   addresses.forEach((address, i) => {
+    const key = address.toLowerCase();
+    const infoOk = infos[i]?.status === "success";
     const logo = pickString(
       v2Logos[i]?.status === "success" ? v2Logos[i].result : null,
       v1Logos[i]?.status === "success" ? v1Logos[i].result : null,
-      infos[i]?.status === "success" ? logoFromInfo(infos[i].result) : null,
+      infoOk ? logoFromInfo(infos[i].result) : null,
     );
     const url = toHttp(logo);
-    if (url) out.set(address.toLowerCase(), {url, via: "pons"});
+    const socials = infoOk ? socialsFromPonsInfo(infos[i].result) : emptySocials();
+    if (url || infoOk) {
+      out.set(key, {
+        via: "pons",
+        image: url ? {url, via: "pons"} : undefined,
+        socials,
+      });
+      return;
+    }
+    longs.push(address);
   });
 
-  const longs = addresses.filter((address) => !out.has(address));
   if (longs.length === 0) return out;
 
   const uris = await multicallChunked<string>(
@@ -230,13 +267,29 @@ export async function deployImagesFor(
   async function worker() {
     while (index < wanted.length) {
       const row = wanted[index++];
-      const image = await fetchMetadataImage(row.uri);
-      if (image) out.set(row.address.toLowerCase(), {url: image, via: "long"});
+      const meta = await fetchMetadata(row.uri);
+      if (!meta.image && !anySocial(meta.socials)) continue;
+      out.set(row.address.toLowerCase(), {
+        via: "long",
+        image: meta.image ? {url: meta.image, via: "long"} : undefined,
+        socials: meta.socials,
+      });
     }
   }
   await Promise.all(
     Array.from({length: Math.min(CONCURRENCY, wanted.length)}, worker),
   );
 
+  return out;
+}
+
+export async function deployImagesFor(
+  addresses: string[],
+  launchpads?: Map<string, Launchpad | null>,
+): Promise<Map<string, DeployImageHit>> {
+  const out = new Map<string, DeployImageHit>();
+  for (const [address, hit] of await deployMetaFor(addresses, launchpads)) {
+    if (hit.image) out.set(address, hit.image);
+  }
   return out;
 }

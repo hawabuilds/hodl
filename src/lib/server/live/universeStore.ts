@@ -19,6 +19,9 @@ import {applyThreeStateFilter, showsThreeState} from "@/lib/threeState";
 import {RWA_BY_ADDRESS} from "./robinhood";
 import {db, hasDatabase} from "../db";
 import {storeTokenImages} from "./imageCdn";
+import {mergeSocials, type SocialsSource} from "./tokenSocials";
+
+export type {SocialsSource};
 
 export interface TokenRow {
   address: string;
@@ -50,6 +53,12 @@ export interface TokenRow {
   image_64?: string | null;
   image_128?: string | null;
   image_color?: string | null;
+  twitter?: string | null;
+  telegram?: string | null;
+  website?: string | null;
+  discord?: string | null;
+  socials_source?: SocialsSource;
+  socials_checked_at?: string | null;
   indexed_at: string | null;
   rewards_24h_usd: number | null;
   is_tradeable?: boolean | null;
@@ -272,6 +281,14 @@ export async function listStoredTokens(): Promise<TokenRow[]> {
 }
 
 export type FeedSort = "new" | "volume" | "mcap" | "rewards";
+
+/** Stats-ordered pages require a real pool so fake-liq clones cannot dominate. */
+export function hasRealPool(row: {
+  pair_address?: string | null;
+  pool_address?: string | null;
+}): boolean {
+  return Boolean(row.pair_address?.trim() || row.pool_address?.trim());
+}
 
 export interface TokenPageQuery {
   cursorListedAt?: string | null;
@@ -588,6 +605,7 @@ async function listStatsOrderedPage(
   const ordered = statRows
     .map((row) => byAddress.get(normalizeAddress(row.address)))
     .filter((row): row is TokenRow => Boolean(row))
+    .filter((row) => hasRealPool(row))
     .filter((row) => rowPassesUniverse(row))
     .filter((row) => {
       const stat = stats.get(normalizeAddress(row.address));
@@ -618,6 +636,50 @@ async function listStatsOrderedPage(
     .slice(0, limit);
 
   return {rows: ordered, stats, next: null};
+}
+
+export const RECENT_MISSING_IMAGE_LIMIT = 16;
+export const RECENT_MISSING_IMAGE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+export function recentMissingImageWindow(now = Date.now()): {
+  listedSince: string;
+  limit: number;
+} {
+  return {
+    listedSince: new Date(now - RECENT_MISSING_IMAGE_MAX_AGE_MS).toISOString(),
+    limit: RECENT_MISSING_IMAGE_LIMIT,
+  };
+}
+
+/**
+ * Newest listed rows still missing artwork. Worker catch-up only — small
+ * keyset, not a backfill. Universe membership is three-state.
+ */
+export async function listRecentMissingImages(
+  limit = RECENT_MISSING_IMAGE_LIMIT,
+  now = Date.now(),
+): Promise<{address: string; launchpad: LaunchpadId | null}[]> {
+  if (!hasDatabase) return [];
+  const {listedSince} = recentMissingImageWindow(now);
+  let request: any = db()
+    .from("tokens")
+    .select("address, launchpad")
+    .eq("status", "listed")
+    .is("image_url", null)
+    .not("listed_at", "is", null)
+    .gte("listed_at", listedSince)
+    .order("listed_at", {ascending: false})
+    .limit(limit);
+  request = applyUniverseFilter(request);
+  const {data, error} = await request;
+  if (error) {
+    console.error("recent missing images read failed", error);
+    return [];
+  }
+  return ((data ?? []) as {address: string; launchpad: LaunchpadId | null}[]).map((row) => ({
+    address: normalizeAddress(String(row.address)),
+    launchpad: row.launchpad === "pons" || row.launchpad === "long" ? row.launchpad : null,
+  }));
 }
 
 /** Addresses the stats cron should keep warm: last 7 days + top volume. */
@@ -1063,6 +1125,134 @@ export async function writeTokenImages(
   return wrote;
 }
 
+export type TokenSocialsWrite = {
+  address: string;
+  twitter: string | null;
+  telegram: string | null;
+  website: string | null;
+  discord: string | null;
+  socials_source: SocialsSource;
+};
+
+/**
+ * Persist resolved socials. Per-field merge with whatever is already stored
+ * so a Dex miss cannot blank a launchpad link. Always stamps
+ * `socials_checked_at` so refresh can skip a recent attempt.
+ */
+export async function writeTokenSocials(rows: TokenSocialsWrite[]): Promise<number> {
+  if (!hasDatabase || rows.length === 0) return 0;
+
+  const wanted = rows.map((row) => ({
+    ...row,
+    address: normalizeAddress(row.address),
+  }));
+
+  const held = new Map<
+    string,
+    {
+      twitter: string | null;
+      telegram: string | null;
+      website: string | null;
+      discord: string | null;
+      socials_source: SocialsSource;
+    }
+  >();
+  for (let i = 0; i < wanted.length; i += 200) {
+    const slice = wanted.slice(i, i + 200).map((row) => row.address);
+    const {data, error} = await db()
+      .from("tokens")
+      .select("address, twitter, telegram, website, discord, socials_source")
+      .in("address", slice);
+    if (error) {
+      if (/twitter|telegram|website|discord|socials_source|schema cache/i.test(error.message)) {
+        console.error(
+          "tokens socials columns missing — paste scripts/schema-socials.sql",
+          error.message,
+        );
+        return 0;
+      }
+      console.error("socials read failed", error);
+      break;
+    }
+    for (const row of (data ?? []) as {
+      address: string;
+      twitter?: string | null;
+      telegram?: string | null;
+      website?: string | null;
+      discord?: string | null;
+      socials_source?: string | null;
+    }[]) {
+      held.set(normalizeAddress(String(row.address)), {
+        twitter: row.twitter ?? null,
+        telegram: row.telegram ?? null,
+        website: row.website ?? null,
+        discord: row.discord ?? null,
+        socials_source: (row.socials_source as SocialsSource) ?? null,
+      });
+    }
+  }
+
+  const now = new Date().toISOString();
+  let wrote = 0;
+  for (let i = 0; i < wanted.length; i += 25) {
+    const slice = wanted.slice(i, i + 25);
+    const results = await Promise.all(
+      slice.map((row) => {
+        const current = held.get(row.address);
+        const merged = mergeSocials(
+          {
+            x: row.twitter,
+            telegram: row.telegram,
+            website: row.website,
+            discord: row.discord,
+          },
+          {
+            x: current?.twitter ?? null,
+            telegram: current?.telegram ?? null,
+            website: current?.website ?? null,
+            discord: current?.discord ?? null,
+          },
+        );
+        const source =
+          row.socials_source === "pons" || row.socials_source === "long"
+            ? row.socials_source
+            : current?.socials_source === "pons" || current?.socials_source === "long"
+              ? current.socials_source
+              : (row.socials_source ?? current?.socials_source ?? null);
+        return db()
+          .from("tokens")
+          .update(
+            {
+              twitter: merged.x,
+              telegram: merged.telegram,
+              website: merged.website,
+              discord: merged.discord,
+              socials_source: source,
+              socials_checked_at: now,
+            },
+            {count: "exact"},
+          )
+          .eq("address", row.address);
+      }),
+    );
+    for (const {error, count} of results) {
+      if (error) {
+        if (/twitter|telegram|website|discord|socials_|schema cache/i.test(error.message)) {
+          console.error(
+            "tokens socials columns missing — paste scripts/schema-socials.sql",
+            error.message,
+          );
+          return wrote;
+        }
+        console.error("socials write failed", error);
+        continue;
+      }
+      wrote += count ?? 0;
+    }
+  }
+  return wrote;
+}
+
 export interface PricingCoverage {
   listedEligible: number;
   measured: number;
@@ -1372,7 +1562,12 @@ export function rowToAsset(row: TokenRow, stats: TokenStatRow | undefined): Toke
     sellTaxPct: row.tax_sell,
     feeSplit: null,
     launchpad,
-    socials: {x: null, telegram: null, website: null, discord: null},
+    socials: {
+      x: row.twitter ?? null,
+      telegram: row.telegram ?? null,
+      website: row.website ?? null,
+      discord: row.discord ?? null,
+    },
     description: `${row.name ?? row.symbol ?? "Token"} on ${launchpad?.name ?? "chain"}.`,
     series: [],
   };

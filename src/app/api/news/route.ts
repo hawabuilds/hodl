@@ -22,7 +22,7 @@ const feed = unstable_cache(
   async () => fetchFeed({window: "all", topic: "all"}),
   // Bumped whenever sort/source logic changes: Vercel's Data Cache outlives
   // a deploy, so an old key would keep serving the previous feed.
-  ["news-feed-v3"],
+  ["news-feed-v5"],
   {revalidate: 300},
 );
 

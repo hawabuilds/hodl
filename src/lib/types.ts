@@ -190,6 +190,22 @@ export interface ChartPoint {
 export const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1D"] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
 
+/**
+ * Robinhood historicals have no 1m / 15m / 4h. Stock charts only offer
+ * buckets the equity tape can actually fill.
+ */
+export const RWA_TIMEFRAMES = ["5m", "1h", "1D"] as const;
+export type RwaTimeframe = (typeof RWA_TIMEFRAMES)[number];
+
+/** Active pill / header: show the bucket that was actually drawn. */
+export function timeframeLabel(
+  requested: Timeframe,
+  resolved?: Timeframe | null,
+): string {
+  if (resolved && resolved !== requested) return `${requested} · ${resolved}`;
+  return requested;
+}
+
 /** Windows for the portfolio chart, which is read over months rather than hours. */
 export const RANGES = ["1D", "1W", "1M", "1Y", "ALL"] as const;
 export type Range = (typeof RANGES)[number];

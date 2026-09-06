@@ -238,6 +238,15 @@ const RH_LADDER: Record<Timeframe, RhBucket[]> = {
 /** Same threshold as the token Gecko ladder — a shape, not two dots. */
 export const RH_ENOUGH_TO_DRAW = 20;
 
+/** Map a Robinhood interval onto the app's timeframe pills. */
+export function rhIntervalToTimeframe(interval: string): Timeframe {
+  if (interval === "day") return "1D";
+  if (interval === "hour") return "1h";
+  if (interval === "10minute") return "15m";
+  if (interval === "5minute") return "5m";
+  return "1h";
+}
+
 const HISTORICAL_TTL_MS = 60_000;
 
 /**
@@ -268,13 +277,32 @@ export function pickEnoughHistory(
   enough = RH_ENOUGH_TO_DRAW,
   limit = 120,
 ): ChartPoint[] {
+  return pickEnoughHistoryResolved(
+    ladder.map((points) => ({points, timeframe: "1D" as Timeframe})),
+    enough,
+    limit,
+  ).points;
+}
+
+export function pickEnoughHistoryResolved(
+  ladder: {points: ChartPoint[]; timeframe: Timeframe}[],
+  enough = RH_ENOUGH_TO_DRAW,
+  limit = 120,
+): {points: ChartPoint[]; resolvedTimeframe: Timeframe | null} {
   let best: ChartPoint[] = [];
-  for (const points of ladder) {
-    const sliced = points.length > limit ? points.slice(-limit) : points;
-    if (sliced.length > best.length) best = sliced;
+  let resolved: Timeframe | null = null;
+  for (const step of ladder) {
+    const sliced =
+      step.points.length > limit ? step.points.slice(-limit) : step.points;
+    if (sliced.length > best.length) {
+      best = sliced;
+      resolved = step.timeframe;
+    }
     if (best.length >= enough) break;
   }
-  return best.length > 1 ? best : [];
+  return best.length > 1
+    ? {points: best, resolvedTimeframe: resolved}
+    : {points: [], resolvedTimeframe: null};
 }
 
 async function historicalsAt(
@@ -315,14 +343,23 @@ export async function historicalCandles(
   ticker: string,
   timeframe: Timeframe,
   limit = 120,
-): Promise<ChartPoint[]> {
+): Promise<{points: ChartPoint[]; resolvedTimeframe: Timeframe}> {
   const ladder = RH_LADDER[timeframe] ?? RH_LADDER["1h"];
-  const fetched: ChartPoint[][] = [];
+  const fetched: {points: ChartPoint[]; timeframe: Timeframe}[] = [];
   for (const bucket of ladder) {
     const points = await historicalsAt(ticker, bucket);
-    fetched.push(points);
-    const soFar = pickEnoughHistory(fetched, RH_ENOUGH_TO_DRAW, limit);
-    if (soFar.length >= RH_ENOUGH_TO_DRAW) return soFar;
+    fetched.push({points, timeframe: rhIntervalToTimeframe(bucket.interval)});
+    const soFar = pickEnoughHistoryResolved(fetched, RH_ENOUGH_TO_DRAW, limit);
+    if (soFar.points.length >= RH_ENOUGH_TO_DRAW) {
+      return {
+        points: soFar.points,
+        resolvedTimeframe: soFar.resolvedTimeframe ?? timeframe,
+      };
+    }
   }
-  return pickEnoughHistory(fetched, RH_ENOUGH_TO_DRAW, limit);
+  const picked = pickEnoughHistoryResolved(fetched, RH_ENOUGH_TO_DRAW, limit);
+  return {
+    points: picked.points,
+    resolvedTimeframe: picked.resolvedTimeframe ?? timeframe,
+  };
 }

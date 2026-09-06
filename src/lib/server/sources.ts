@@ -19,7 +19,7 @@ import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {quotePriceUsd} from "@/lib/server/quotePrice";
 import {reorientPoints} from "@/lib/pairOrientation";
 import {mergeTradesIntoChart} from "@/lib/chartLive";
-import {chartPointsFromPair, pairsForToken} from "./live/dexscreener";
+import {pairsForToken} from "./live/dexscreener";
 import {underFeature} from "./live/rpcMeter";
 import {type FeedQuery} from "./newsfeed";
 import {hasDatabase} from "./db";
@@ -50,35 +50,20 @@ async function liveSwapsFor(
 }
 
 /**
- * Chart from DexScreener buckets and on-chain fills — never invented OHLC.
- * Used when Gecko 429s or has no pair for this pool.
+ * Swap-fill fallback only. Dex change buckets (24h/6h/1h/5m) are not candles
+ * and must never be returned as 1m/5m/15m/4h/1D history.
  */
+export function tokenChartFromFills(trades: Trade[]): ChartPoint[] {
+  return mergeTradesIntoChart([], trades);
+}
+
 async function fallbackTokenChart(
   asset: TokenAsset,
   target: {pool: string; token: string; quote: string} | null,
 ): Promise<ChartPoint[]> {
-  const [pair, trades] = await Promise.all([
-    pairsForToken(asset.address).then((pools) => {
-      if (!target) return pools[0] ?? null;
-      return (
-        pools.find(
-          (row) => row.pairAddress.toLowerCase() === target.pool.toLowerCase(),
-        ) ??
-        pools[0] ??
-        null
-      );
-    }),
-    target ? liveSwapsFor(target, asset.priceUsd) : Promise.resolve([] as Trade[]),
-  ]);
-
-  const history = pair
-    ? chartPointsFromPair(pair, asset.address, {includeLive: false})
-    : [];
-  const fromFills = mergeTradesIntoChart(history, trades);
-  if (fromFills.length > 1) return fromFills;
-
-  const withLive = pair ? chartPointsFromPair(pair, asset.address) : [];
-  return withLive.length > 1 ? withLive : [];
+  if (!target) return [];
+  const trades = await liveSwapsFor(target, asset.priceUsd);
+  return tokenChartFromFills(trades);
 }
 
 /**
@@ -95,6 +80,8 @@ export interface SourceResult<T> {
   seeded: boolean;
   /** Set when the provider failed. Empty data without this is a real empty set. */
   error?: string;
+  /** Bucket the series was actually drawn from, when a ladder stepped down. */
+  resolvedTimeframe?: Timeframe;
 }
 
 async function liveOnly<T>(load: () => Promise<T>): Promise<SourceResult<T>> {
@@ -163,6 +150,7 @@ export async function fetchAssetPage(
     asset: Asset;
     chart: {
       timeframe: Timeframe;
+      resolvedTimeframe: Timeframe;
       points: ChartPoint[];
       changePct: number;
       error?: string | null;
@@ -194,6 +182,7 @@ export async function fetchAssetPage(
       asset: assetResult.data,
       chart: {
         timeframe,
+        resolvedTimeframe: chartResult.resolvedTimeframe ?? timeframe,
         points: chartResult.data,
         changePct:
           first > 0
@@ -230,20 +219,28 @@ export async function fetchChart(
 ): Promise<SourceResult<ChartPoint[]>> {
   if (asset.kind === "rwa") {
     try {
-      const points = await historicalCandles(asset.ticker, timeframe);
-      if (points.length > 1) return {data: points, seeded: false};
+      const raw = await historicalCandles(asset.ticker, timeframe);
+      if (raw.points.length > 1) {
+        return {
+          data: raw.points,
+          seeded: false,
+          resolvedTimeframe: raw.resolvedTimeframe,
+        };
+      }
     } catch (error) {
       console.error("rwa chart failed", error);
       return {
         data: [],
         seeded: false,
         error: "Could not load the chart.",
+        resolvedTimeframe: timeframe,
       };
     }
-    return {data: [], seeded: false};
+    return {data: [], seeded: false, resolvedTimeframe: timeframe};
   }
 
   let geckoError: string | null = null;
+  let resolvedTimeframe: Timeframe = timeframe;
   let target: Awaited<ReturnType<typeof live.poolFor>> = null;
 
   try {
@@ -251,13 +248,16 @@ export async function fetchChart(
     if (target) {
       const side = target.tokenIsBase === false ? "quote" : "base";
       const raw = await gecko.candles(target.pool, timeframe, side);
+      resolvedTimeframe = raw.resolvedTimeframe;
       const points = reorientPoints(
         raw.points,
         asset.priceUsd,
         asset.liquidityUsd ?? 0,
         asset.symbol,
       );
-      if (points.length > 1) return {data: points, seeded: false};
+      if (points.length > 1) {
+        return {data: points, seeded: false, resolvedTimeframe};
+      }
       geckoError = raw.error;
     }
   } catch (error) {
@@ -266,20 +266,25 @@ export async function fetchChart(
   }
 
   const fallback = await fallbackTokenChart(asset, target);
-  if (fallback.length > 1) return {data: fallback, seeded: false};
+  if (fallback.length > 1) {
+    return {data: fallback, seeded: false, resolvedTimeframe};
+  }
 
   /**
    * A real token with no candles gets an empty chart, not an invented one.
    *
-   * Gecko 429 / missing pair used to stop here and paint a retry panel even
-   * when DexScreener buckets or on-chain fills existed. Those are the
-   * fallback above. Empty without an error means nothing traded. A
-   * retryable Gecko miss with no fallback is still an error.
+   * Swap-fill is the only fallback. Dex change buckets are not candles —
+   * a Gecko 429 with no fills is empty + retry, not six fake points.
    */
   if (geckoMissIsRetryable(geckoError)) {
-    return {data: [], seeded: false, error: geckoError ?? "Could not load the chart."};
+    return {
+      data: [],
+      seeded: false,
+      error: geckoError ?? "Could not load the chart.",
+      resolvedTimeframe,
+    };
   }
-  return {data: [], seeded: false};
+  return {data: [], seeded: false, resolvedTimeframe};
 }
 
 /**

@@ -25,16 +25,50 @@ const store = new Map<string, Entry<unknown>>();
 /** Requests in flight, so ten simultaneous callers make one upstream call. */
 const inflight = new Map<string, Promise<unknown>>();
 
+export type CacheOptions = {
+  /**
+   * When false, an empty array is a miss: it is not written to Redis, a shared
+   * `[]` is rebuilt, and the in-process store is not warmed with nothing.
+   * For feeds where empty usually means the upstream failed, not "no news".
+   */
+  cacheEmpty?: boolean;
+};
+
+/**
+ * Whether a cached value is something we should serve or persist.
+ *
+ * `null` is always a miss. An empty array is a miss only when the caller
+ * opted out of caching empties — otherwise `[]` is a real answer (no trades,
+ * no pairs) and must stay a hit.
+ */
+export function isUsableCachedValue<T>(
+  value: T | null,
+  cacheEmpty = true,
+): value is T {
+  if (value === null) return false;
+  if (!cacheEmpty && Array.isArray(value) && value.length === 0) return false;
+  return true;
+}
+
+function allowsEmpty(options?: CacheOptions): boolean {
+  return options?.cacheEmpty !== false;
+}
+
 export async function cached<T>(
   key: string,
   ttlMs: number,
   load: () => Promise<T>,
+  options?: CacheOptions,
 ): Promise<T> {
   const hit = store.get(key) as Entry<T> | undefined;
   const pending = inflight.get(key) as Promise<T> | undefined;
 
   // Fresh enough to serve outright.
-  if (hit && hit.expires > Date.now()) {
+  if (
+    hit &&
+    hit.expires > Date.now() &&
+    isUsableCachedValue(hit.value, allowsEmpty(options))
+  ) {
     recordCacheHit();
     return hit.value;
   }
@@ -49,8 +83,8 @@ export async function cached<T>(
    * few seconds of staleness on a feed that refreshes every minute is not
    * worth a page that visibly stalls.
    */
-  if (hit) {
-    if (!pending) void refresh(key, ttlMs, load);
+  if (hit && isUsableCachedValue(hit.value, allowsEmpty(options))) {
+    if (!pending) void refresh(key, ttlMs, load, options);
     return hit.value;
   }
 
@@ -61,10 +95,10 @@ export async function cached<T>(
   // difference between a first visitor paying for two hundred quotes and a
   // pool sweep, and one paying for a single round trip to Redis.
   if (SHARED_CACHE) {
-    return refreshVia(key, ttlMs, load);
+    return refreshVia(key, ttlMs, load, options);
   }
 
-  return refresh(key, ttlMs, load);
+  return refresh(key, ttlMs, load, options);
 }
 
 /**
@@ -127,14 +161,17 @@ async function refreshVia<T>(
   key: string,
   ttlMs: number,
   load: () => Promise<T>,
+  options?: CacheOptions,
 ): Promise<T> {
   const shared = await readShared<T>(key);
-  if (shared === null) return refresh(key, ttlMs, load);
+  if (!isUsableCachedValue(shared, allowsEmpty(options))) {
+    return refresh(key, ttlMs, load, options);
+  }
 
   // Warm this instance from it, then refresh behind the caller so the shared
   // copy does not go stale for everyone at once.
   store.set(key, {value: shared, expires: Date.now() + ttlMs});
-  void refresh(key, ttlMs, load).catch(() => {});
+  void refresh(key, ttlMs, load, options).catch(() => {});
   return shared;
 }
 
@@ -143,15 +180,18 @@ function refresh<T>(
   key: string,
   ttlMs: number,
   load: () => Promise<T>,
+  options?: CacheOptions,
 ): Promise<T> {
   const promise = load()
     .then((value) => {
-      store.set(key, {value, expires: Date.now() + ttlMs});
-      // Written behind the caller, and kept a good deal longer than the local
-      // copy: its job is to spare the *next* cold instance the rebuild, so it
-      // needs to outlive the freshness window rather than match it.
-      if (SHARED_CACHE) {
-        void writeShared(key, value, Math.ceil((ttlMs * 10) / 1000));
+      if (isUsableCachedValue(value, allowsEmpty(options))) {
+        store.set(key, {value, expires: Date.now() + ttlMs});
+        // Written behind the caller, and kept a good deal longer than the local
+        // copy: its job is to spare the *next* cold instance the rebuild, so it
+        // needs to outlive the freshness window rather than match it.
+        if (SHARED_CACHE) {
+          void writeShared(key, value, Math.ceil((ttlMs * 10) / 1000));
+        }
       }
       return value;
     })
@@ -175,6 +215,12 @@ function refresh<T>(
  */
 export function forget(key: string): void {
   store.delete(key);
+}
+
+/** Test-only: drop in-process entries so cases do not leak into each other. */
+export function resetLiveCacheForTests(): void {
+  store.clear();
+  inflight.clear();
 }
 
 /**

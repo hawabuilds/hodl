@@ -8,6 +8,7 @@ import {
   type TokenPageQuery,
 } from "./universeStore";
 import {isTradeableFromLiquidity, rowPassesFeedBounds} from "@/lib/priceState";
+import {marketCapAt} from "@/lib/marketCap";
 
 function round(value: number, dp = 6): number {
   const f = 10 ** dp;
@@ -88,14 +89,18 @@ export function applyDexPair(asset: TokenAsset, pair: DexPair): TokenAsset {
       : asset.volume24hUsd;
   const supply = asset.circulatingSupply;
   const providerCap = pair.marketCap ?? pair.fdv;
+  const fromSupply =
+    price != null && price > 0
+      ? marketCapAt({...asset, priceUsd: price}, price)
+      : asset.marketCapUsd;
   const marketCapUsd =
     supply && price != null && price > 0
-      ? Math.round(supply * price)
+      ? fromSupply
       : tokenIsQuote
         ? asset.marketCapUsd
         : providerCap != null
           ? Math.round(Number(providerCap))
-          : asset.marketCapUsd;
+          : fromSupply;
   const series = seriesFrom(pair, asset.address);
 
   return {

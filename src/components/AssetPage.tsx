@@ -14,7 +14,7 @@ import {clock, percent, shortAddress} from "@/lib/format";
 import {lastHomePath} from "@/lib/homeState";
 import {sectorFor} from "@/lib/sectors";
 import type {AssetKind, ChartPoint, Timeframe} from "@/lib/types";
-import {TIMEFRAMES} from "@/lib/types";
+import {RWA_TIMEFRAMES, TIMEFRAMES, timeframeLabel} from "@/lib/types";
 import {AssetSkeleton} from "./AssetPageSkeleton";
 import {LaunchpadMark} from "./LaunchpadMark";
 import {PanelTabs, type PanelTab} from "./PanelTabs";
@@ -65,6 +65,13 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
   const router = useRouter();
   const {asset, isLoading, error} = useAsset(kind, id);
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
+  const tfOptions: readonly Timeframe[] =
+    kind === "rwa" ? RWA_TIMEFRAMES : TIMEFRAMES;
+  useEffect(() => {
+    if (!(tfOptions as readonly string[]).includes(timeframe)) {
+      setTimeframe("1h");
+    }
+  }, [kind, timeframe, tfOptions]);
   const [panel, setPanel] = useState<PanelKey>("trades");
   const [scrubbed, setScrubbed] = useState<ChartPoint | null>(null);
   const [orderSide, setOrderSide] = useState<"buy" | "sell" | null>(null);
@@ -259,7 +266,9 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
               ? "—"
               : percent(shownChange)}
             <span className="ml-1.5 font-semibold text-faint">
-              {scrubbed ? clock(scrubbed.t) : timeframe}
+              {scrubbed
+                ? clock(scrubbed.t)
+                : timeframeLabel(timeframe, chart.resolvedTimeframe)}
             </span>
           </div>
         </div>
@@ -297,8 +306,9 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
 
       <PillRail
         label="Chart timeframe"
-        options={TIMEFRAMES}
+        options={tfOptions}
         value={timeframe}
+        resolvedValue={chart.resolvedTimeframe}
         onChange={setTimeframe}
         positive={positive}
         className="mb-5 mt-2"

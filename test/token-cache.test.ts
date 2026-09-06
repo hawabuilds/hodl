@@ -7,6 +7,7 @@ import {
   resetTokenCacheForTests,
   tokenFor,
 } from "../src/lib/tokenCache";
+import {splitNewFeedPoll} from "../src/hooks/useNewTokens";
 
 function token(over: Partial<TokenAsset> = {}): TokenAsset {
   return {
@@ -81,5 +82,20 @@ describe("per-address token cache", () => {
     assert.equal(tokenFor("0xabc")?.priceUsd, 0.01);
     const held = applyCachedToken(token({imageUrl: null}));
     assert.equal(held.imageUrl, "https://store/logo.png");
+  });
+
+  it("New live poll still applies artwork that arrived after the first sighting", () => {
+    const seen = new Set(["0xabc"]);
+    const first = splitNewFeedPoll([token({imageUrl: null})], seen);
+    assert.equal(first.fresh.length, 0);
+    assert.equal(first.gainedArt.length, 0);
+    const later = splitNewFeedPoll(
+      [token({imageUrl: "https://w3s.link/ipfs/bafy"})],
+      seen,
+    );
+    assert.equal(later.fresh.length, 0);
+    assert.equal(later.gainedArt.length, 1);
+    const arrival = splitNewFeedPoll([token({id: "0xnew", imageUrl: null})], seen);
+    assert.equal(arrival.fresh[0]?.id, "0xnew");
   });
 });

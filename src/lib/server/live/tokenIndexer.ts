@@ -4,8 +4,22 @@ import {
   parseAbi,
   parseAbiItem,
   type Abi,
+  type PublicClient,
 } from "viem";
 import {robinhoodMainnet} from "@/config/chain";
+import {
+  CATCHUP_REORG,
+  MIN_LOG_WINDOW,
+  cursorAfterLogScan,
+  getLogsStartWindow,
+  isLiveCaughtUp,
+  liveReorgBlocks,
+  liveScanMaxBlocks,
+  LogScanLimiter,
+  resumeIfPersisted,
+  shrinkLogWindow,
+  useAlchemyForLogs,
+} from "./logScan";
 import {
   ALL_FACTORIES,
   LONG_AIRLOCK_FACTORY,
@@ -36,15 +50,44 @@ import {asAddress as parseAddress, normalizeAddress} from "@/lib/address";
 import {hasDatabase} from "../db";
 
 const PUBLIC_RPC = "https://rpc.mainnet.chain.robinhood.com";
-const REORG = 30n;
-const START_WINDOW = 8_000n;
-const MIN_WINDOW = 200n;
+const REORG = CATCHUP_REORG;
 const BUDGET_MS = 45_000;
 
 const logsClient = createPublicClient({
   chain: robinhoodMainnet,
   transport: http(PUBLIC_RPC, {timeout: 30_000, retryCount: 0}),
 });
+
+let alchemyLogs: PublicClient | null | undefined;
+
+function alchemyLogsClient(): PublicClient | null {
+  if (alchemyLogs !== undefined) return alchemyLogs;
+  const url = process.env.ALCHEMY_RPC_URL?.trim();
+  alchemyLogs = url
+    ? createPublicClient({
+        chain: robinhoodMainnet,
+        transport: http(url, {timeout: 30_000, retryCount: 0}),
+      })
+    : null;
+  return alchemyLogs;
+}
+
+const logLimiter = new LogScanLimiter();
+let logsGate: Promise<unknown> = Promise.resolve();
+
+function withLogsGate<T>(fn: () => Promise<T>): Promise<T> {
+  const run = logsGate.then(fn, fn);
+  logsGate = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function eventLogKey(address: `0x${string}`, event: ReturnType<typeof parseAbiItem>): string {
+  const name = "name" in event && typeof event.name === "string" ? event.name : "?";
+  return `${address.toLowerCase()}:${name}`;
+}
 
 const HEAD_TIMEOUT_MS = 8_000;
 const HEAD_CACHE_MS = 8_000;
@@ -107,9 +150,10 @@ export interface IndexPass {
 
 async function head(): Promise<bigint> {
   // Public RPC is the live tip. Alchemy has sat hundreds of thousands of
-  // blocks behind and waiting on it ate the cron budget. Logs already go
-  // through this client; block number must too. Never fall back to Alchemy
-  // — a stale tip freezes live cursors as if the chain had stopped.
+  // blocks behind and waiting on it ate the cron budget. getLogs uses
+  // Alchemy HTTP whenever it is set (catch-up and subscribe). Block number
+  // must not. Never fall back to Alchemy for head — a stale tip freezes
+  // live cursors as if the chain had stopped.
   if (cachedHead && Date.now() - cachedHead.at < HEAD_CACHE_MS) {
     return cachedHead.value;
   }
@@ -148,46 +192,139 @@ interface LaunchLog {
   };
 }
 
+interface LogFetch {
+  logs: LaunchLog[];
+  scannedTo: bigint | null;
+  complete: boolean;
+}
+
+function emptyFetch(complete = true): LogFetch {
+  return {logs: [], scannedTo: null, complete};
+}
+
+function logScanBackingOff(): boolean {
+  return logLimiter.strikes > 0 || logLimiter.remainingCooldown() > 0;
+}
+
 async function logs(
   address: `0x${string}`,
   event: ReturnType<typeof parseAbiItem>,
   from: bigint,
   to: bigint,
-): Promise<LaunchLog[]> {
+  opts: {
+    caughtUp?: boolean;
+    live?: boolean;
+    persistedCursor?: bigint;
+    deadline?: number;
+  } = {},
+): Promise<LogFetch> {
+  return withLogsGate(() => logsUnlocked(address, event, from, to, opts));
+}
+
+async function logsUnlocked(
+  address: `0x${string}`,
+  event: ReturnType<typeof parseAbiItem>,
+  from: bigint,
+  to: bigint,
+  opts: {
+    caughtUp?: boolean;
+    live?: boolean;
+    persistedCursor?: bigint;
+    deadline?: number;
+  } = {},
+): Promise<LogFetch> {
   const out: LaunchLog[] = [];
-  let window = START_WINDOW;
-  let cursor = from;
+  if (to < from) return emptyFetch(true);
+  const span = to - from + 1n;
+  const alchemy = alchemyLogsClient();
+  const preferAlchemy = useAlchemyForLogs({
+    hasAlchemy: Boolean(alchemy),
+    caughtUp: Boolean(opts.caughtUp),
+    span,
+  });
+  let client = preferAlchemy && alchemy ? alchemy : logsClient;
+  let usingAlchemy = Boolean(preferAlchemy && alchemy);
+  let startWindow = getLogsStartWindow({
+    caughtUp: Boolean(opts.caughtUp),
+    alchemy: usingAlchemy,
+    live: Boolean(opts.live),
+    span,
+  });
+  let window = startWindow;
+  const key = eventLogKey(address, event);
+  const persisted = opts.persistedCursor ?? from;
+  const cursorStart =
+    opts.live || opts.caughtUp
+      ? resumeIfPersisted(logLimiter.lastOk.get(key), from, persisted)
+      : from;
+  if (cursorStart > to) {
+    // In-memory lastOk jumped past this window after a discarded 429 pass.
+    // Do not treat the window as fetched.
+    return emptyFetch(false);
+  }
+  let cursor = cursorStart;
+  let scannedTo: bigint | null = null;
   let challenged = 0;
   while (cursor <= to) {
+    if (opts.deadline != null && Date.now() > opts.deadline) {
+      return {logs: out, scannedTo, complete: false};
+    }
+    const cooldown = logLimiter.remainingCooldown();
+    if (cooldown > 0) {
+      await sleep(cooldown);
+    }
+
     const end = cursor + window - 1n > to ? to : cursor + window - 1n;
     try {
-      const batch = await logsClient.getLogs({
+      const batch = await client.getLogs({
         address,
         event: event as never,
         fromBlock: cursor,
         toBlock: end,
       });
       out.push(...(batch as LaunchLog[]));
+      logLimiter.noteOk(key, end);
+      scannedTo = end;
       cursor = end + 1n;
-      if (window < START_WINDOW) window *= 2n;
+      if (window < startWindow) window *= 2n;
     } catch (error) {
       const text = String(error);
       if (/403|cloudflare|just a moment|cf-mitigated/i.test(text)) {
         challenged += 1;
         if (challenged > 2) {
-          throw new Error(`public RPC challenged repeatedly at ${cursor}-${end}`);
+          console.error(
+            "RPC challenged repeatedly; leaving cursor at last fetched block",
+            scannedTo?.toString() ?? "none",
+            cursor.toString(),
+            end.toString(),
+          );
+          return {logs: out, scannedTo, complete: false};
         }
         console.error("public RPC challenged; retrying getLogs in 20s", cursor.toString(), end.toString());
         await sleep(20_000);
         continue;
       }
       if (/429|too many requests|rate limit/i.test(text)) {
-        challenged += 1;
-        if (challenged > 6) {
-          throw new Error(`public RPC rate-limited repeatedly at ${cursor}-${end}`);
+        if (!usingAlchemy && alchemy) {
+          client = alchemy;
+          usingAlchemy = true;
+          startWindow = getLogsStartWindow({
+            caughtUp: Boolean(opts.caughtUp),
+            alchemy: true,
+            live: Boolean(opts.live),
+            span,
+          });
+          window = startWindow;
+          console.error(
+            "public RPC 429; retrying getLogs on Alchemy",
+            cursor.toString(),
+            end.toString(),
+          );
+          continue;
         }
-        const wait = Math.min(4_000 * 2 ** (challenged - 1), 30_000);
-        console.error("public RPC 429; backing off", wait, cursor.toString(), end.toString());
+        window = shrinkLogWindow(window);
+        const wait = logLimiter.note429(cursor, end);
+        console.error("getLogs 429; backing off", wait, cursor.toString(), end.toString());
         await sleep(wait);
         continue;
       }
@@ -195,20 +332,18 @@ async function logs(
         /exceeds|limit|range|invalid parameters|query returned more/i.test(
           text,
         );
-      if (!capped || window <= MIN_WINDOW) {
+      if (!capped || window <= MIN_LOG_WINDOW) {
         console.error("token indexer logs failed", address, cursor, end, error);
-        if (window <= MIN_WINDOW) {
-          throw new Error(
-            `getLogs failed at ${address} ${cursor}-${end}: ${text}`,
-          );
+        if (window <= MIN_LOG_WINDOW) {
+          return {logs: out, scannedTo, complete: false};
         }
-        window /= 2n;
+        window = shrinkLogWindow(window);
         continue;
       }
-      window /= 2n;
+      window = shrinkLogWindow(window);
     }
   }
-  return out;
+  return {logs: out, scannedTo: scannedTo ?? to, complete: true};
 }
 
 function asAddress(value: unknown): string | null {
@@ -539,12 +674,19 @@ async function indexFactory(
     extras.storedCursor ??
     (await readCursors([cursorName], undefined, extras.cursorTimeoutMs)).get(cursorName) ??
     0n;
-  const start = stored > 0n ? (stored > REORG ? stored - REORG : 0n) : factory.deployedAtBlock;
+  const behind = tip > stored ? tip - stored : 0n;
+  const isLive = cursorName.endsWith(":live") && !cursorName.endsWith(":live-gap");
+  const caughtUp = isLive && isLiveCaughtUp(behind);
+  const reorg = liveReorgBlocks(caughtUp);
+  const start = stored > 0n ? (stored > reorg ? stored - reorg : 0n) : factory.deployedAtBlock;
   const cap = extras.untilBlock != null && extras.untilBlock < tip ? extras.untilBlock : tip;
-  const end = start + maxBlocks > cap ? cap : start + maxBlocks;
+  const allowed = isLive && maxBlocks > liveScanMaxBlocks(behind) ? liveScanMaxBlocks(behind) : maxBlocks;
+  const end = start + allowed > cap ? cap : start + allowed;
   const unresolved: string[] = [];
   const writes: TokenWrite[] = [];
-  let cursorTo = end;
+  let scanComplete = true;
+  let scannedTo: bigint | null = null;
+  let writeCapEnd: bigint | null = null;
 
   if (Date.now() > deadline || end <= start) {
     return {
@@ -558,13 +700,39 @@ async function indexFactory(
   }
 
   const remain = () => Math.max(deadline - Date.now(), 1);
-  const logsUntil = (
+  const mergeFetch = (result: LogFetch) => {
+    if (!result.complete) scanComplete = false;
+    if (result.scannedTo == null) return result.logs;
+    scannedTo =
+      scannedTo == null || result.scannedTo < scannedTo ? result.scannedTo : scannedTo;
+    return result.logs;
+  };
+  const logsUntil = async (
     address: `0x${string}`,
     event: ReturnType<typeof parseAbiItem>,
     from: bigint,
     to: bigint,
     label: string,
-  ) => withTimeout(logs(address, event, from, to), remain(), label);
+  ) => {
+    try {
+      return mergeFetch(
+        await withTimeout(
+          logs(address, event, from, to, {
+            caughtUp,
+            live: isLive,
+            persistedCursor: stored,
+            deadline,
+          }),
+          remain(),
+          label,
+        ),
+      );
+    } catch (error) {
+      scanComplete = false;
+      console.error(`${label} aborted; keeping cursor at last fetched block`, error);
+      return [];
+    }
+  };
 
   if (factory.launchpad === "pons") {
     const v2 = factory.address === PONS_V2_FACTORY.address;
@@ -631,7 +799,7 @@ async function indexFactory(
     }
     const persist = extras.bondedOnly ? jobs.filter((job) => job.bonded) : jobs;
     const capped = capByBlock(persist, (job) => job.block, extras.writeCap);
-    if (capped.endAt != null) cursorTo = capped.endAt;
+    writeCapEnd = capped.endAt;
     const rows = await mapLimit(capped.items, extras.writeConcurrency ?? 8, (job) =>
       writePons(factory, job.token, job.pair, job.curve, job.block, job.bonded, unresolved),
     );
@@ -639,7 +807,7 @@ async function indexFactory(
   } else if (factory.id === "long-airlock") {
     const created = await logsUntil(factory.address, AIRLOCK_CREATE, start, end, `${factory.id} create logs`);
     const capped = capByBlock(created, (log) => log.blockNumber, extras.writeCap);
-    if (capped.endAt != null) cursorTo = capped.endAt;
+    writeCapEnd = capped.endAt;
     const rows = await mapLimit(capped.items, extras.writeConcurrency ?? 8, (log) => {
       const token = asAddress(log.args?.asset);
       if (!token) return Promise.resolve(null);
@@ -655,10 +823,15 @@ async function indexFactory(
     for (const row of rows) if (row) writes.push(row);
   }
 
-  if (extras.seenTokens) {
-    for (const row of writes) extras.seenTokens.add(normalizeAddress(row.address));
-  }
+  const cursorTo = cursorAfterLogScan({
+    stored,
+    plannedEnd: end,
+    scannedTo,
+    complete: scanComplete,
+    writeCapEnd,
+  });
 
+  let persistFailed = false;
   if (writes.length > 0) {
     let poolRows: {token: string; pool: string; fee: number; quote: string; liquidity: bigint}[] = [];
     try {
@@ -691,13 +864,21 @@ async function indexFactory(
       }
     }
     if (!extras.skipImages) {
-      await persistResolvedImages(
-        writes.map((row) => ({address: row.address, launchpad: row.launchpad})),
-      );
+      try {
+        await persistResolvedImages(
+          writes.map((row) => ({address: row.address, launchpad: row.launchpad})),
+        );
+      } catch (error) {
+        persistFailed = true;
+        console.error("token image persist failed; tokens still upserted", error);
+      }
     }
     if ((extras.batchPauseMs ?? 0) > 0) {
       await sleep(extras.batchPauseMs!);
     }
+  }
+  if (extras.seenTokens && rememberSeenAfterImages(persistFailed)) {
+    for (const row of writes) extras.seenTokens.add(normalizeAddress(row.address));
   }
   if (cursorTo !== stored && !extras.persistWrites) {
     try {
@@ -733,7 +914,7 @@ export interface IndexOptions {
   live?: boolean;
   /** Cron sets false — history is a different job and blows the 60s limit. */
   historical?: boolean;
-  /** Cron skips — images are a separate backfill and blow the RPC budget. */
+  /** Cron skips. The Railway worker resolves on insert. */
   skipImages?: boolean;
   /** Cap new rows per factory so one busy window cannot eat the whole minute. */
   writeCap?: number;
@@ -754,6 +935,14 @@ export interface IndexOptions {
   seenTokens?: Set<string>;
   /** Backfill scripts may wait longer on a cold PostgREST. */
   cursorTimeoutMs?: number;
+}
+
+/**
+ * Persist throw must not add the address — a 30-block reorg overlap
+ * can retry images. A Dex miss (0 writes) still marks seen.
+ */
+export function rememberSeenAfterImages(persistFailed: boolean): boolean {
+  return !persistFailed;
 }
 
 /**
@@ -848,10 +1037,15 @@ async function indexLiveTip(
       const seed = tip > LIVE_LOOKBACK ? tip - LIVE_LOOKBACK : factory.deployedAtBlock;
       latchWrites.push({name: liveKey, block: seed});
       held.set(liveKey, seed);
-    } else if (tip > stored && tip - stored > LIVE_LOOKBACK) {
+    } else if (
+      !logScanBackingOff() &&
+      tip > stored &&
+      tip - stored > LIVE_LOOKBACK
+    ) {
       // Small tip windows cannot recover a multi-hour stall. Latch to the
       // tip so this minute's launches show; park the hole on live-gap for
-      // a local/admin job. Cron must not drain that gap.
+      // a local/admin job. Cron must not drain that gap. A 429 storm must
+      // not latch over unfetched logs and report behind=0.
       const gapKey = `tokens:${factory.id}:live-gap`;
       const gapHeld = held.get(gapKey) ?? 0n;
       if (gapHeld === 0n || gapHeld > stored) {

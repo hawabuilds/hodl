@@ -2,6 +2,7 @@
  * Live-tip index pass. Cron and the Railway worker both call this —
  * do not copy the options into a second path.
  */
+import {persistRecentMissingImages} from "./tokenImages";
 import {indexTokens, liveTipCursorNames, type IndexOptions, type IndexPass} from "./tokenIndexer";
 
 export const LIVE_TIP_HEARTBEAT = "live-tip";
@@ -23,7 +24,8 @@ export const WORKER_LIVE_TIP = {
   live: true,
   historical: false,
   refreshStats: false,
-  skipImages: true,
+  // Railway has no 60s cap — resolve Dex / launchpad / on-chain on insert.
+  skipImages: false,
   drainGap: false,
   writeCap: 8,
   writeConcurrency: 1,
@@ -35,12 +37,25 @@ export const WORKER_LIVE_TIP = {
 export type LiveTipPassOptions = Omit<IndexOptions, keyof typeof WORKER_LIVE_TIP> &
   Partial<typeof WORKER_LIVE_TIP>;
 
+/** Cron keeps skipImages; the worker resolves images on insert and catch-up. */
+export function liveTipResolvesImages(opts: {skipImages?: boolean} = {}): boolean {
+  return !(opts.skipImages ?? CRON_LIVE_TIP.skipImages);
+}
+
 export async function indexLiveTipPass(opts: LiveTipPassOptions = {}) {
-  const result = await indexTokens({
+  const merged = {
     ...CRON_LIVE_TIP,
     ...opts,
-  });
+  };
+  const result = await indexTokens(merged);
   if (opts.heldCursors) applyPassCursors(opts.heldCursors, result.passes);
+  if (liveTipResolvesImages(merged)) {
+    try {
+      await persistRecentMissingImages();
+    } catch (error) {
+      console.error("recent missing-image catch-up failed", error);
+    }
+  }
   return result;
 }
 
@@ -100,6 +115,14 @@ export function pollIntervalMs(behind: number, subscribed: boolean): number {
   if (behind > 20) return 100;
   if (behind > 0) return 150;
   return 250;
+}
+
+/**
+ * When cursors are at tip, newHeads must not start a factory scan every
+ * ~100ms. Use the subscribe interval as a floor, not a timeout.
+ */
+export function paceCaughtUpSubscribe(behind: number, subscribed: boolean): boolean {
+  return subscribed && behind <= 0;
 }
 
 export function formatUnknownError(error: unknown): Record<string, unknown> {

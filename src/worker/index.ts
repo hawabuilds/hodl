@@ -33,6 +33,7 @@ import {
   emptyLiveCursors,
   formatUnknownError,
   indexLiveTipPass,
+  paceCaughtUpSubscribe,
   pollIntervalMs,
   redactSecrets,
   rowsWritten,
@@ -43,9 +44,21 @@ import {
   liveTipCursorNames,
   readChainHead,
 } from "@/lib/server/live/tokenIndexer";
+import {
+  LIVE_TIP_LOCK_APP_NAME,
+  LIVE_TIP_LOCK_CLASS,
+  LIVE_TIP_LOCK_ID,
+  STALE_LOCK_OPS_HINT,
+  decideLockWait,
+  formatLockWaitDetails,
+  heartbeatAgeFromSql,
+  isSafeToTerminateHolder,
+  lockSessionApplicationName,
+  lockWaitBackoffMs,
+  shouldLogLockWait,
+  type LockHolderRow,
+} from "@/lib/server/live/workerLock";
 
-const LOCK_CLASS = 4663;
-const LOCK_ID = 1;
 const PUBLIC_RPC = "https://rpc.mainnet.chain.robinhood.com";
 /** Extra pause after a pass that wrote rows so PostgREST is not hammered. */
 const WRITE_PASS_PAUSE_MS = 400;
@@ -290,7 +303,7 @@ async function releaseWorkerPg(): Promise<void> {
   lockClient = null;
   if (held) {
     try {
-      await held.query("select pg_advisory_unlock($1, $2)", [LOCK_CLASS, LOCK_ID]);
+      await held.query("select pg_advisory_unlock($1, $2)", [LIVE_TIP_LOCK_CLASS, LIVE_TIP_LOCK_ID]);
     } catch {
       // session may already be dead
     }
@@ -349,28 +362,59 @@ async function acquireLock(pool: pg.Pool): Promise<pg.PoolClient> {
       throw lastError instanceof Error ? lastError : poolerCheckoutTimeoutError();
     }
 
+    const appName = lockSessionApplicationName();
+    await client.query("select set_config('application_name', $1, false)", [appName]);
+    console.info(
+      `live-tip: lock session app=${appName} service=${process.env.RAILWAY_SERVICE_NAME ?? "local"} ` +
+        `replica=${process.env.RAILWAY_REPLICA_ID ?? "n/a"} pid=${process.pid}`,
+    );
+
     // Stay up and retry. Exit(1) on a held lock is a Railway restart loop:
     // overlapping deploys and leaked pooler sessions both look like "another worker".
+    // Steal only when the holder is abandoned or the heartbeat is stale —
+    // never unlock from this session.
     for (let attempt = 1; !exiting; attempt++) {
       const {rows} = await client.query<{pg_try_advisory_lock: boolean}>(
         "select pg_try_advisory_lock($1, $2) as pg_try_advisory_lock",
-        [LOCK_CLASS, LOCK_ID],
+        [LIVE_TIP_LOCK_CLASS, LIVE_TIP_LOCK_ID],
       );
       if (rows[0]?.pg_try_advisory_lock) {
         console.info(
-          `live-tip: advisory lock acquired (${LOCK_CLASS},${LOCK_ID}) ` +
+          `live-tip: advisory lock acquired (${LIVE_TIP_LOCK_CLASS},${LIVE_TIP_LOCK_ID}) ` +
             `poolMax=${WORKER_POOL_MAX} lockHeld=1 work<=${WORKER_POOL_MAX - 1}`,
         );
         return client;
       }
-      const wait = Math.min(5_000 * 2 ** Math.min(attempt - 1, 3), 30_000);
-      if (attempt === 1 || attempt % 6 === 0) {
+
+      const snapshot = await inspectLockWait(pool);
+      const details = formatLockWaitDetails(snapshot);
+      if (snapshot.decision === "healthy") {
+        if (shouldLogLockWait(attempt)) {
+          console.warn(
+            `live-tip: another live worker is indexing; this replica will stay idle ` +
+              `(attempt ${attempt}). ${details}. Keep exactly one Railway service on npm run worker.`,
+          );
+        }
+      } else if (snapshot.decision === "steal") {
+        if (shouldLogLockWait(attempt)) {
+          console.warn(
+            `live-tip: advisory lock held by a stale, missing, or abandoned holder; ` +
+              `attempting steal (attempt ${attempt}). ${details}.`,
+          );
+        }
+        const stolen = await tryStealStaleLock(pool);
+        if (stolen) {
+          console.warn("live-tip: terminated stale lock holder; retrying try_lock");
+          continue;
+        }
+      } else if (shouldLogLockWait(attempt)) {
         console.warn(
           `live-tip: advisory lock held by another session; waiting ` +
-            `(attempt ${attempt}). Keep exactly one Railway service on npm run worker.`,
+            `(attempt ${attempt}). ${details}. Keep exactly one Railway service on npm run worker.`,
         );
       }
-      await sleep(wait, lockWait.signal);
+
+      await sleep(lockWaitBackoffMs(attempt), lockWait.signal);
     }
     throw new Error("live-tip: shutdown before advisory lock");
   } catch (error) {
@@ -399,6 +443,141 @@ async function withWorkClient<T>(
   } finally {
     client.release();
   }
+}
+
+const LOCK_HOLDER_SQL = `
+  select l.pid,
+         a.state,
+         a.application_name,
+         a.query
+  from pg_locks l
+  left join pg_stat_activity a on a.pid = l.pid
+  where l.locktype = 'advisory'
+    and l.classid = $1
+    and l.objid = $2
+    and l.objsubid = 1
+    and l.granted
+    and l.pid is distinct from pg_backend_pid()`;
+
+async function inspectLockWait(pool: pg.Pool): Promise<{
+  decision: ReturnType<typeof decideLockWait>;
+  ageMs: number | null;
+  probeFailed: boolean;
+  holders: LockHolderRow[];
+}> {
+  let ageMs: number | null = null;
+  let probeFailed = false;
+  let holders: LockHolderRow[] = [];
+
+  try {
+    ageMs = await withWorkClient(pool, async (work) => {
+      try {
+        const {rows} = await work.query<{age_ms: string | number | null}>(
+          `select (extract(epoch from (now() - last_run_at)) * 1000)::bigint as age_ms
+           from indexer_state where name = $1`,
+          [LIVE_TIP_HEARTBEAT],
+        );
+        return heartbeatAgeFromSql(rows[0]?.age_ms ?? null);
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        if (!/last_run_at/i.test(text)) throw error;
+        const {rows} = await work.query<{age_ms: string | number | null}>(
+          `select (extract(epoch from (now() - updated_at)) * 1000)::bigint as age_ms
+           from indexer_state where name = $1`,
+          [LIVE_TIP_HEARTBEAT],
+        );
+        return heartbeatAgeFromSql(rows[0]?.age_ms ?? null);
+      }
+    });
+  } catch (error) {
+    logFailure("live-tip: heartbeat probe failed", error);
+    probeFailed = true;
+  }
+
+  try {
+    holders = await withWorkClient(pool, (work) =>
+      work.query<LockHolderRow>(LOCK_HOLDER_SQL, [LIVE_TIP_LOCK_CLASS, LIVE_TIP_LOCK_ID]).then(
+        (res) => res.rows,
+      ),
+    );
+  } catch (error) {
+    logFailure("live-tip: lock holder probe failed", error);
+  }
+
+  return {
+    decision: decideLockWait({ageMs, probeFailed, holders}),
+    ageMs,
+    probeFailed,
+    holders,
+  };
+}
+
+async function tryStealStaleLock(pool: pg.Pool): Promise<boolean> {
+  try {
+    return await withWorkClient(pool, async (work) => {
+      const {rows} = await work.query<LockHolderRow>(LOCK_HOLDER_SQL, [
+        LIVE_TIP_LOCK_CLASS,
+        LIVE_TIP_LOCK_ID,
+      ]);
+      const candidates = rows.filter((row) => isSafeToTerminateHolder(row));
+      if (!candidates.length) {
+        console.warn(
+          `live-tip: stale lock but no safe holder to terminate. ${STALE_LOCK_OPS_HINT}`,
+        );
+        return false;
+      }
+      let killed = 0;
+      for (const row of candidates) {
+        try {
+          const res = await work.query<{pg_terminate_backend: boolean}>(
+            "select pg_terminate_backend($1) as pg_terminate_backend",
+            [row.pid],
+          );
+          if (res.rows[0]?.pg_terminate_backend) {
+            killed += 1;
+            console.warn(
+              `live-tip: terminated stale lock holder pid=${row.pid} ` +
+                `state=${row.state ?? ""} app=${row.application_name ?? ""}`,
+            );
+          }
+        } catch (error) {
+          logFailure(`live-tip: pg_terminate_backend(${row.pid}) failed`, error);
+        }
+      }
+      if (!killed) {
+        console.warn(`live-tip: terminate returned false. ${STALE_LOCK_OPS_HINT}`);
+      }
+      return killed > 0;
+    });
+  } catch (error) {
+    logFailure("live-tip: steal probe failed", error);
+    console.warn(`live-tip: cannot inspect pg_locks. ${STALE_LOCK_OPS_HINT}`);
+    return false;
+  }
+}
+
+async function touchHeartbeat(pool: pg.Pool): Promise<void> {
+  await withWorkClient(pool, async (client) => {
+    try {
+      await client.query(
+        `insert into indexer_state (name, last_block, updated_at, last_run_at)
+         values ($1, 0, now(), now())
+         on conflict (name) do update
+           set last_run_at = now(),
+               updated_at = now()`,
+        [LIVE_TIP_HEARTBEAT],
+      );
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      if (!/last_run_at/i.test(text)) throw error;
+      await client.query(
+        `insert into indexer_state (name, last_block, updated_at)
+         values ($1, 0, now())
+         on conflict (name) do update set updated_at = now()`,
+        [LIVE_TIP_HEARTBEAT],
+      );
+    }
+  });
 }
 
 async function ensureHeartbeatColumns(pool: pg.Pool): Promise<void> {
@@ -512,13 +691,14 @@ async function main(): Promise<void> {
     throw new Error("Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
   }
   if (!process.env.ALCHEMY_RPC_URL?.trim()) {
-    console.warn("live-tip: ALCHEMY_RPC_URL unset; token meta will use the public RPC");
+    console.warn("live-tip: ALCHEMY_RPC_URL unset; getLogs and token meta will use the public RPC");
   }
 
   const pool = await openWorkerPool();
   workerPool = pool;
   lockClient = await acquireLock(pool);
   await ensureHeartbeatColumns(pool);
+  await touchHeartbeat(pool);
 
   // Warm the module-level viem clients once. They stay up for every tick.
   rpc();
@@ -569,12 +749,19 @@ async function main(): Promise<void> {
 
   while (!stopping) {
     const behindBefore = blocksBehindTip(await tip().catch(() => 0n), held);
-    await heads.wait(pollIntervalMs(behindBefore, heads.mode === "subscribe"), stop.signal);
+    const interval = pollIntervalMs(behindBefore, heads.mode === "subscribe");
+    // newHeads fires every ~100ms. At tip that would re-scan factories and 429.
+    if (paceCaughtUpSubscribe(behindBefore, heads.mode === "subscribe")) {
+      await sleep(interval, stop.signal);
+    } else {
+      await heads.wait(interval, stop.signal);
+    }
     if (stopping) break;
 
     currentPass = (async () => {
       const started = Date.now();
       try {
+        await touchHeartbeat(pool);
         await waitForRpcBudget();
         invalidateHeadCache();
         const result = await indexLiveTipPass({

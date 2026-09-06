@@ -484,7 +484,32 @@ interface OhlcvResponse {
 const BUCKET_LADDER: Timeframe[] = ["1D", "4h", "1h", "15m", "5m", "1m"];
 
 /** Widest bucket that still has a real shape. Step down only when younger. */
-const ENOUGH_TO_DRAW = 20;
+export const ENOUGH_TO_DRAW = 20;
+
+/**
+ * Which ladder step actually produced the series. The API still returns the
+ * requested `timeframe`; callers must surface this when it differs.
+ */
+export function pickResolvedCandles(
+  requested: Timeframe,
+  series: Partial<Record<Timeframe, ChartPoint[]>>,
+): {points: ChartPoint[]; resolvedTimeframe: Timeframe} {
+  const start = BUCKET_LADDER.indexOf(requested);
+  const ladder = start === -1 ? [requested] : BUCKET_LADDER.slice(start);
+  let best: ChartPoint[] = [];
+  let resolved = requested;
+  for (const bucket of ladder) {
+    const points = series[bucket] ?? [];
+    if (points.length > best.length) {
+      best = points;
+      resolved = bucket;
+    }
+    if (best.length >= ENOUGH_TO_DRAW) break;
+  }
+  return best.length > 1
+    ? {points: best, resolvedTimeframe: resolved}
+    : {points: [], resolvedTimeframe: requested};
+}
 
 /** One bucket's worth of closes, oldest first. Empty when the pool has none. */
 async function candlesAt(
@@ -546,30 +571,39 @@ export async function candles(
   /** The asset whose price this is, so a quote-side pool still reads right. */
   token: string | null = null,
   limit = 120,
-): Promise<{points: ChartPoint[]; error: string | null}> {
+): Promise<{
+  points: ChartPoint[];
+  error: string | null;
+  resolvedTimeframe: Timeframe;
+}> {
   const start = BUCKET_LADDER.indexOf(timeframe);
   const ladder = start === -1 ? [timeframe] : BUCKET_LADDER.slice(start);
 
-  let best: ChartPoint[] = [];
+  const series: Partial<Record<Timeframe, ChartPoint[]>> = {};
   let lastError: string | null = null;
 
   for (const bucket of ladder) {
     try {
-      const points = await candlesAt(pool, bucket, token, limit);
-      if (points.length > best.length) best = points;
+      series[bucket] = await candlesAt(pool, bucket, token, limit);
     } catch (error) {
       lastError = error instanceof Error ? error.message : "Could not load candles.";
     }
+    const soFar = pickResolvedCandles(timeframe, series);
     // Enough to read as a shape rather than a straight segment between two
     // dots. A pool an hour old clears this on minutes where it could not on
     // hours, which is exactly the case this ladder exists for.
-    if (best.length >= ENOUGH_TO_DRAW) break;
+    if (soFar.points.length >= ENOUGH_TO_DRAW) {
+      return {points: soFar.points, error: null, resolvedTimeframe: soFar.resolvedTimeframe};
+    }
   }
 
+  const picked = pickResolvedCandles(timeframe, series);
   // Two points still beats none — it is a real open and a real close — but a
   // lone candle is not a chart and must not be padded into one.
-  if (best.length > 1) return {points: best, error: null};
-  return {points: [], error: lastError};
+  if (picked.points.length > 1) {
+    return {points: picked.points, error: null, resolvedTimeframe: picked.resolvedTimeframe};
+  }
+  return {points: [], error: lastError, resolvedTimeframe: timeframe};
 }
 
 interface TradesResponse {
