@@ -6,7 +6,11 @@ import {
   seriesFrom,
   type DexPair,
 } from "../src/lib/server/live/dexscreener";
-import {ENOUGH_TO_DRAW, pickResolvedCandles} from "../src/lib/server/live/geckoterminal";
+import {
+  ENOUGH_TO_DRAW,
+  pickResolvedCandles,
+  realOhlcvCloses,
+} from "../src/lib/server/live/geckoterminal";
 import {deepestPoolForToken, tokenHasStockPair} from "../src/lib/server/live/market";
 import {tokenChartFromFills} from "../src/lib/server/sources";
 import {hasRealPool} from "../src/lib/server/live/universeStore";
@@ -110,7 +114,7 @@ describe("resolved gecko timeframe", () => {
     return Array.from({length: n}, (_, i) => ({t: i * 1_000, price}));
   }
 
-  it("keeps 1D when the daily series already has a shape", () => {
+  it("keeps 1D when the daily series already has a line", () => {
     const picked = pickResolvedCandles("1D", {
       "1D": bars(ENOUGH_TO_DRAW, 2),
       "1h": bars(80, 1),
@@ -120,15 +124,36 @@ describe("resolved gecko timeframe", () => {
     assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D");
   });
 
-  it("reports 1h when 1D is too thin and hours have a shape", () => {
+  it("keeps a short daily line instead of filling with hourly candles", () => {
     const picked = pickResolvedCandles("1D", {
       "1D": bars(3, 2),
       "4h": bars(8, 1.5),
       "1h": bars(25, 1),
     });
-    assert.equal(picked.resolvedTimeframe, "1h");
-    assert.equal(picked.points.length, 25);
-    assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D · 1h");
+    assert.equal(picked.resolvedTimeframe, "1D");
+    assert.equal(picked.points.length, 3);
+    assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D");
+  });
+
+  it("does not substitute a finer series when 1D has no line", () => {
+    const picked = pickResolvedCandles("1D", {
+      "1D": bars(1, 2),
+      "1h": bars(25, 1),
+    });
+    assert.equal(picked.resolvedTimeframe, "1D");
+    assert.equal(picked.points.length, 0);
+  });
+
+  it("drops zero-volume gecko buckets instead of carrying the last close", () => {
+    const points = realOhlcvCloses([
+      [1_800, 2, 2, 2, 2, 0],
+      [1_200, 3, 3, 3, 3, 10],
+      [600, 1, 1, 1, 1, 4],
+    ]);
+    assert.deepEqual(
+      points.map((point) => point.price),
+      [1, 3],
+    );
   });
 });
 

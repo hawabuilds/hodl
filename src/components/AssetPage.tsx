@@ -2,6 +2,7 @@
 
 import {useMemo, useState, useEffect} from "react";
 import {changePctForPoints, mergeTradesIntoChart} from "@/lib/chartLive";
+import {chartWindowMs} from "@/lib/chartPlot";
 import {formatLiquidityUsd, formatMarketCapAt, formatPriceUsd} from "@/lib/priceState";
 import {publishPrice} from "@/lib/livePrice";
 import {useLivePrice} from "@/hooks/useLivePrice";
@@ -299,6 +300,8 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
         <PriceChart
           points={livePoints}
           positive={positive}
+          windowMs={chartWindowMs(timeframe)}
+          emptyLabel={`Not enough history for ${timeframe}`}
           onScrub={setScrubbed}
           className="mt-3"
         />

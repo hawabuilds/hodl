@@ -472,43 +472,56 @@ interface OhlcvResponse {
 }
 
 /**
- * Buckets from coarsest to finest.
- *
- * A pool that opened an hour ago has exactly one hourly candle and no daily
- * one, and a single point is not a chart — it used to send every freshly
- * launched token to the simulated series instead, which is the whole of why
- * new tokens charted a price history that never happened. Stepping down the
- * ladder until a bucket actually has history is what puts a token's first
- * minutes on screen, starting where its pool opened.
+ * Buckets from coarsest to finest. Kept so tests and callers can name the
+ * requested interval. We do not walk this list to fill a window — a young
+ * pool on 1D is two daily candles or "not enough history", never 20 hourly
+ * prints stretched across a day chart.
  */
 const BUCKET_LADDER: Timeframe[] = ["1D", "4h", "1h", "15m", "5m", "1m"];
 
-/** Widest bucket that still has a real shape. Step down only when younger. */
-export const ENOUGH_TO_DRAW = 20;
+/** A line needs two real prints. One candle is not a chart and must not be padded. */
+export const ENOUGH_TO_DRAW = 2;
 
 /**
- * Which ladder step actually produced the series. The API still returns the
- * requested `timeframe`; callers must surface this when it differs.
+ * The requested bucket only. A thinner series is empty, not a finer
+ * timeframe dressed up as the one the reader asked for.
  */
 export function pickResolvedCandles(
   requested: Timeframe,
   series: Partial<Record<Timeframe, ChartPoint[]>>,
 ): {points: ChartPoint[]; resolvedTimeframe: Timeframe} {
   const start = BUCKET_LADDER.indexOf(requested);
-  const ladder = start === -1 ? [requested] : BUCKET_LADDER.slice(start);
-  let best: ChartPoint[] = [];
-  let resolved = requested;
-  for (const bucket of ladder) {
-    const points = series[bucket] ?? [];
-    if (points.length > best.length) {
-      best = points;
-      resolved = bucket;
-    }
-    if (best.length >= ENOUGH_TO_DRAW) break;
+  if (start === -1) {
+    const points = series[requested] ?? [];
+    return points.length > 1
+      ? {points, resolvedTimeframe: requested}
+      : {points: [], resolvedTimeframe: requested};
   }
-  return best.length > 1
-    ? {points: best, resolvedTimeframe: resolved}
+  const points = series[requested] ?? [];
+  return points.length > 1
+    ? {points, resolvedTimeframe: requested}
     : {points: [], resolvedTimeframe: requested};
+}
+
+/**
+ * Gecko OHLCV rows, oldest first. Zero-volume buckets are gaps, not holds.
+ */
+export function realOhlcvCloses(list: number[][]): ChartPoint[] {
+  return list
+    // [timestamp, open, high, low, close, volume], newest first.
+    .map(([seconds, , , , close, volume]) => ({
+      t: seconds * 1000,
+      price: close,
+      volume,
+    }))
+    .filter(
+      (point) =>
+        Number.isFinite(point.price) &&
+        point.price > 0 &&
+        (point.volume == null || point.volume > 0),
+    )
+    .map(({t, price}) => ({t, price}))
+    .sort((a, b) => a.t - b.t);
 }
 
 /** One bucket's worth of closes, oldest first. Empty when the pool has none. */
@@ -539,11 +552,7 @@ async function candlesAt(
     }
 
     const list = fetched.data.data?.attributes?.ohlcv_list ?? [];
-    return list
-      // [timestamp, open, high, low, close, volume], newest first.
-      .map(([seconds, , , , close]) => ({t: seconds * 1000, price: close}))
-      .filter((point) => Number.isFinite(point.price) && point.price > 0)
-      .reverse();
+    return realOhlcvCloses(list);
   };
 
   try {
@@ -562,8 +571,9 @@ async function candlesAt(
  * the full OHLC is what the endpoint returns and what a candlestick chart would
  * need if one is ever added.
  *
- * A mature pool answers on the first request and costs exactly what it always
- * did; only a pool too young to fill the asked-for bucket walks further down.
+ * The requested bucket only. A pool too young for that interval returns
+ * empty — the chart says so — instead of a finer series stretched to look
+ * full.
  */
 export async function candles(
   pool: string,
@@ -576,34 +586,19 @@ export async function candles(
   error: string | null;
   resolvedTimeframe: Timeframe;
 }> {
-  const start = BUCKET_LADDER.indexOf(timeframe);
-  const ladder = start === -1 ? [timeframe] : BUCKET_LADDER.slice(start);
-
-  const series: Partial<Record<Timeframe, ChartPoint[]>> = {};
-  let lastError: string | null = null;
-
-  for (const bucket of ladder) {
-    try {
-      series[bucket] = await candlesAt(pool, bucket, token, limit);
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : "Could not load candles.";
+  try {
+    const points = await candlesAt(pool, timeframe, token, limit);
+    if (points.length > 1) {
+      return {points, error: null, resolvedTimeframe: timeframe};
     }
-    const soFar = pickResolvedCandles(timeframe, series);
-    // Enough to read as a shape rather than a straight segment between two
-    // dots. A pool an hour old clears this on minutes where it could not on
-    // hours, which is exactly the case this ladder exists for.
-    if (soFar.points.length >= ENOUGH_TO_DRAW) {
-      return {points: soFar.points, error: null, resolvedTimeframe: soFar.resolvedTimeframe};
-    }
+    return {points: [], error: null, resolvedTimeframe: timeframe};
+  } catch (error) {
+    return {
+      points: [],
+      error: error instanceof Error ? error.message : "Could not load candles.",
+      resolvedTimeframe: timeframe,
+    };
   }
-
-  const picked = pickResolvedCandles(timeframe, series);
-  // Two points still beats none — it is a real open and a real close — but a
-  // lone candle is not a chart and must not be padded into one.
-  if (picked.points.length > 1) {
-    return {points: picked.points, error: null, resolvedTimeframe: picked.resolvedTimeframe};
-  }
-  return {points: [], error: lastError, resolvedTimeframe: timeframe};
 }
 
 interface TradesResponse {

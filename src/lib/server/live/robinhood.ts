@@ -235,8 +235,8 @@ const RH_LADDER: Record<Timeframe, RhBucket[]> = {
   ],
 };
 
-/** Same threshold as the token Gecko ladder — a shape, not two dots. */
-export const RH_ENOUGH_TO_DRAW = 20;
+/** A line needs two real closes. Do not step down to pad a thin daily series. */
+export const RH_ENOUGH_TO_DRAW = 2;
 
 /** Map a Robinhood interval onto the app's timeframe pills. */
 export function rhIntervalToTimeframe(interval: string): Timeframe {
@@ -269,8 +269,9 @@ export function realHistoricalPoints(bars: HistoricalBar[]): ChartPoint[] {
 }
 
 /**
- * Walk a ladder of already-fetched buckets. Keeps the coarsest series that
- * actually has history; a lone close is not a chart.
+ * The first bucket that can already form a line. A thin daily series stays
+ * daily — two real closes on a long axis — instead of being replaced by
+ * hourly prints that fill the window.
  */
 export function pickEnoughHistory(
   ladder: ChartPoint[][],
@@ -289,19 +290,12 @@ export function pickEnoughHistoryResolved(
   enough = RH_ENOUGH_TO_DRAW,
   limit = 120,
 ): {points: ChartPoint[]; resolvedTimeframe: Timeframe | null} {
-  let best: ChartPoint[] = [];
-  let resolved: Timeframe | null = null;
-  for (const step of ladder) {
-    const sliced =
-      step.points.length > limit ? step.points.slice(-limit) : step.points;
-    if (sliced.length > best.length) {
-      best = sliced;
-      resolved = step.timeframe;
-    }
-    if (best.length >= enough) break;
-  }
-  return best.length > 1
-    ? {points: best, resolvedTimeframe: resolved}
+  const step = ladder[0];
+  if (!step) return {points: [], resolvedTimeframe: null};
+  const sliced =
+    step.points.length > limit ? step.points.slice(-limit) : step.points;
+  return sliced.length >= enough && sliced.length > 1
+    ? {points: sliced, resolvedTimeframe: step.timeframe}
     : {points: [], resolvedTimeframe: null};
 }
 
@@ -345,21 +339,14 @@ export async function historicalCandles(
   limit = 120,
 ): Promise<{points: ChartPoint[]; resolvedTimeframe: Timeframe}> {
   const ladder = RH_LADDER[timeframe] ?? RH_LADDER["1h"];
-  const fetched: {points: ChartPoint[]; timeframe: Timeframe}[] = [];
-  for (const bucket of ladder) {
-    const points = await historicalsAt(ticker, bucket);
-    fetched.push({points, timeframe: rhIntervalToTimeframe(bucket.interval)});
-    const soFar = pickEnoughHistoryResolved(fetched, RH_ENOUGH_TO_DRAW, limit);
-    if (soFar.points.length >= RH_ENOUGH_TO_DRAW) {
-      return {
-        points: soFar.points,
-        resolvedTimeframe: soFar.resolvedTimeframe ?? timeframe,
-      };
-    }
+  const first = ladder[0];
+  if (!first) {
+    return {points: [], resolvedTimeframe: timeframe};
   }
-  const picked = pickEnoughHistoryResolved(fetched, RH_ENOUGH_TO_DRAW, limit);
+  const points = await historicalsAt(ticker, first);
+  const sliced = points.length > limit ? points.slice(-limit) : points;
   return {
-    points: picked.points,
-    resolvedTimeframe: picked.resolvedTimeframe ?? timeframe,
+    points: sliced.length > 1 ? sliced : [],
+    resolvedTimeframe: rhIntervalToTimeframe(first.interval),
   };
 }

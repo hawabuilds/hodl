@@ -9,6 +9,13 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {cn} from "@/lib/cn";
+import {
+  gapBreakMsForWindow,
+  plotRange,
+  pointsInRange,
+  splitOnGaps,
+  xAt,
+} from "@/lib/chartPlot";
 import type {ChartPoint} from "@/lib/types";
 
 interface PriceChartProps {
@@ -18,6 +25,12 @@ interface PriceChartProps {
   positive?: boolean;
   /** Dashed rule at the window open, the way a brokerage marks previous close. */
   showBaseline?: boolean;
+  /**
+   * When set, the x-axis is this many milliseconds ending at now. The last
+   * real print is not stretched to the right edge.
+   */
+  windowMs?: number;
+  emptyLabel?: string;
   className?: string;
   /**
    * Fires as a finger or cursor moves across the chart, and with null when it
@@ -29,6 +42,19 @@ interface PriceChartProps {
 
 const PAD_Y = 10;
 
+function linePath(
+  segment: ChartPoint[],
+  x: (t: number) => number,
+  y: (price: number) => number,
+): string {
+  return segment
+    .map(
+      (point, i) =>
+        `${i === 0 ? "M" : "L"}${x(point.t).toFixed(2)},${y(point.price).toFixed(2)}`,
+    )
+    .join(" ");
+}
+
 /**
  * The price chart.
  *
@@ -36,12 +62,18 @@ const PAD_Y = 10;
  * viewBox is simpler, but it squashes the scrubber dot into an ellipse and
  * makes the crosshair drift away from the finger. A ResizeObserver keeps the
  * width honest inside the phone frame and on a resized desktop window.
+ *
+ * X is time, not index. A young series is a short line. On 1h and coarser,
+ * a silent stretch is a gap. On 1m/5m the line connects real prints.
+ * Nothing is drawn past the last real print.
  */
 export function PriceChart({
   points,
   height = 190,
   positive,
   showBaseline = true,
+  windowMs,
+  emptyLabel = "Not enough history yet",
   className,
   onScrub,
 }: PriceChartProps) {
@@ -61,30 +93,42 @@ export function PriceChart({
   }, []);
 
   const geometry = useMemo(() => {
-    if (points.length < 2 || width <= 0) return null;
+    const {start, end} = plotRange(points, windowMs);
+    const visible = pointsInRange(points, start, end);
+    if (visible.length < 2 || width <= 0) return null;
 
-    const prices = points.map((p) => p.price);
+    const prices = visible.map((p) => p.price);
     const min = Math.min(...prices);
     const max = Math.max(...prices);
     const span = max - min || Math.max(max * 0.001, 1e-9);
 
-    const x = (i: number) => (i / (points.length - 1)) * width;
+    const x = (t: number) => xAt(t, start, end, width);
     const y = (price: number) =>
       PAD_Y + (1 - (price - min) / span) * (height - PAD_Y * 2);
 
-    const line = points
-      .map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(2)},${y(p.price).toFixed(2)}`)
-      .join(" ");
+    const segments = splitOnGaps(visible, gapBreakMsForWindow(windowMs));
+    const drawable = segments.filter((segment) => segment.length >= 2);
+    if (drawable.length === 0) return null;
+
+    const last = visible[visible.length - 1];
+    const first = visible[0];
 
     return {
-      line,
-      area: `${line} L${width.toFixed(2)},${height} L0,${height} Z`,
+      segments: drawable.map((segment) => linePath(segment, x, y)),
+      areas: drawable.map((segment) => {
+        const line = linePath(segment, x, y);
+        const x0 = x(segment[0].t);
+        const x1 = x(segment[segment.length - 1].t);
+        return `${line} L${x1.toFixed(2)},${height} L${x0.toFixed(2)},${height} Z`;
+      }),
       x,
       y,
-      first: points[0].price,
-      last: points[points.length - 1].price,
+      visible,
+      first: first.price,
+      last: last.price,
+      lastT: last.t,
     };
-  }, [points, width, height]);
+  }, [points, width, height, windowMs]);
 
   const up =
     positive ?? (geometry ? geometry.last >= geometry.first : true);
@@ -93,9 +137,11 @@ export function PriceChart({
   const report = useCallback(
     (index: number | null) => {
       setActiveIndex(index);
-      onScrub?.(index === null ? null : points[index]);
+      onScrub?.(
+        index === null || !geometry ? null : geometry.visible[index],
+      );
     },
-    [onScrub, points],
+    [onScrub, geometry],
   );
 
   const move = useCallback(
@@ -103,10 +149,20 @@ export function PriceChart({
       if (!geometry || width <= 0) return;
       const rect = event.currentTarget.getBoundingClientRect();
       const ratio = (event.clientX - rect.left) / rect.width;
-      const index = Math.round(ratio * (points.length - 1));
-      report(Math.min(Math.max(index, 0), points.length - 1));
+      const {start, end} = plotRange(points, windowMs);
+      const t = start + ratio * (end - start);
+      let best = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < geometry.visible.length; i++) {
+        const dist = Math.abs(geometry.visible[i].t - t);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = i;
+        }
+      }
+      report(best);
     },
-    [geometry, points.length, report, width],
+    [geometry, points, report, width, windowMs],
   );
 
   const gradientId = useMemo(
@@ -147,7 +203,9 @@ export function PriceChart({
             </linearGradient>
           </defs>
 
-          <path d={geometry.area} fill={`url(#${gradientId})`} />
+          {geometry.areas.map((area, i) => (
+            <path key={`area-${i}`} d={area} fill={`url(#${gradientId})`} />
+          ))}
 
           {showBaseline ? (
             <line
@@ -162,28 +220,31 @@ export function PriceChart({
             />
           ) : null}
 
-          <path
-            d={geometry.line}
-            fill="none"
-            stroke={color}
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+          {geometry.segments.map((line, i) => (
+            <path
+              key={`line-${i}`}
+              d={line}
+              fill="none"
+              stroke={color}
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          ))}
 
           {activeIndex !== null ? (
             <g>
               <line
-                x1={geometry.x(activeIndex)}
-                x2={geometry.x(activeIndex)}
+                x1={geometry.x(geometry.visible[activeIndex].t)}
+                x2={geometry.x(geometry.visible[activeIndex].t)}
                 y1={0}
                 y2={height}
                 stroke="var(--hairline)"
                 strokeWidth="1"
               />
               <circle
-                cx={geometry.x(activeIndex)}
-                cy={geometry.y(points[activeIndex].price)}
+                cx={geometry.x(geometry.visible[activeIndex].t)}
+                cy={geometry.y(geometry.visible[activeIndex].price)}
                 r="4.5"
                 fill={color}
                 stroke="var(--card)"
@@ -192,7 +253,7 @@ export function PriceChart({
             </g>
           ) : (
             <circle
-              cx={geometry.x(points.length - 1)}
+              cx={geometry.x(geometry.lastT)}
               cy={geometry.y(geometry.last)}
               r="3.5"
               fill={color}
@@ -202,7 +263,7 @@ export function PriceChart({
         </svg>
       ) : (
         <div className="grid h-full place-items-center rounded-panel bg-wash text-[13px] font-medium text-faint">
-          Not enough history yet
+          {emptyLabel}
         </div>
       )}
     </div>

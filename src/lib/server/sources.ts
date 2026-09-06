@@ -259,6 +259,12 @@ export async function fetchChart(
         return {data: points, seeded: false, resolvedTimeframe};
       }
       geckoError = raw.error;
+      // Gecko answered and this interval has no line. Do not dress swap
+      // fills up as a 1D/4h/1h series — that is the same class of invention
+      // as padding empty buckets.
+      if (!raw.error) {
+        return {data: [], seeded: false, resolvedTimeframe};
+      }
     }
   } catch (error) {
     console.error("live chart failed", error);

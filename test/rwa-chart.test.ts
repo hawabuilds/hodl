@@ -32,7 +32,7 @@ describe("RWA historical candles", () => {
     );
   });
 
-  it("steps down the bucket only when the coarse one is too thin", () => {
+  it("keeps a short daily series instead of filling with hourly closes", () => {
     const daily = Array.from({length: 3}, (_, i) => ({
       t: i * 86_400_000,
       price: 100 + i,
@@ -42,7 +42,7 @@ describe("RWA historical candles", () => {
       price: 100 + i * 0.1,
     }));
     const picked = pickEnoughHistory([daily, hourly]);
-    assert.equal(picked.length, 25);
+    assert.equal(picked.length, 3);
     assert.equal(picked[0].price, 100);
   });
 
@@ -64,7 +64,7 @@ describe("RWA historical candles", () => {
     assert.deepEqual(pickEnoughHistory([[{t: 1, price: 10}]]), []);
   });
 
-  it("reports the bucket actually drawn when the daily ladder steps down", () => {
+  it("reports 1D when the daily series already has a line", () => {
     const daily = Array.from({length: 3}, (_, i) => ({
       t: i * 86_400_000,
       price: 100 + i,
@@ -77,9 +77,23 @@ describe("RWA historical candles", () => {
       {points: daily, timeframe: "1D"},
       {points: hourly, timeframe: "1h"},
     ]);
-    assert.equal(picked.resolvedTimeframe, "1h");
-    assert.equal(picked.points.length, 25);
-    assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D · 1h");
+    assert.equal(picked.resolvedTimeframe, "1D");
+    assert.equal(picked.points.length, 3);
+    assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D");
+  });
+
+  it("does not step down when the requested bucket has no line", () => {
+    const daily = [{t: 0, price: 100}];
+    const hourly = Array.from({length: 25}, (_, i) => ({
+      t: i * 3_600_000,
+      price: 100 + i * 0.1,
+    }));
+    const picked = pickEnoughHistoryResolved([
+      {points: daily, timeframe: "1D"},
+      {points: hourly, timeframe: "1h"},
+    ]);
+    assert.equal(picked.resolvedTimeframe, null);
+    assert.equal(picked.points.length, 0);
   });
 
   it("maps Robinhood intervals onto app timeframes", () => {
