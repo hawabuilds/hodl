@@ -1,4 +1,5 @@
 import type {ChartPoint, Timeframe} from "@/lib/types";
+import {CHART_HISTORY_BARS} from "@/lib/chartPlot";
 import registry from "../rwaRegistry.json" with {type: "json"};
 import {cached, getJson, stale} from "./cache";
 
@@ -188,6 +189,9 @@ export function cachedQuotes(): Map<string, Quote> {
 export interface HistoricalBar {
   begins_at: string;
   close_price: string;
+  open_price?: string;
+  high_price?: string;
+  low_price?: string;
   interpolated?: boolean;
 }
 
@@ -218,8 +222,6 @@ const RH_LADDER: Record<Timeframe, RhBucket[]> = {
   "1h": [
     {interval: "hour", span: "month", bounds: "regular"},
     {interval: "hour", span: "week", bounds: "regular"},
-    {interval: "10minute", span: "week", bounds: "regular"},
-    {interval: "5minute", span: "week", bounds: "extended"},
   ],
   "15m": [
     {interval: "10minute", span: "week", bounds: "regular"},
@@ -235,7 +237,7 @@ const RH_LADDER: Record<Timeframe, RhBucket[]> = {
   ],
 };
 
-/** A line needs two real closes. Do not step down to pad a thin daily series. */
+/** A line needs two real closes. Step down only when the coarse bucket has none. */
 export const RH_ENOUGH_TO_DRAW = 2;
 
 /** Map a Robinhood interval onto the app's timeframe pills. */
@@ -255,10 +257,19 @@ const HISTORICAL_TTL_MS = 60_000;
 export function realHistoricalPoints(bars: HistoricalBar[]): ChartPoint[] {
   return bars
     .filter((bar) => bar.interpolated !== true)
-    .map((bar) => ({
-      t: Date.parse(bar.begins_at),
-      price: Number(bar.close_price),
-    }))
+    .map((bar) => {
+      const point: ChartPoint = {
+        t: Date.parse(bar.begins_at),
+        price: Number(bar.close_price),
+      };
+      const open = Number(bar.open_price);
+      const high = Number(bar.high_price);
+      const low = Number(bar.low_price);
+      if (Number.isFinite(open) && open > 0) point.open = open;
+      if (Number.isFinite(high) && high > 0) point.high = high;
+      if (Number.isFinite(low) && low > 0) point.low = low;
+      return point;
+    })
     .filter(
       (point) =>
         Number.isFinite(point.t) &&
@@ -269,14 +280,14 @@ export function realHistoricalPoints(bars: HistoricalBar[]): ChartPoint[] {
 }
 
 /**
- * The first bucket that can already form a line. A thin daily series stays
- * daily — two real closes on a long axis — instead of being replaced by
- * hourly prints that fill the window.
+ * Keep the requested bucket when it already has a line. Two daily closes
+ * stay daily. Step down only when that interval cannot draw, and report
+ * the bucket that was used.
  */
 export function pickEnoughHistory(
   ladder: ChartPoint[][],
   enough = RH_ENOUGH_TO_DRAW,
-  limit = 120,
+  limit = CHART_HISTORY_BARS,
 ): ChartPoint[] {
   return pickEnoughHistoryResolved(
     ladder.map((points) => ({points, timeframe: "1D" as Timeframe})),
@@ -288,15 +299,16 @@ export function pickEnoughHistory(
 export function pickEnoughHistoryResolved(
   ladder: {points: ChartPoint[]; timeframe: Timeframe}[],
   enough = RH_ENOUGH_TO_DRAW,
-  limit = 120,
+  limit = CHART_HISTORY_BARS,
 ): {points: ChartPoint[]; resolvedTimeframe: Timeframe | null} {
-  const step = ladder[0];
-  if (!step) return {points: [], resolvedTimeframe: null};
-  const sliced =
-    step.points.length > limit ? step.points.slice(-limit) : step.points;
-  return sliced.length >= enough && sliced.length > 1
-    ? {points: sliced, resolvedTimeframe: step.timeframe}
-    : {points: [], resolvedTimeframe: null};
+  for (const step of ladder) {
+    const sliced =
+      step.points.length > limit ? step.points.slice(-limit) : step.points;
+    if (sliced.length >= enough && sliced.length > 1) {
+      return {points: sliced, resolvedTimeframe: step.timeframe};
+    }
+  }
+  return {points: [], resolvedTimeframe: null};
 }
 
 async function historicalsAt(
@@ -336,17 +348,18 @@ async function historicalsAt(
 export async function historicalCandles(
   ticker: string,
   timeframe: Timeframe,
-  limit = 120,
+  limit = CHART_HISTORY_BARS,
 ): Promise<{points: ChartPoint[]; resolvedTimeframe: Timeframe}> {
   const ladder = RH_LADDER[timeframe] ?? RH_LADDER["1h"];
-  const first = ladder[0];
-  if (!first) {
-    return {points: [], resolvedTimeframe: timeframe};
+  for (const bucket of ladder) {
+    const points = await historicalsAt(ticker, bucket);
+    const sliced = points.length > limit ? points.slice(-limit) : points;
+    if (sliced.length > 1) {
+      return {
+        points: sliced,
+        resolvedTimeframe: rhIntervalToTimeframe(bucket.interval),
+      };
+    }
   }
-  const points = await historicalsAt(ticker, first);
-  const sliced = points.length > limit ? points.slice(-limit) : points;
-  return {
-    points: sliced.length > 1 ? sliced : [],
-    resolvedTimeframe: rhIntervalToTimeframe(first.interval),
-  };
+  return {points: [], resolvedTimeframe: timeframe};
 }

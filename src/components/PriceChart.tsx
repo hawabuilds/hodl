@@ -1,22 +1,39 @@
 "use client";
 
+import {useCallback, useEffect, useMemo, useRef} from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+  AreaSeries,
+  CandlestickSeries,
+  ColorType,
+  CrosshairMode,
+  LineStyle,
+  createChart,
+  type IChartApi,
+  type IPriceLine,
+  type ISeriesApi,
+  type Time,
+  type UTCTimestamp,
+} from "lightweight-charts";
 import {cn} from "@/lib/cn";
+import {useTheme} from "@/hooks/useTheme";
 import {
-  gapBreakMsForWindow,
-  plotRange,
-  pointsInRange,
-  splitOnGaps,
-  xAt,
-} from "@/lib/chartPlot";
-import type {ChartPoint} from "@/lib/types";
+  isHistoryPrepend,
+  isLiveEdgeUpdate,
+  isLwcWhitespace,
+  launchInLogicalView,
+  lwcCandleStyleOptions,
+  lwcLayoutOptions,
+  lwcTimeScaleOptions,
+  lwcVisibleTimeRange,
+  shouldAutoFitVisibleRange,
+  toCandleData,
+  toLineData,
+  toUtcSeconds,
+  withCompressedSessionBreaks,
+} from "@/lib/chartLwc";
+import {CHART_WINDOW_BARS, TIMEFRAME_MS, gapBreakMsForWindow} from "@/lib/chartPlot";
+import {price} from "@/lib/format";
+import type {ChartPoint, ChartStyle} from "@/lib/types";
 
 interface PriceChartProps {
   points: ChartPoint[];
@@ -26,12 +43,21 @@ interface PriceChartProps {
   /** Dashed rule at the window open, the way a brokerage marks previous close. */
   showBaseline?: boolean;
   /**
-   * When set, the x-axis is this many milliseconds ending at now. The last
-   * real print is not stretched to the right edge.
+   * Requested window, used only for gap-break policy (1m/5m stay one
+   * polyline; coarser pills still break on a silent stretch). The x-axis
+   * is the real series plus a small right pad, not this window.
    */
   windowMs?: number;
   emptyLabel?: string;
   className?: string;
+  style?: ChartStyle;
+  /**
+   * First-print / launch price. When that history is in view the Y-scale
+   * floors here so a pump rises from launch instead of floating mid-axis.
+   */
+  floorPrice?: number | null;
+  /** Pan-left: ask the page for older real candles. */
+  onNeedOlder?: () => void;
   /**
    * Fires as a finger or cursor moves across the chart, and with null when it
    * leaves. The header price follows this so the number under the scrubber is
@@ -40,32 +66,71 @@ interface PriceChartProps {
   onScrub?: (point: ChartPoint | null) => void;
 }
 
-const PAD_Y = 10;
+type SeriesApi = ISeriesApi<"Area"> | ISeriesApi<"Candlestick">;
 
-function linePath(
-  segment: ChartPoint[],
-  x: (t: number) => number,
-  y: (price: number) => number,
-): string {
-  return segment
-    .map(
-      (point, i) =>
-        `${i === 0 ? "M" : "L"}${x(point.t).toFixed(2)},${y(point.price).toFixed(2)}`,
-    )
-    .join(" ");
+interface ChartColors {
+  green: string;
+  red: string;
+  faint: string;
+  hairline: string;
+  ink: string;
+  card: string;
+}
+
+function readColors(el: HTMLElement): ChartColors {
+  const css = getComputedStyle(el);
+  return {
+    green: css.getPropertyValue("--green").trim() || "#00c805",
+    red: css.getPropertyValue("--red").trim() || "#ff5a52",
+    faint: css.getPropertyValue("--faint").trim() || "#8a938c",
+    hairline: css.getPropertyValue("--hairline").trim() || "rgba(11,15,12,0.09)",
+    ink: css.getPropertyValue("--ink").trim() || "#0b0f0c",
+    card: css.getPropertyValue("--card").trim() || "#ffffff",
+  };
+}
+
+function asTime(seconds: number): UTCTimestamp {
+  return seconds as UTCTimestamp;
+}
+
+function pointAtTime(points: ChartPoint[], time: Time): ChartPoint | null {
+  if (typeof time !== "number") return null;
+  return points.find((point) => toUtcSeconds(point.t) === time) ?? null;
+}
+
+function floorAutoscale(chart: IChartApi, floor?: number | null) {
+  return (
+    original: () => {
+      priceRange: {minValue: number; maxValue: number};
+      margins?: {above: number; below: number};
+    } | null,
+  ) => {
+    const res = original();
+    if (
+      !res?.priceRange ||
+      floor == null ||
+      !(floor > 0) ||
+      !launchInLogicalView(chart.timeScale().getVisibleLogicalRange())
+    ) {
+      return res;
+    }
+    return {
+      ...res,
+      priceRange: {
+        minValue: Math.min(res.priceRange.minValue, floor),
+        maxValue: Math.max(res.priceRange.maxValue, floor),
+      },
+    };
+  };
 }
 
 /**
- * The price chart.
+ * Lightweight Charts wrapper.
  *
- * Laid out in real pixels rather than a stretched viewBox: a non-uniform
- * viewBox is simpler, but it squashes the scrubber dot into an ellipse and
- * makes the crosshair drift away from the finger. A ResizeObserver keeps the
- * width honest inside the phone frame and on a resized desktop window.
- *
- * X is time, not index. A young series is a short line. On 1h and coarser,
- * a silent stretch is a gap. On 1m/5m the line connects real prints.
- * Nothing is drawn past the last real print.
+ * Domain is the real series plus a small right pad. Closed-market holes stay
+ * holes (no forward-fill); LWC equal-spaces real prints so a weekend does not
+ * dominate the width. Auto-fit only on first load, interval/style change, or
+ * double-tap — live updates must not yank a user pan back to the newest bar.
  */
 export function PriceChart({
   points,
@@ -75,197 +140,282 @@ export function PriceChart({
   windowMs,
   emptyLabel = "Not enough history yet",
   className,
+  style = "line",
+  floorPrice,
+  onNeedOlder,
   onScrub,
 }: PriceChartProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<SeriesApi | null>(null);
+  const baselineRef = useRef<IPriceLine | null>(null);
+  const pointsRef = useRef(points);
+  const prevPointsRef = useRef<ChartPoint[]>([]);
+  const styleRef = useRef(style);
+  const fittedKeyRef = useRef("");
+  const lastTapRef = useRef(0);
+  const onScrubRef = useRef(onScrub);
+  const onNeedOlderRef = useRef(onNeedOlder);
+  const floorPriceRef = useRef(floorPrice);
+  const {theme} = useTheme();
+
+  pointsRef.current = points;
+  onScrubRef.current = onScrub;
+  onNeedOlderRef.current = onNeedOlder;
+  floorPriceRef.current = floorPrice;
+
+  const up = positive ?? (points.length >= 2
+    ? points[points.length - 1].price >= points[0].price
+    : true);
+  const color = up ? "var(--green)" : "var(--red)";
+
+  const seriesData = useMemo(() => {
+    const times = points.map((point) => point.t);
+    const gapMs = gapBreakMsForWindow(windowMs);
+    if (style === "candles") {
+      return withCompressedSessionBreaks(toCandleData(points), times, gapMs);
+    }
+    return withCompressedSessionBreaks(toLineData(points), times, gapMs);
+  }, [points, style, windowMs]);
+
+  const bucketMs =
+    windowMs != null && windowMs > 0 ? windowMs / CHART_WINDOW_BARS : undefined;
+  const intraday = bucketMs != null && bucketMs <= TIMEFRAME_MS["5m"];
+  const scaleOptsFor = (barCount: number) =>
+    lwcTimeScaleOptions({intraday, barCount});
+
+  const applyFit = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart || pointsRef.current.length < 2) return;
+    chart.timeScale().applyOptions(scaleOptsFor(pointsRef.current.length));
+    const range = lwcVisibleTimeRange(pointsRef.current);
+    if (range) {
+      chart.timeScale().setVisibleRange({
+        from: asTime(range.from),
+        to: asTime(range.to),
+      });
+    } else {
+      chart.timeScale().fitContent();
+    }
+  }, [intraday]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const observer = new ResizeObserver(([entry]) => {
-      setWidth(entry.contentRect.width);
+
+    const colors = readColors(host);
+    const chart = createChart(host, {
+      autoSize: true,
+      height,
+      layout: {
+        background: {type: ColorType.Solid, color: "transparent"},
+        textColor: colors.faint,
+        fontFamily: "inherit",
+        ...lwcLayoutOptions(),
+      },
+      grid: {
+        vertLines: {visible: false},
+        horzLines: {color: colors.hairline, style: LineStyle.SparseDotted},
+      },
+      rightPriceScale: {
+        borderVisible: false,
+        scaleMargins: {top: 0.08, bottom: 0.06},
+      },
+      timeScale: {
+        borderVisible: false,
+        timeVisible: true,
+        secondsVisible: false,
+        ...lwcTimeScaleOptions({intraday, barCount: pointsRef.current.length}),
+      },
+      crosshair: {
+        mode: CrosshairMode.Magnet,
+        vertLine: {
+          color: colors.hairline,
+          width: 1,
+          style: LineStyle.Solid,
+          labelVisible: false,
+        },
+        horzLine: {visible: false, labelVisible: false},
+      },
+      handleScroll: {
+        vertTouchDrag: false,
+        horzTouchDrag: true,
+        mouseWheel: true,
+        pressedMouseMove: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        pinch: true,
+        mouseWheel: true,
+        axisDoubleClickReset: true,
+      },
+      localization: {
+        priceFormatter: (value: number) => price(value),
+      },
     });
-    observer.observe(host);
-    setWidth(host.clientWidth);
-    return () => observer.disconnect();
-  }, []);
 
-  const geometry = useMemo(() => {
-    const {start, end} = plotRange(points, windowMs);
-    const visible = pointsInRange(points, start, end);
-    if (visible.length < 2 || width <= 0) return null;
+    chartRef.current = chart;
 
-    const prices = visible.map((p) => p.price);
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
-    const span = max - min || Math.max(max * 0.001, 1e-9);
-
-    const x = (t: number) => xAt(t, start, end, width);
-    const y = (price: number) =>
-      PAD_Y + (1 - (price - min) / span) * (height - PAD_Y * 2);
-
-    const segments = splitOnGaps(visible, gapBreakMsForWindow(windowMs));
-    const drawable = segments.filter((segment) => segment.length >= 2);
-    if (drawable.length === 0) return null;
-
-    const last = visible[visible.length - 1];
-    const first = visible[0];
-
-    return {
-      segments: drawable.map((segment) => linePath(segment, x, y)),
-      areas: drawable.map((segment) => {
-        const line = linePath(segment, x, y);
-        const x0 = x(segment[0].t);
-        const x1 = x(segment[segment.length - 1].t);
-        return `${line} L${x1.toFixed(2)},${height} L${x0.toFixed(2)},${height} Z`;
-      }),
-      x,
-      y,
-      visible,
-      first: first.price,
-      last: last.price,
-      lastT: last.t,
-    };
-  }, [points, width, height, windowMs]);
-
-  const up =
-    positive ?? (geometry ? geometry.last >= geometry.first : true);
-  const color = up ? "var(--green)" : "var(--red)";
-
-  const report = useCallback(
-    (index: number | null) => {
-      setActiveIndex(index);
-      onScrub?.(
-        index === null || !geometry ? null : geometry.visible[index],
-      );
-    },
-    [onScrub, geometry],
-  );
-
-  const move = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!geometry || width <= 0) return;
-      const rect = event.currentTarget.getBoundingClientRect();
-      const ratio = (event.clientX - rect.left) / rect.width;
-      const {start, end} = plotRange(points, windowMs);
-      const t = start + ratio * (end - start);
-      let best = 0;
-      let bestDist = Infinity;
-      for (let i = 0; i < geometry.visible.length; i++) {
-        const dist = Math.abs(geometry.visible[i].t - t);
-        if (dist < bestDist) {
-          bestDist = dist;
-          best = i;
-        }
+    const onCrosshair = (param: {time?: Time}) => {
+      if (param.time === undefined) {
+        onScrubRef.current?.(null);
+        return;
       }
-      report(best);
-    },
-    [geometry, points, report, width, windowMs],
-  );
+      onScrubRef.current?.(pointAtTime(pointsRef.current, param.time));
+    };
+    chart.subscribeCrosshairMove(onCrosshair);
 
-  const gradientId = useMemo(
-    () => `chart-fill-${Math.random().toString(36).slice(2, 8)}`,
-    [],
-  );
+    const onRange = (range: {from: number; to: number} | null) => {
+      if (!range || range.from > 2) return;
+      onNeedOlderRef.current?.();
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
+
+    return () => {
+      chart.unsubscribeCrosshairMove(onCrosshair);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+      baselineRef.current = null;
+      prevPointsRef.current = [];
+      fittedKeyRef.current = "";
+    };
+  }, [height]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const host = hostRef.current;
+    if (!chart || !host) return;
+
+    const colors = readColors(host);
+    chart.applyOptions({
+      layout: {textColor: colors.faint},
+      grid: {horzLines: {color: colors.hairline, style: LineStyle.SparseDotted}},
+      crosshair: {vertLine: {color: colors.hairline}},
+    });
+    const lineColor = up ? colors.green : colors.red;
+    const seriesChanged = styleRef.current !== style || seriesRef.current == null;
+    styleRef.current = style;
+    const scaleOpts = {
+      autoscaleInfoProvider: floorAutoscale(chart, floorPriceRef.current),
+    };
+
+    if (seriesChanged) {
+      if (seriesRef.current) {
+        chart.removeSeries(seriesRef.current);
+        seriesRef.current = null;
+        baselineRef.current = null;
+      }
+      seriesRef.current =
+        style === "candles"
+          ? chart.addSeries(CandlestickSeries, {
+              ...lwcCandleStyleOptions(colors),
+              ...scaleOpts,
+            })
+          : chart.addSeries(AreaSeries, {
+              lineColor,
+              topColor: `${lineColor}33`,
+              bottomColor: "transparent",
+              lineWidth: 2,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerRadius: 4,
+              ...scaleOpts,
+            });
+      prevPointsRef.current = [];
+    } else if (seriesRef.current && style === "line") {
+      seriesRef.current.applyOptions({
+        lineColor,
+        topColor: `${lineColor}33`,
+        ...scaleOpts,
+      });
+    } else if (seriesRef.current) {
+      seriesRef.current.applyOptions({
+        ...lwcCandleStyleOptions(colors),
+        ...scaleOpts,
+      });
+    }
+
+    const series = seriesRef.current;
+    if (!series || seriesData.length === 0) return;
+
+    const prevPoints = prevPointsRef.current;
+    const liveEdge = !seriesChanged && isLiveEdgeUpdate(prevPoints, points);
+    const prepend = !seriesChanged && isHistoryPrepend(prevPoints, points);
+    const last = seriesData[seriesData.length - 1];
+    const visible = prepend
+      ? chart.timeScale().getVisibleLogicalRange()
+      : null;
+    const identityKey = `${style}:${windowMs ?? ""}`;
+    const shouldFit = shouldAutoFitVisibleRange({
+      hasFitted: fittedKeyRef.current === identityKey,
+      liveEdge,
+      prepend,
+      seriesIdentityChanged:
+        fittedKeyRef.current !== "" && fittedKeyRef.current !== identityKey,
+    });
+
+    if (liveEdge && last && !isLwcWhitespace(last)) {
+      series.update(last as never);
+    } else {
+      series.setData(seriesData as never);
+      if (visible && prepend) {
+        const added = points.length - prevPoints.length;
+        chart.timeScale().setVisibleLogicalRange({
+          from: visible.from + added,
+          to: visible.to + added,
+        });
+      }
+    }
+    prevPointsRef.current = points;
+
+    if (showBaseline && points[0]) {
+      const first = points[0].price;
+      if (baselineRef.current) {
+        baselineRef.current.applyOptions({price: first, color: colors.faint});
+      } else {
+        baselineRef.current = series.createPriceLine({
+          price: first,
+          color: colors.faint,
+          lineStyle: LineStyle.Dashed,
+          lineWidth: 1,
+          axisLabelVisible: false,
+        });
+      }
+    } else if (baselineRef.current) {
+      series.removePriceLine(baselineRef.current);
+      baselineRef.current = null;
+    }
+
+    if (shouldFit) {
+      fittedKeyRef.current = identityKey;
+      applyFit();
+    }
+  }, [applyFit, floorPrice, points, seriesData, showBaseline, style, theme, up, windowMs]);
+
+  const resetView = useCallback(() => {
+    applyFit();
+    onScrubRef.current?.(null);
+  }, [applyFit]);
 
   return (
     <div
       ref={hostRef}
-      style={{height}}
+      style={{height, color}}
       className={cn("relative w-full touch-pan-y select-none", className)}
-      // Pointer events rather than mouse + touch: this has to work under a
-      // finger on the phone layout and under a cursor on desktop, and pointer
-      // capture keeps the scrub alive when the finger leaves the box.
-      onPointerDown={(e) => {
-        e.currentTarget.setPointerCapture(e.pointerId);
-        move(e);
+      onDoubleClick={resetView}
+      onTouchEnd={() => {
+        const now = Date.now();
+        if (now - lastTapRef.current < 280) resetView();
+        lastTapRef.current = now;
       }}
-      onPointerMove={(e) => {
-        if (e.pressure > 0 || e.pointerType === "mouse") move(e);
-      }}
-      onPointerUp={() => report(null)}
-      onPointerCancel={() => report(null)}
-      onPointerLeave={() => report(null)}
     >
-      {geometry ? (
-        <svg
-          width={width}
-          height={height}
-          aria-hidden="true"
-          className="block overflow-visible"
-        >
-          <defs>
-            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor={color} stopOpacity="0.2" />
-              <stop offset="1" stopColor={color} stopOpacity="0" />
-            </linearGradient>
-          </defs>
-
-          {geometry.areas.map((area, i) => (
-            <path key={`area-${i}`} d={area} fill={`url(#${gradientId})`} />
-          ))}
-
-          {showBaseline ? (
-            <line
-              x1="0"
-              x2={width}
-              y1={geometry.y(geometry.first)}
-              y2={geometry.y(geometry.first)}
-              stroke="var(--faint)"
-              strokeWidth="1"
-              strokeDasharray="3 4"
-              opacity="0.7"
-            />
-          ) : null}
-
-          {geometry.segments.map((line, i) => (
-            <path
-              key={`line-${i}`}
-              d={line}
-              fill="none"
-              stroke={color}
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          ))}
-
-          {activeIndex !== null ? (
-            <g>
-              <line
-                x1={geometry.x(geometry.visible[activeIndex].t)}
-                x2={geometry.x(geometry.visible[activeIndex].t)}
-                y1={0}
-                y2={height}
-                stroke="var(--hairline)"
-                strokeWidth="1"
-              />
-              <circle
-                cx={geometry.x(geometry.visible[activeIndex].t)}
-                cy={geometry.y(geometry.visible[activeIndex].price)}
-                r="4.5"
-                fill={color}
-                stroke="var(--card)"
-                strokeWidth="2.5"
-              />
-            </g>
-          ) : (
-            <circle
-              cx={geometry.x(geometry.lastT)}
-              cy={geometry.y(geometry.last)}
-              r="3.5"
-              fill={color}
-              className="transition-[cx,cy] duration-300 ease-out"
-            />
-          )}
-        </svg>
-      ) : (
-        <div className="grid h-full place-items-center rounded-panel bg-wash text-[13px] font-medium text-faint">
+      {points.length < 2 ? (
+        <div className="absolute inset-0 z-10 grid place-items-center rounded-panel bg-wash text-[13px] font-medium text-faint">
           {emptyLabel}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

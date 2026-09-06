@@ -185,7 +185,13 @@ export interface ChartPoint {
   /** Epoch milliseconds. */
   t: number;
   price: number;
+  /** Real OHLC when the provider sent it. Missing means close-only. */
+  open?: number;
+  high?: number;
+  low?: number;
 }
+
+export type ChartStyle = "line" | "candles";
 
 export const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1D"] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];

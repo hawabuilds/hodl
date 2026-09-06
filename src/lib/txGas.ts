@@ -1,5 +1,6 @@
 import {toHex} from "viem";
 import {APPROVE_GAS_UNITS, SWAP_GAS_UNITS} from "./approvalFlow";
+import {asTradeFailure, isContractRevert} from "./revertReason";
 import type {PreparedTx} from "./swapTx";
 
 /** Intrinsic cost of a simple ETH transfer. Contract calls with calldata are higher. */
@@ -73,7 +74,10 @@ export async function estimatePreparedGas(opts: {
       value: opts.tx.value,
     });
     return resolveTxGasLimit(estimated, fallback);
-  } catch {
+  } catch (error) {
+    if (isContractRevert(error)) {
+      throw asTradeFailure(error);
+    }
     return resolveTxGasLimit(null, fallback);
   }
 }

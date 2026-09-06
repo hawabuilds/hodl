@@ -1,7 +1,7 @@
 "use client";
 
-import {useMemo, useRef} from "react";
-import {keepPreviousData, useQuery} from "@tanstack/react-query";
+import {useCallback, useEffect, useMemo, useRef, useState} from "react";
+import {useQuery} from "@tanstack/react-query";
 import type {
   Asset,
   AssetKind,
@@ -11,6 +11,7 @@ import type {
   Trade,
 } from "@/lib/types";
 import {MARKET_REFRESH_MS} from "@/config/market";
+import {mergeChartPoints} from "@/lib/chartLwc";
 import {normalizeAddress} from "@/lib/address";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {applyCachedToken, rememberTokens, tokenFor} from "@/lib/tokenCache";
@@ -78,10 +79,20 @@ export function useAsset(kind: AssetKind, id: string) {
 
 export function useChart(kind: AssetKind, id: string, timeframe: Timeframe) {
   const key = kind === "token" ? normalizeAddress(id) : id;
+  const scope = `${kind}:${key}:${timeframe}`;
+  const [older, setOlder] = useState<ChartPoint[]>([]);
+  const [hasMore, setHasMore] = useState(kind === "token");
+  const loadingOlder = useRef(false);
+
+  useEffect(() => {
+    setOlder([]);
+    setHasMore(kind === "token");
+    loadingOlder.current = false;
+  }, [scope, kind]);
+
   const query = useQuery({
     queryKey: ["chart", kind, key, timeframe],
     refetchInterval: 60_000,
-    placeholderData: keepPreviousData,
     queryFn: async () => {
       const res = await fetch(`/api/asset/${kind}/${key}/chart?tf=${timeframe}`, {
         cache: "no-store",
@@ -98,11 +109,44 @@ export function useChart(kind: AssetKind, id: string, timeframe: Timeframe) {
     retry: false,
   });
 
+  const tip = query.data?.points ?? [];
+  const points = useMemo(() => mergeChartPoints(older, tip), [older, tip]);
+
+  const loadOlder = useCallback(async () => {
+    if (kind !== "token" || !hasMore || loadingOlder.current) return;
+    const first = points[0]?.t;
+    if (first == null) return;
+    loadingOlder.current = true;
+    try {
+      const res = await fetch(
+        `/api/asset/${kind}/${key}/chart?tf=${timeframe}&before=${first}`,
+        {cache: "no-store"},
+      );
+      if (!res.ok) {
+        setHasMore(false);
+        return;
+      }
+      const data = (await res.json()) as {points?: ChartPoint[]};
+      const incoming = (data.points ?? []).filter((point) => point.t < first);
+      if (incoming.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      setOlder((current) => mergeChartPoints(incoming, current));
+    } catch {
+      setHasMore(false);
+    } finally {
+      loadingOlder.current = false;
+    }
+  }, [kind, key, timeframe, hasMore, points]);
+
   return {
-    points: query.data?.points ?? [],
+    points,
     changePct: query.data?.changePct ?? null,
     resolvedTimeframe: query.data?.resolvedTimeframe ?? timeframe,
     isLoading: query.isPending && !query.data,
+    hasMore,
+    loadOlder,
     error:
       query.error?.message ??
       (query.data?.error && (query.data.points?.length ?? 0) < 2

@@ -18,7 +18,9 @@ import * as headlines from "./live/news";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {quotePriceUsd} from "@/lib/server/quotePrice";
 import {reorientPoints} from "@/lib/pairOrientation";
+import {clipChartToOrigin} from "@/lib/chartLwc";
 import {mergeTradesIntoChart} from "@/lib/chartLive";
+import {CHART_HISTORY_BARS, TIMEFRAME_MS} from "@/lib/chartPlot";
 import {pairsForToken} from "./live/dexscreener";
 import {underFeature} from "./live/rpcMeter";
 import {type FeedQuery} from "./newsfeed";
@@ -216,10 +218,15 @@ export async function fetchChart(
    * made-up history — see the note below.
    */
   assetIsSeeded = true,
+  beforeMs?: number,
 ): Promise<SourceResult<ChartPoint[]>> {
   if (asset.kind === "rwa") {
     try {
-      const raw = await historicalCandles(asset.ticker, timeframe);
+      const raw = await historicalCandles(
+        asset.ticker,
+        timeframe,
+        CHART_HISTORY_BARS,
+      );
       if (raw.points.length > 1) {
         return {
           data: raw.points,
@@ -246,14 +253,30 @@ export async function fetchChart(
   try {
     target = await live.poolFor(asset.kind, asset.id);
     if (target) {
-      const side = target.tokenIsBase === false ? "quote" : "base";
-      const raw = await gecko.candles(target.pool, timeframe, side);
+      const listedAt =
+        asset.kind === "token" && asset.listedAt
+          ? Date.parse(asset.listedAt)
+          : undefined;
+      // Pass the token address. Gecko's pool `base` is often the stock
+      // (WORTHLESS/SPY), so `token=base` charts SPY and reorient flattens it.
+      const raw = await gecko.candles(
+        target.pool,
+        timeframe,
+        target.token,
+        CHART_HISTORY_BARS,
+        beforeMs,
+        Number.isFinite(listedAt) ? listedAt : undefined,
+      );
       resolvedTimeframe = raw.resolvedTimeframe;
-      const points = reorientPoints(
-        raw.points,
-        asset.priceUsd,
-        asset.liquidityUsd ?? 0,
-        asset.symbol,
+      const points = clipChartToOrigin(
+        reorientPoints(
+          raw.points,
+          asset.priceUsd,
+          asset.liquidityUsd ?? 0,
+          asset.symbol,
+        ),
+        Number.isFinite(listedAt) ? listedAt : undefined,
+        TIMEFRAME_MS[resolvedTimeframe],
       );
       if (points.length > 1) {
         return {data: points, seeded: false, resolvedTimeframe};

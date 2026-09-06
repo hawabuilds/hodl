@@ -55,15 +55,32 @@ describe("tx gas limits", () => {
     assert.ok(SWAP_GAS_UNITS > INTRINSIC_TX_GAS);
   });
 
-  it("uses the swap fallback when estimateGas throws", async () => {
+  it("uses the swap fallback when estimateGas throws a transport error", async () => {
     const gas = await estimatePreparedGas({
       tx: sellTx,
       account: WALLET,
       estimateGas: async () => {
-        throw new Error("execution reverted");
+        throw new Error("fetch failed");
       },
     });
     assert.equal(gas, SWAP_GAS_UNITS);
+  });
+
+  it("does not send when estimateGas reverts on-chain", async () => {
+    await assert.rejects(
+      () =>
+        estimatePreparedGas({
+          tx: sellTx,
+          account: WALLET,
+          estimateGas: async () => {
+            const error = new Error("execution reverted");
+            (error as unknown as {data: string}).data =
+              "0xd81b2f2e0000000000000000000000000000000000000000000000000000000000000000";
+            throw error;
+          },
+        }),
+      /Permit2 is not approved/i,
+    );
   });
 
   it("writes hex gas on the Privy payload and value 0 on a token sell", () => {

@@ -1,4 +1,6 @@
 import type {ChartPoint, Timeframe, Trade} from "@/lib/types";
+import {isPlausiblePrice, mergeChartPoints} from "@/lib/chartLwc";
+import {CHART_HISTORY_BARS} from "@/lib/chartPlot";
 import type {DexPair} from "./dexscreener";
 import {cached, stale} from "./cache";
 import {
@@ -10,6 +12,11 @@ import {
   shouldPollKey,
   type GeckoCaller,
 } from "./geckoCredits";
+import {
+  GECKO_RATE_LIMIT_ERROR,
+  geckoFetch,
+  isGeckoRateLimited,
+} from "./geckoFetch";
 
 /**
  * GeckoTerminal / CoinGecko onchain.
@@ -19,8 +26,9 @@ import {
  * is what drained the last plan; that path is gone.
  *
  * On 429 / 401 / 403 the candle path falls through to the free host in the
- * same request. There is no sleep-and-retry loop — those sat a request at
- * ~30s and still returned a silent blank.
+ * same request. HTTP 429s go through `geckoFetch`: last-good cache, Retry-After
+ * cooldown, one short retry. A long sleep-and-retry used to sit a page at
+ * ~30s and still return a silent blank.
  */
 
 /** Set to a CoinGecko API key to use the paid tier for candles. */
@@ -39,8 +47,6 @@ export const PRO_GECKO_BASE = IS_DEMO
 const KEY_URL = IS_DEMO
   ? "https://api.coingecko.com/api/v3/key"
   : "https://pro-api.coingecko.com/api/v3/key";
-
-const FETCH_MS = 8_000;
 
 function authHeaders(): Record<string, string> {
   if (!API_KEY) return {};
@@ -74,22 +80,10 @@ async function fetchOnce<T>(
   base: string,
   path: string,
   headers: Record<string, string>,
-): Promise<{status: number; body: T | null}> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_MS);
-  try {
-    const res = await fetch(`${base}${path}`, {
-      headers: {accept: "application/json", ...headers},
-      cache: "no-store",
-      signal: ctrl.signal,
-    });
-    if (!res.ok) return {status: res.status, body: null};
-    return {status: res.status, body: (await res.json()) as T};
-  } catch {
-    return {status: 0, body: null};
-  } finally {
-    clearTimeout(timer);
-  }
+  host: "pro" | "free",
+): Promise<{status: number; body: T | null; attempted: boolean}> {
+  const fetched = await geckoFetch<T>({base, path, headers, host});
+  return {status: fetched.status, body: fetched.body, attempted: fetched.attempted};
 }
 
 async function refreshKeyUsage(): Promise<void> {
@@ -113,7 +107,8 @@ async function refreshKeyUsage(): Promise<void> {
 }
 
 /**
- * One Pro attempt (candles only), then free. No sleep retries.
+ * One Pro attempt (candles only), then free. Cooldown and last-good live in
+ * `geckoFetch` — this layer does not sleep.
  *
  * `tier: "free"` never touches Pro — that is the market sweep / tape / images.
  */
@@ -125,13 +120,15 @@ async function get<T>(
 
   if (tryPro) {
     void refreshKeyUsage();
-    const pro = await fetchOnce<T>(PRO_GECKO_BASE, path, authHeaders());
-    recordGeckoCall(opts.caller, "pro");
-    console.info("gecko pro", {
-      caller: opts.caller,
-      status: pro.status,
-      ...geckoCreditLogFields(),
-    });
+    const pro = await fetchOnce<T>(PRO_GECKO_BASE, path, authHeaders(), "pro");
+    if (pro.attempted) {
+      recordGeckoCall(opts.caller, "pro");
+      console.info("gecko pro", {
+        caller: opts.caller,
+        status: pro.status,
+        ...geckoCreditLogFields(),
+      });
+    }
     if (pro.body) return {data: pro.body, error: null, host: "pro"};
     if (shouldFallbackToFree(pro.status) || pro.status === 0) {
       console.warn("coingecko pro rejected; falling back to free host", {
@@ -147,13 +144,13 @@ async function get<T>(
     }
   }
 
-  const free = await fetchOnce<T>(FREE_GECKO_BASE, path, {});
-  recordGeckoCall(opts.caller, "free");
+  const free = await fetchOnce<T>(FREE_GECKO_BASE, path, {}, "free");
+  if (free.attempted) recordGeckoCall(opts.caller, "free");
   if (free.body) return {data: free.body, error: null, host: "free"};
   const status = free.status;
   const error =
     status === 429
-      ? "GeckoTerminal is rate-limited. Retry in a moment."
+      ? GECKO_RATE_LIMIT_ERROR
       : status === 0
         ? "Could not reach GeckoTerminal."
         : `GeckoTerminal returned ${status}.`;
@@ -184,6 +181,7 @@ export async function deepestPool(token: string): Promise<string | null> {
       `/networks/${NETWORK}/tokens/${token}/pools`,
       {caller: "other", tier: "free"},
     );
+    if (!body.data && body.error) throw new Error(body.error);
     const first = body.data?.data?.[0]?.attributes?.address;
     return first ?? "";
   };
@@ -342,6 +340,7 @@ async function fetchPoolsPage(path: string): Promise<OnchainPool[]> {
     caller: "sweep",
     tier: "free",
   });
+  if (!fetched.data && fetched.error) throw new Error(fetched.error);
   return parsePoolsBody(fetched.data);
 }
 
@@ -379,9 +378,21 @@ export async function poolsForToken(
  * (SPACEHOOD). A single public page is enough to recover orientation.
  */
 export async function poolsForTokenPublic(address: string): Promise<OnchainPool[]> {
-  return fetchPoolsPage(
-    `/networks/${NETWORK}/tokens/${address.toLowerCase()}/pools?page=1&include=base_token,quote_token`,
-  );
+  const wanted = address.toLowerCase();
+  const key = `gt:pools-public:${wanted}`;
+  try {
+    return await cached(
+      key,
+      POOL_TTL_MS,
+      () =>
+        fetchPoolsPage(
+          `/networks/${NETWORK}/tokens/${wanted}/pools?page=1&include=base_token,quote_token`,
+        ),
+      {cacheEmpty: false},
+    );
+  } catch {
+    return stale<OnchainPool[]>(key) ?? [];
+  }
 }
 
 /** Full pagination — stops when a page is short or empty. */
@@ -395,9 +406,15 @@ export async function poolsForTokenAllPages(
   const wanted = address.toLowerCase();
 
   for (let page = 1; page <= maxPages; page++) {
-    const pagePools = await fetchPoolsPage(
-      `/networks/${NETWORK}/tokens/${wanted}/pools?page=${page}&include=base_token,quote_token`,
-    );
+    if (isGeckoRateLimited()) break;
+    let pagePools: OnchainPool[];
+    try {
+      pagePools = await fetchPoolsPage(
+        `/networks/${NETWORK}/tokens/${wanted}/pools?page=${page}&include=base_token,quote_token`,
+      );
+    } catch {
+      break;
+    }
     if (pagePools.length === 0) break;
     out.push(...pagePools);
     if (pagePools.length < POOLS_PAGE_SIZE) break;
@@ -429,15 +446,21 @@ export async function megafilterPools(): Promise<OnchainPool[]> {
     const seen = new Map<string, OnchainPool>();
 
     for (let page = 1; page <= MEGAFILTER_MAX_PAGES; page++) {
+      if (isGeckoRateLimited()) break;
       const params = new URLSearchParams({
         networks: NETWORK,
         reserve_usd_min: String(MIN_POOL_LIQUIDITY_USD),
         sort: "reserve_usd_desc",
         page: String(page),
       });
-      const pagePools = await fetchPoolsPage(
-        `/pools/megafilter?${params}&include=base_token,quote_token`,
-      );
+      let pagePools: OnchainPool[];
+      try {
+        pagePools = await fetchPoolsPage(
+          `/pools/megafilter?${params}&include=base_token,quote_token`,
+        );
+      } catch {
+        break;
+      }
       if (pagePools.length === 0) break;
       for (const pool of pagePools) {
         seen.set(pool.pairAddress, pool);
@@ -472,35 +495,44 @@ interface OhlcvResponse {
 }
 
 /**
- * Buckets from coarsest to finest. Kept so tests and callers can name the
- * requested interval. We do not walk this list to fill a window — a young
- * pool on 1D is two daily candles or "not enough history", never 20 hourly
- * prints stretched across a day chart.
+ * Coarse → fine. Only 1D walks this list. A 5m tab stays 5-minute candles;
+ * too young for daily is labeled or empty, never 5m bars on a daily axis.
  */
 const BUCKET_LADDER: Timeframe[] = ["1D", "4h", "1h", "15m", "5m", "1m"];
+
+/** Extra Gecko pages on first load so launch prints can sit on the axis. */
+const MAX_ORIGIN_PAGES = 5;
 
 /** A line needs two real prints. One candle is not a chart and must not be padded. */
 export const ENOUGH_TO_DRAW = 2;
 
 /**
- * The requested bucket only. A thinner series is empty, not a finer
- * timeframe dressed up as the one the reader asked for.
+ * Requested resolution only, except 1D may step down and the page labels it.
+ * 5m never becomes 1m.
+ */
+export function candleLadder(requested: Timeframe): Timeframe[] {
+  if (requested === "1D") {
+    const start = BUCKET_LADDER.indexOf("1D");
+    return start === -1 ? [requested] : BUCKET_LADDER.slice(start);
+  }
+  return [requested];
+}
+
+/**
+ * Keep the requested bucket when it already has a line. Step down only
+ * on 1D when that interval cannot draw, and report the bucket that was used.
  */
 export function pickResolvedCandles(
   requested: Timeframe,
   series: Partial<Record<Timeframe, ChartPoint[]>>,
 ): {points: ChartPoint[]; resolvedTimeframe: Timeframe} {
-  const start = BUCKET_LADDER.indexOf(requested);
-  if (start === -1) {
-    const points = series[requested] ?? [];
-    return points.length > 1
-      ? {points, resolvedTimeframe: requested}
-      : {points: [], resolvedTimeframe: requested};
+  for (const bucket of candleLadder(requested)) {
+    const points = series[bucket] ?? [];
+    if (points.length > 1) {
+      return {points, resolvedTimeframe: bucket};
+    }
   }
-  const points = series[requested] ?? [];
-  return points.length > 1
-    ? {points, resolvedTimeframe: requested}
-    : {points: [], resolvedTimeframe: requested};
+  return {points: [], resolvedTimeframe: requested};
 }
 
 /**
@@ -509,9 +541,12 @@ export function pickResolvedCandles(
 export function realOhlcvCloses(list: number[][]): ChartPoint[] {
   return list
     // [timestamp, open, high, low, close, volume], newest first.
-    .map(([seconds, , , , close, volume]) => ({
+    .map(([seconds, open, high, low, close, volume]) => ({
       t: seconds * 1000,
       price: close,
+      open,
+      high,
+      low,
       volume,
     }))
     .filter(
@@ -520,7 +555,13 @@ export function realOhlcvCloses(list: number[][]): ChartPoint[] {
         point.price > 0 &&
         (point.volume == null || point.volume > 0),
     )
-    .map(({t, price}) => ({t, price}))
+    .map(({t, price, open, high, low}) => {
+      const point: ChartPoint = {t, price};
+      if (isPlausiblePrice(open, price)) point.open = open;
+      if (isPlausiblePrice(high, price)) point.high = high;
+      if (isPlausiblePrice(low, price)) point.low = low;
+      return point;
+    })
     .sort((a, b) => a.t - b.t);
 }
 
@@ -530,18 +571,22 @@ async function candlesAt(
   timeframe: Timeframe,
   token: string | null,
   limit: number,
+  beforeMs?: number,
 ): Promise<ChartPoint[]> {
   const bucket = BUCKETS[timeframe];
-  const key = `gt:ohlcv:${pool}:${timeframe}:${token ?? "base"}`;
+  const beforeKey =
+    beforeMs != null && Number.isFinite(beforeMs) ? String(beforeMs) : "tip";
+  const key = `gt:ohlcv:${pool}:${timeframe}:${token ?? "base"}:${limit}:${beforeKey}`;
 
   const load = async (): Promise<ChartPoint[]> => {
     const params = new URLSearchParams({limit: String(limit)});
     if (bucket.aggregate) params.set("aggregate", String(bucket.aggregate));
-    // Without this the series describes the pool's base token. On a pool that
-    // quotes the other way round that is the counterparty — charting a stock
-    // worth hundreds of dollars as if it were a token worth a fraction of a
-    // cent, which then multiplied out to a market cap in the billions.
+    // Prefer the token address. `base`/`quote` follow Gecko's pool
+    // orientation, which can be the stock on an inverted pair.
     if (token) params.set("token", token);
+    if (beforeMs != null && Number.isFinite(beforeMs) && beforeMs > 0) {
+      params.set("before_timestamp", String(Math.floor(beforeMs / 1000)));
+    }
 
     const fetched = await get<OhlcvResponse>(
       `/networks/${NETWORK}/pools/${pool}/ohlcv/${bucket.path}?${params}`,
@@ -564,41 +609,91 @@ async function candlesAt(
   return stale<ChartPoint[]>(key) ?? [];
 }
 
+async function candlesBackToOrigin(
+  pool: string,
+  timeframe: Timeframe,
+  token: string | null,
+  limit: number,
+  beforeMs?: number,
+  originMs?: number,
+): Promise<ChartPoint[]> {
+  let points = await candlesAt(pool, timeframe, token, limit, beforeMs);
+  if (
+    beforeMs != null ||
+    originMs == null ||
+    !Number.isFinite(originMs) ||
+    points.length < 2
+  ) {
+    return points;
+  }
+
+  let pages = 0;
+  while (
+    pages < MAX_ORIGIN_PAGES &&
+    points.length >= limit &&
+    points[0].t > originMs &&
+    !isGeckoRateLimited()
+  ) {
+    pages += 1;
+    const older = await candlesAt(pool, timeframe, token, limit, points[0].t);
+    if (older.length === 0) break;
+    const merged = mergeChartPoints(older, points);
+    if (merged.length === points.length) break;
+    points = merged;
+  }
+  return points;
+}
+
 /**
  * Candles for a pool, oldest first, in the shape `PriceChart` already takes.
  *
- * Only the close is used — the component draws a line, not a candlestick — but
- * the full OHLC is what the endpoint returns and what a candlestick chart would
- * need if one is ever added.
+ * Close plus real OHLC when Gecko sent them. Zero-volume buckets stay gaps.
  *
- * The requested bucket only. A pool too young for that interval returns
- * empty — the chart says so — instead of a finer series stretched to look
- * full.
+ * The requested bucket when it can already form a line. 1D too young for
+ * daily bars steps down and the page labels what is shown. Intraday pills
+ * stay on that resolution or come back empty.
  */
 export async function candles(
   pool: string,
   timeframe: Timeframe,
   /** The asset whose price this is, so a quote-side pool still reads right. */
   token: string | null = null,
-  limit = 120,
+  limit = CHART_HISTORY_BARS,
+  beforeMs?: number,
+  originMs?: number,
 ): Promise<{
   points: ChartPoint[];
   error: string | null;
   resolvedTimeframe: Timeframe;
 }> {
-  try {
-    const points = await candlesAt(pool, timeframe, token, limit);
-    if (points.length > 1) {
-      return {points, error: null, resolvedTimeframe: timeframe};
+  const ladder = candleLadder(timeframe);
+  let lastError: string | null = null;
+
+  for (const bucket of ladder) {
+    try {
+      const points = await candlesBackToOrigin(
+        pool,
+        bucket,
+        token,
+        limit,
+        beforeMs,
+        originMs,
+      );
+      if (points.length > 1) {
+        return {points, error: null, resolvedTimeframe: bucket};
+      }
+    } catch (error) {
+      lastError =
+        error instanceof Error ? error.message : "Could not load candles.";
     }
-    return {points: [], error: null, resolvedTimeframe: timeframe};
-  } catch (error) {
-    return {
-      points: [],
-      error: error instanceof Error ? error.message : "Could not load candles.",
-      resolvedTimeframe: timeframe,
-    };
+    // A 429 is not "this interval is empty" — do not walk 4h/1h/5m/1m next.
+    if (isGeckoRateLimited()) {
+      lastError ??= GECKO_RATE_LIMIT_ERROR;
+      break;
+    }
   }
+
+  return {points: [], error: lastError, resolvedTimeframe: timeframe};
 }
 
 interface TradesResponse {
@@ -758,6 +853,7 @@ export async function tokenImages(
           `/networks/${NETWORK}/tokens/multi/${batch.join(",")}`,
           {caller: "image", tier: "free"},
         );
+        if (!fetched.data && fetched.error) throw new Error(fetched.error);
         const found: Record<string, string> = {};
         for (const row of fetched.data?.data ?? []) {
           const address = row.attributes?.address?.toLowerCase();
@@ -793,6 +889,7 @@ export async function holderCountFor(address: string): Promise<number> {
         `/networks/${NETWORK}/tokens/${wanted}/info`,
         {caller: "other", tier: "free"},
       );
+      if (!fetched.data && fetched.error) throw new Error(fetched.error);
       const n = fetched.data?.data?.attributes?.holders?.count;
       return typeof n === "number" && n >= 0 ? n : 0;
     });

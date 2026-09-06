@@ -135,12 +135,32 @@ describe("resolved gecko timeframe", () => {
     assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D");
   });
 
-  it("does not substitute a finer series when 1D has no line", () => {
+  it("steps down to a finer bucket when 1D cannot form a line", () => {
     const picked = pickResolvedCandles("1D", {
       "1D": bars(1, 2),
       "1h": bars(25, 1),
     });
+    assert.equal(picked.resolvedTimeframe, "1h");
+    assert.equal(picked.points.length, 25);
+    assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D · 1h");
+  });
+
+  it("stays empty when no ladder step can form a line", () => {
+    const picked = pickResolvedCandles("1D", {
+      "1D": bars(1, 2),
+      "1h": bars(1, 1),
+    });
     assert.equal(picked.resolvedTimeframe, "1D");
+    assert.equal(picked.points.length, 0);
+    assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D");
+  });
+
+  it("does not feed 1m candles to a 5m tab", () => {
+    const picked = pickResolvedCandles("5m", {
+      "5m": bars(1, 2),
+      "1m": bars(12, 1),
+    });
+    assert.equal(picked.resolvedTimeframe, "5m");
     assert.equal(picked.points.length, 0);
   });
 
@@ -154,6 +174,16 @@ describe("resolved gecko timeframe", () => {
       points.map((point) => point.price),
       [1, 3],
     );
+  });
+
+  it("keeps the close and drops a wei low instead of a floor wick", () => {
+    const points = realOhlcvCloses([
+      [1_200, 0.0012, 0.0014, 1.44e-15, 0.0013, 10],
+    ]);
+    assert.equal(points.length, 1);
+    assert.equal(points[0].price, 0.0013);
+    assert.equal(points[0].low, undefined);
+    assert.equal(points[0].open, 0.0012);
   });
 });
 

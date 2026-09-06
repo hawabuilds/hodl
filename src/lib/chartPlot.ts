@@ -10,8 +10,11 @@ export const TIMEFRAME_MS: Record<Timeframe, number> = {
   "1D": 86_400_000,
 };
 
-/** How many buckets the selected pill is meant to show. Matches the Gecko limit. */
+/** How many buckets a default zoomed-in view covers. Gap policy still uses this. */
 export const CHART_WINDOW_BARS = 120;
+
+/** Widest history one chart request asks for. Gecko's OHLCV ceiling is 1000. */
+export const CHART_HISTORY_BARS = 1000;
 
 export function chartWindowMs(timeframe: Timeframe): number {
   return TIMEFRAME_MS[timeframe] * CHART_WINDOW_BARS;
@@ -29,26 +32,57 @@ export function medianStep(points: ChartPoint[]): number | null {
 }
 
 /**
+ * True when the series is the requested bucket — 5m tab = 5m candles.
+ * Session holes (RWA weekends) do not count; the median step does.
+ */
+export function pointsMatchInterval(
+  points: ChartPoint[],
+  intervalMs: number,
+  slack = 0.25,
+): boolean {
+  if (!(intervalMs > 0)) return false;
+  if (points.length <= 1) return true;
+  const step = medianStep(points);
+  if (step == null) return false;
+  return step >= intervalMs * (1 - slack) && step <= intervalMs * (1 + slack);
+}
+
+/**
+ * Extra room after the last real print so the newest candle is not jammed
+ * against the right edge. Does not extend the axis to "now".
+ */
+export const PLOT_RIGHT_PAD = 0.08;
+
+/**
+ * A hole larger than this many buckets is drawn as this many buckets of
+ * x-space. Real empty time is still a gap (or a connected 1m/5m line); we
+ * just do not let a silent day dominate the width the way Gecko/Dex skip
+ * empty candles.
+ */
+export const PLOT_GAP_COMPRESS_BARS = 3;
+
+/** Cap on visual gap width for a `windowMs` axis. */
+export function gapCompressMsForWindow(windowMs?: number): number | undefined {
+  if (windowMs == null || windowMs <= 0) return undefined;
+  return (windowMs / CHART_WINDOW_BARS) * PLOT_GAP_COMPRESS_BARS;
+}
+
+/**
  * X-axis for a price line.
  *
- * When `windowMs` is set the domain ends at `now` and starts `windowMs`
- * earlier. The last real print is not stretched to the right edge, and a
- * young series is a short line inside a longer window.
- *
- * Without a window the domain is the data extent — portfolio equity, which
- * has its own range filter already.
+ * Domain is the real series — first print to last print — plus a small
+ * right-hand pad. A 20-minute tape is a 20-minute axis. `windowMs` is not
+ * used here; it only sizes gap breaks in the caller.
  */
 export function plotRange(
   points: ChartPoint[],
-  windowMs?: number,
+  _windowMs?: number,
   now = Date.now(),
 ): {start: number; end: number} {
-  if (windowMs != null && windowMs > 0) {
-    return {start: now - windowMs, end: now};
-  }
   const first = points[0]?.t ?? now;
   const last = points[points.length - 1]?.t ?? now;
-  return {start: first, end: last > first ? last : first + 1};
+  const span = last > first ? last - first : 1;
+  return {start: first, end: last + span * PLOT_RIGHT_PAD};
 }
 
 /** Points that actually sit inside the axis. Never invents a print at `end`. */
@@ -122,4 +156,49 @@ export function xAt(
 ): number {
   const span = end - start || 1;
   return ((t - start) / span) * width;
+}
+
+/**
+ * Linear x, except holes wider than `maxGapMs` occupy only `maxGapMs` of
+ * visual time. `end` includes the right-hand pad. No maxGap → `xAt`.
+ */
+export function xAtCompressed(
+  t: number,
+  points: ChartPoint[],
+  width: number,
+  maxGapMs?: number,
+): number {
+  const {start, end} = plotRange(points);
+  if (maxGapMs == null || maxGapMs <= 0 || points.length < 2) {
+    return xAt(t, start, end, width);
+  }
+
+  const visual: number[] = [points[0].t];
+  for (let i = 1; i < points.length; i++) {
+    const dt = Math.max(0, points[i].t - points[i - 1].t);
+    visual.push(visual[i - 1] + Math.min(dt, maxGapMs));
+  }
+
+  const firstV = visual[0];
+  const lastV = visual[visual.length - 1];
+  const dataSpan = lastV > firstV ? lastV - firstV : 1;
+  const visualEnd = lastV + dataSpan * PLOT_RIGHT_PAD;
+
+  let v: number;
+  if (t <= points[0].t) {
+    v = firstV;
+  } else if (t >= points[points.length - 1].t) {
+    v = lastV;
+  } else {
+    let i = 1;
+    while (i < points.length && points[i].t < t) i++;
+    const t0 = points[i - 1].t;
+    const t1 = points[i].t;
+    const v0 = visual[i - 1];
+    const v1 = visual[i];
+    const ratio = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+    v = v0 + (v1 - v0) * ratio;
+  }
+
+  return xAt(v, firstV, visualEnd, width);
 }

@@ -82,7 +82,7 @@ describe("RWA historical candles", () => {
     assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D");
   });
 
-  it("does not step down when the requested bucket has no line", () => {
+  it("steps down when the requested bucket has no line", () => {
     const daily = [{t: 0, price: 100}];
     const hourly = Array.from({length: 25}, (_, i) => ({
       t: i * 3_600_000,
@@ -92,8 +92,9 @@ describe("RWA historical candles", () => {
       {points: daily, timeframe: "1D"},
       {points: hourly, timeframe: "1h"},
     ]);
-    assert.equal(picked.resolvedTimeframe, null);
-    assert.equal(picked.points.length, 0);
+    assert.equal(picked.resolvedTimeframe, "1h");
+    assert.equal(picked.points.length, 25);
+    assert.equal(timeframeLabel("1D", picked.resolvedTimeframe), "1D · 1h");
   });
 
   it("maps Robinhood intervals onto app timeframes", () => {

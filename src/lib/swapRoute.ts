@@ -37,3 +37,20 @@ export function sellExitsToEth(
 ): boolean {
   return isEthish(hopTokenOut(hops, quoteToken));
 }
+
+/**
+ * Prefer a single-hop ETH exit when it is within 3% of a multi-hop quote.
+ * Doppler → stock → WETH can print a slightly higher number and then fail
+ * to settle; a live AI/WETH pool should win ties like that.
+ */
+export function pickBestEthExit<T extends {ethOut: bigint; hop2?: unknown}>(
+  ranked: T[],
+): T | null {
+  if (ranked.length === 0) return null;
+  const best = ranked[0];
+  const direct = ranked.find((row) => !row.hop2);
+  if (direct && direct !== best && direct.ethOut * 100n >= best.ethOut * 97n) {
+    return direct;
+  }
+  return best;
+}

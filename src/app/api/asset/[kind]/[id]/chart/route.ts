@@ -12,12 +12,15 @@ export async function GET(
   if (!kind) return notFound("Unknown asset kind.");
 
   const timeframe = parseTimeframe(request.nextUrl.searchParams.get("tf"));
+  const beforeRaw = Number(request.nextUrl.searchParams.get("before"));
+  const beforeMs =
+    Number.isFinite(beforeRaw) && beforeRaw > 0 ? beforeRaw : undefined;
 
   try {
     const asset = await fetchAsset(kind, params.id);
     if (!asset.data) return notFound("No asset with that id.");
 
-    const chart = await fetchChart(asset.data, timeframe, false);
+    const chart = await fetchChart(asset.data, timeframe, false, beforeMs);
     const first = chart.data[0]?.price ?? 0;
     const last = chart.data[chart.data.length - 1]?.price ?? 0;
     const resolvedTimeframe = chart.resolvedTimeframe ?? timeframe;

@@ -9,6 +9,7 @@ import {
   poolsForTokenAllPages,
   poolsForTokenPublic,
 } from "./geckoterminal";
+import {isGeckoRateLimited} from "./geckoFetch";
 
 /**
  * DexScreener, for the community tokens only.
@@ -136,8 +137,10 @@ export async function pairsForToken(address: string): Promise<DexPair[]> {
       return Array.isArray(body) ? body : (body.pairs ?? []);
     });
     if (loaded.length > 0) return loaded;
-    const gecko = await poolsForTokenPublic(address);
-    if (gecko.length > 0) return gecko.map(onchainPoolToDexPair);
+    if (!isGeckoRateLimited()) {
+      const gecko = await poolsForTokenPublic(address);
+      if (gecko.length > 0) return gecko.map(onchainPoolToDexPair);
+    }
   } catch (error) {
     console.error("token pairs failed", error);
   }

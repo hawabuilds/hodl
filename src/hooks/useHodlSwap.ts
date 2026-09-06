@@ -22,6 +22,7 @@ import {
   hintFromQuote,
 } from "@/lib/hodlRouter";
 import {erc20Abi, type PreparedTx} from "@/lib/swapTx";
+import {formatRevertForUser, waitForTradeReceipt} from "@/lib/revertReason";
 import {estimatePreparedGas, readTxFeeFields, rpcTxRequest} from "@/lib/txGas";
 import {useTradeBatching, type TradePhase} from "./useTradeBatching";
 import {useUser} from "./useUser";
@@ -36,6 +37,8 @@ function asHash(value: unknown): `0x${string}` {
 }
 
 export function explainHodlError(error: unknown): string {
+  const formatted = formatRevertForUser(error);
+  if (formatted) return formatted;
   const message = error instanceof Error ? error.message : String(error);
   if (/user rejected|user denied|rejected the request|denied transaction/i.test(message)) {
     return "You declined the signature.";
@@ -61,7 +64,7 @@ export function explainHodlError(error: unknown): string {
   if (/Cap|maxNotional/i.test(message)) {
     return "This size is above the current notional cap.";
   }
-  if (/DeadlineExpired|expired|deadline/i.test(message)) {
+  if (/DeadlineExpired|TransactionDeadlinePassed/i.test(message)) {
     return "The quote expired. Wait for a refresh and try again.";
   }
   if (/InsufficientOut|TooLittleReceived|slippage|STF/i.test(message)) {
@@ -76,7 +79,7 @@ export function explainHodlError(error: unknown): string {
   if (/non-tradeable|not tradeable|eligible/i.test(message)) {
     return "This token is not tradeable.";
   }
-  if (/reverted|execution reverted/i.test(message)) {
+  if (/^The transaction reverted on chain\.?$/i.test(message) || /^execution reverted/i.test(message)) {
     return "The pool rejected this swap. Try a smaller size or more slippage.";
   }
   return message.slice(0, 180) || "The swap could not be sent.";
@@ -166,11 +169,7 @@ export function useHodlSwap() {
 
   const wait = useCallback(
     async (hash: `0x${string}`) => {
-      if (!publicClient) return;
-      const receipt = await publicClient.waitForTransactionReceipt({hash});
-      if (receipt.status === "reverted") {
-        throw new Error("The transaction reverted on chain.");
-      }
+      await waitForTradeReceipt({hash, publicClient});
     },
     [publicClient],
   );

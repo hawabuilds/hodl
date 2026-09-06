@@ -66,6 +66,17 @@ export function SettingsMenu() {
         )}
       >
         <WalletControls onNavigate={() => setOpen(false)} />
+        <p className="mt-1 px-2.5 pb-1.5 text-[10px] font-medium leading-snug text-faint">
+          Charts by{" "}
+          <a
+            href="https://www.tradingview.com/lightweight-charts/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline decoration-hairline underline-offset-2 hover:text-muted"
+          >
+            Lightweight Charts
+          </a>
+        </p>
       </div>
     </div>
   );

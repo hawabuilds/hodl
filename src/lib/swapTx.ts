@@ -246,7 +246,8 @@ export function buildV4Swap(swap: V4SwapBuild): PreparedTx {
     zeroForOne: swap.zeroForOne,
     amountIn: swap.amountIn,
     amountOutMinimum: swap.amountOutMinimum,
-    payerIsUser: swap.alreadyOnRouter ? false : undefined,
+    payerIsUser:
+      swap.alreadyOnRouter || (!swap.nativeIn && !swap.wrapEth) ? false : undefined,
     takeToRouter: swap.takeToRouter,
   });
 
@@ -382,6 +383,9 @@ function encodeHopInput(opts: {
       zeroForOne: Boolean(opts.hop.zeroForOne),
       amountIn: opts.amountIn,
       amountOutMinimum: opts.takeToRouter ? 0n : opts.amountOutMinimum,
+      // Permit2 already pulled the token onto UR. SETTLE_ALL would try the
+      // user again and revert on a 100% sell (AllowanceExpired / no balance).
+      payerIsUser: false,
       takeToRouter: opts.takeToRouter,
     }).inputs[0];
   }

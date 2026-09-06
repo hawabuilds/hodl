@@ -66,6 +66,26 @@ describe("v4 encoding", () => {
     assert.equal(encoded.actions, "0x060b0f");
   });
 
+  it("settles from the router and keeps output there after a Permit2 pull", () => {
+    const encoded = encodeV4SwapExactInSingle({
+      poolKey: KEY,
+      zeroForOne: true,
+      amountIn: 10n ** 16n,
+      amountOutMinimum: 1n,
+      payerIsUser: false,
+      takeToRouter: true,
+    });
+    assert.equal(
+      encoded.actions,
+      packActions([
+        V4_ACTION_SWAP_EXACT_IN_SINGLE,
+        V4_ACTION_SETTLE,
+        V4_ACTION_TAKE,
+      ]),
+    );
+    assert.equal(encoded.actions, "0x060b0e");
+  });
+
   it("keeps the output on the router for a later hop", () => {
     const encoded = encodeV4SwapExactInSingle({
       poolKey: KEY,

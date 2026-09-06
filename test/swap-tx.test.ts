@@ -1,11 +1,13 @@
 import {describe, it} from "node:test";
 import assert from "node:assert/strict";
-import {decodeFunctionData, parseAbi} from "viem";
+import {decodeAbiParameters, decodeFunctionData, parseAbi} from "viem";
 import {
+  packActions,
   UR_COMMAND_V4_SWAP,
   V4_ACTION_SETTLE,
   V4_ACTION_SETTLE_ALL,
   V4_ACTION_SWAP_EXACT_IN_SINGLE,
+  V4_ACTION_TAKE,
   V4_ACTION_TAKE_ALL,
 } from "../src/lib/v4Encoding";
 import {
@@ -41,6 +43,19 @@ const urAbi = parseAbi([
 function executeCommands(data: `0x${string}`): string {
   const decoded = decodeFunctionData({abi: urAbi, data});
   return String(decoded.args[0]);
+}
+
+function v4ActionsFromExecute(data: `0x${string}`): string {
+  const decoded = decodeFunctionData({abi: urAbi, data});
+  const commands = String(decoded.args[0]).slice(2);
+  const bytes: string[] = commands.match(/.{2}/g) ?? [];
+  const index = bytes.indexOf(UR_COMMAND_V4_SWAP.toString(16).padStart(2, "0"));
+  const input = decoded.args[1][index] as `0x${string}`;
+  const [actions] = decodeAbiParameters(
+    [{type: "bytes"}, {type: "bytes[]"}],
+    input,
+  );
+  return actions;
 }
 
 const KEY = {
@@ -148,6 +163,14 @@ describe("swap tx encoding", () => {
     assert.equal(isErc20TransferCalldata(v4Sell.data), false);
     assert.equal(isTransferToSwapRouter(v4Sell), false);
     assert.doesNotThrow(() => assertSwapNotErc20Transfer(v4Sell));
+    assert.equal(
+      v4ActionsFromExecute(v4Sell.data),
+      packActions([
+        V4_ACTION_SWAP_EXACT_IN_SINGLE,
+        V4_ACTION_SETTLE,
+        V4_ACTION_TAKE,
+      ]),
+    );
 
     const v3Sell = prepareExactInSwap({
       venue: "v3",
@@ -249,6 +272,22 @@ describe("swap tx encoding", () => {
     );
     assert.notEqual(tx.data.slice(0, 10), ERC20_TRANSFER_SELECTOR);
     assert.equal(isTransferToSwapRouter(tx), false);
+    assert.equal(
+      v4ActionsFromExecute(tx.data),
+      packActions([
+        V4_ACTION_SWAP_EXACT_IN_SINGLE,
+        V4_ACTION_SETTLE,
+        V4_ACTION_TAKE,
+      ]),
+    );
+    assert.notEqual(
+      v4ActionsFromExecute(tx.data),
+      packActions([
+        V4_ACTION_SWAP_EXACT_IN_SINGLE,
+        V4_ACTION_SETTLE_ALL,
+        V4_ACTION_TAKE,
+      ]),
+    );
 
     const lost = {
       to: spacehood,

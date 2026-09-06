@@ -2,7 +2,9 @@
 
 import {useMemo, useState, useEffect} from "react";
 import {changePctForPoints, mergeTradesIntoChart} from "@/lib/chartLive";
-import {chartWindowMs} from "@/lib/chartPlot";
+import {firstPrintContext} from "@/lib/chartLwc";
+import {TIMEFRAME_MS, chartWindowMs} from "@/lib/chartPlot";
+import {readChartStyle, writeChartStyle} from "@/lib/localStore";
 import {formatLiquidityUsd, formatMarketCapAt, formatPriceUsd} from "@/lib/priceState";
 import {publishPrice} from "@/lib/livePrice";
 import {useLivePrice} from "@/hooks/useLivePrice";
@@ -11,23 +13,30 @@ import {useRouter} from "next/navigation";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {useAsset, useChart, useNews, useTrades} from "@/hooks/useAsset";
 import {cn} from "@/lib/cn";
-import {clock, percent, shortAddress} from "@/lib/format";
+import {clock, compactMoney, percent, shortAddress} from "@/lib/format";
 import {lastHomePath} from "@/lib/homeState";
 import {sectorFor} from "@/lib/sectors";
-import type {AssetKind, ChartPoint, Timeframe} from "@/lib/types";
+import type {AssetKind, ChartPoint, ChartStyle, Timeframe} from "@/lib/types";
 import {RWA_TIMEFRAMES, TIMEFRAMES, timeframeLabel} from "@/lib/types";
 import {AssetSkeleton} from "./AssetPageSkeleton";
 import {LaunchpadMark} from "./LaunchpadMark";
 import {PanelTabs, type PanelTab} from "./PanelTabs";
 import {SocialRow} from "./SocialRow";
 import {PillRail} from "./PillRail";
+import {SegmentedToggle} from "./ui/SegmentedToggle";
 import {TradeBar} from "./TradeBar";
 import {WatchStar} from "./WatchStar";
 import {applyCachedLogo} from "@/lib/tokenLogoCache";
 import {Avatar} from "./ui/Avatar";
 import {PanelError} from "./panels/TradesPanel";
 import {PairMarket, TaxChip, TypeBadge, VerifiedTick} from "./ui/Badges";
-import {ArrowUpRightIcon, ChevronLeftIcon, CopyIcon} from "./ui/Icons";
+import {
+  ArrowUpRightIcon,
+  CandleChartIcon,
+  ChevronLeftIcon,
+  CopyIcon,
+  LineChartIcon,
+} from "./ui/Icons";
 
 const OrderModal = dynamic(
   () => import("./OrderModal").then((m) => ({default: m.OrderModal})),
@@ -76,6 +85,10 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
   const [panel, setPanel] = useState<PanelKey>("trades");
   const [scrubbed, setScrubbed] = useState<ChartPoint | null>(null);
   const [orderSide, setOrderSide] = useState<"buy" | "sell" | null>(null);
+  const [chartStyle, setChartStyle] = useState<ChartStyle>("line");
+  useEffect(() => {
+    setChartStyle(readChartStyle());
+  }, []);
 
   const chart = useChart(kind, id, timeframe);
   const trades = useTrades(kind, id, true);
@@ -89,8 +102,12 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
     () =>
       kind === "rwa"
         ? chart.points
-        : mergeTradesIntoChart(chart.points, trades.trades),
-    [kind, chart.points, trades.trades],
+        : mergeTradesIntoChart(
+            chart.points,
+            trades.trades,
+            TIMEFRAME_MS[chart.resolvedTimeframe],
+          ),
+    [kind, chart.points, chart.resolvedTimeframe, trades.trades],
   );
 
   // The tape is the freshest thing this app has, so it publishes into the
@@ -152,6 +169,12 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
   // feed row for this asset and the panel further down this page cannot end up
   // showing a different number from the header.
   const shownMarketCap = formatMarketCapAt(asset, shownPrice);
+  const launchContext = firstPrintContext({
+    first: livePoints[0],
+    listedAt: asset.kind === "token" ? asset.listedAt : null,
+    supply: asset.circulatingSupply,
+    bucketMs: TIMEFRAME_MS[chart.resolvedTimeframe],
+  });
 
   return (
     <div className="pb-[calc(84px+env(safe-area-inset-bottom))]">
@@ -289,6 +312,12 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
               </span>
             </div>
           ) : null}
+          {launchContext?.mcap != null ? (
+            <div className="tnum mt-1 text-[10px] font-bold uppercase tracking-[0.06em] text-faint">
+              {launchContext.label}{" "}
+              <span className="text-muted">{compactMoney(launchContext.mcap)}</span>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -302,20 +331,40 @@ export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
           positive={positive}
           windowMs={chartWindowMs(timeframe)}
           emptyLabel={`Not enough history for ${timeframe}`}
+          style={chartStyle}
+          floorPrice={launchContext?.price ?? livePoints[0]?.price}
+          onNeedOlder={chart.hasMore ? chart.loadOlder : undefined}
           onScrub={setScrubbed}
           className="mt-3"
         />
       )}
 
-      <PillRail
-        label="Chart timeframe"
-        options={tfOptions}
-        value={timeframe}
-        resolvedValue={chart.resolvedTimeframe}
-        onChange={setTimeframe}
-        positive={positive}
-        className="mb-5 mt-2"
-      />
+      <div className="mb-5 mt-2 flex items-center gap-2">
+        <PillRail
+          label="Chart timeframe"
+          options={tfOptions}
+          value={timeframe}
+          resolvedValue={chart.resolvedTimeframe}
+          onChange={setTimeframe}
+          positive={positive}
+          className="mb-0 mt-0 min-w-0 flex-1"
+        />
+        <SegmentedToggle
+          value={chartStyle}
+          onChange={(next) => {
+            setChartStyle(next);
+            writeChartStyle(next);
+          }}
+          options={[
+            {value: "line", label: "Line", icon: <LineChartIcon className="h-3.5 w-3.5" />},
+            {
+              value: "candles",
+              label: "Candles",
+              icon: <CandleChartIcon className="h-3.5 w-3.5" />,
+            },
+          ]}
+        />
+      </div>
 
       <PanelTabs tabs={tabs} value={panel} onChange={setPanel} />
 

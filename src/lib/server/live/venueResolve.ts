@@ -1,7 +1,7 @@
 import type {PublicClient} from "viem";
 import {amountOutFromQuoter, feeOnAmount, inputAfterBuyFee, pickBestVenue, type VenueCandidate, type VenueDecision} from "@/lib/venueQuote";
 import {QUOTE_USDG, QUOTE_WETH} from "@/lib/contracts";
-import {CANT_EXIT_TO_ETH, isEthish, type SwapHop} from "@/lib/swapRoute";
+import {CANT_EXIT_TO_ETH, isEthish, pickBestEthExit, type SwapHop} from "@/lib/swapRoute";
 import {rpc} from "./chain";
 import {quotePairToEth, quoteV3ExactIn} from "./ethExit";
 import {discoverV3Pools, pickBestPool, readV3Pool, V3_QUOTES} from "./v3Pools";
@@ -221,7 +221,8 @@ export async function resolveSellToEth(req: QuoteRequest): Promise<SellToEthResu
     return {ok: false, reason: "no_eth_exit", error: CANT_EXIT_TO_ETH};
   }
   ranked.sort((a, b) => (a.ethOut === b.ethOut ? 0 : a.ethOut > b.ethOut ? -1 : 1));
-  const win = ranked[0];
+  const win = pickBestEthExit(ranked);
+  if (!win) return {ok: false, reason: "no_eth_exit", error: CANT_EXIT_TO_ETH};
   const decided = pickBestVenue([win.first], undefined, true, req.amountIn);
   if (!decided) return {ok: false, reason: "no_pool"};
   const feeAmount = feeOnAmount(win.ethOut);

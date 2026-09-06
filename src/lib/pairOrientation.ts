@@ -91,5 +91,11 @@ export function reorientPoints(
     liveUsd,
     factor,
   });
-  return points.map((point) => ({...point, price: point.price * factor}));
+  return points.map((point) => {
+    const next: ChartPoint = {...point, price: point.price * factor};
+    if (point.open != null) next.open = point.open * factor;
+    if (point.high != null) next.high = point.high * factor;
+    if (point.low != null) next.low = point.low * factor;
+    return next;
+  });
 }

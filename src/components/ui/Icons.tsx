@@ -461,6 +461,24 @@ export function SortIcon(props: IconProps) {
   );
 }
 
+export function LineChartIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 16l4.5-5 3.5 3 5-7 3 4" {...stroke} strokeWidth={2} />
+    </Icon>
+  );
+}
+
+export function CandleChartIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 5v3M8 16v3M16 4v4M16 15v5" {...stroke} strokeWidth={1.8} />
+      <rect x="6" y="8" width="4" height="8" rx="0.6" stroke="currentColor" strokeWidth={1.8} />
+      <rect x="14" y="8" width="4" height="7" rx="0.6" stroke="currentColor" strokeWidth={1.8} />
+    </Icon>
+  );
+}
+
 export function AppleIcon(props: IconProps) {
   return (
     <Icon {...props}>

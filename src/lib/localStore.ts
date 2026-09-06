@@ -1,4 +1,4 @@
-import type {AssetComment, AssetKind, SocialLinks} from "./types";
+import type {AssetComment, AssetKind, ChartStyle, SocialLinks} from "./types";
 
 /**
  * Everything the signed-in person changes, kept in their browser.
@@ -278,4 +278,18 @@ export function writeKnownHoldings(wallet: string, addresses: string[]): void {
   const all = read<Record<string, string[]>>("held-tokens", {});
   all[wallet.toLowerCase()] = addresses;
   write("held-tokens", all);
+}
+
+// ---------------------------------------------------------------------------
+// Chart style (line vs candles)
+// ---------------------------------------------------------------------------
+
+export function readChartStyle(): ChartStyle {
+  const stored = read<ChartStyle | null>("chart-style", null);
+  return stored === "candles" ? "candles" : "line";
+}
+
+export function writeChartStyle(style: ChartStyle): void {
+  write("chart-style", style === "candles" ? "candles" : "line");
+  announce();
 }

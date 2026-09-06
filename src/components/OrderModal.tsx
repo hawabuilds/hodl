@@ -42,6 +42,7 @@ import {
   tradeTokenAddress,
 } from "@/lib/tradeTicket";
 import {humanToRaw} from "@/lib/quoteAmounts";
+import {tradeHashFromError} from "@/lib/revertReason";
 import {cn} from "@/lib/cn";
 import {formatPriceUsd, isPriced} from "@/lib/priceState";
 import {money, units} from "@/lib/format";
@@ -511,6 +512,8 @@ export function OrderModal({
       setAmount("");
       await allowanceQ.refetch();
     } catch (cause) {
+      const failedHash = tradeHashFromError(cause);
+      if (failedHash) setTxHash(failedHash);
       setError(live ? hodl.explain(cause) : swap.explain(cause));
     }
   }
@@ -781,6 +784,19 @@ export function OrderModal({
           {error || (blocked && ticket.authenticated && !quotePending) ? (
             <p role="alert" className="mt-3 text-[12.5px] font-semibold text-red">
               {error ?? blocked}
+              {error && txHash && !filled ? (
+                <>
+                  {" · "}
+                  <a
+                    href={txUrlForChain(txHash, RH_MAINNET_ID)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                  >
+                    View failed tx
+                  </a>
+                </>
+              ) : null}
             </p>
           ) : null}
           {filled ? (

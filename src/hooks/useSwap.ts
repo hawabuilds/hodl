@@ -24,6 +24,7 @@ import {
   type PreparedTx,
 } from "@/lib/swapTx";
 import {walletKindFrom, type WalletKind} from "@/lib/approvalFlow";
+import {formatRevertForUser, waitForTradeReceipt} from "@/lib/revertReason";
 import {estimatePreparedGas, readTxFeeFields, rpcTxRequest} from "@/lib/txGas";
 import {useUser} from "./useUser";
 import {useWallet} from "./useWallet";
@@ -36,7 +37,9 @@ function asHash(value: unknown): `0x${string}` {
   return text as `0x${string}`;
 }
 
-function explainSwapError(error: unknown): string {
+export function explainSwapError(error: unknown): string {
+  const formatted = formatRevertForUser(error);
+  if (formatted) return formatted;
   const message = error instanceof Error ? error.message : String(error);
   if (/user rejected|user denied|rejected the request|denied transaction/i.test(message)) {
     return "Wallet declined the signature.";
@@ -50,7 +53,10 @@ function explainSwapError(error: unknown): string {
   if (/allowance|transfer amount exceeds|Permit2/i.test(message)) {
     return "Token approval failed. Approve the token, then confirm the swap. Tokens stay in your wallet until the swap.";
   }
-  if (/reverted|execution reverted|slippage/i.test(message)) {
+  if (/TooLittleReceived|InsufficientOut|slippage/i.test(message)) {
+    return "Price moved past your slippage. Try a smaller size or more slippage.";
+  }
+  if (/^The transaction reverted on chain\.?$/i.test(message) || /^execution reverted/i.test(message)) {
     return "The pool rejected this swap. Try a smaller size or more slippage.";
   }
   return message.slice(0, 180) || "The swap could not be sent.";
@@ -145,11 +151,7 @@ export function useSwap() {
 
   const wait = useCallback(
     async (hash: `0x${string}`) => {
-      if (!publicClient) return;
-      const receipt = await publicClient.waitForTransactionReceipt({hash});
-      if (receipt.status === "reverted") {
-        throw new Error("The transaction reverted on chain.");
-      }
+      await waitForTradeReceipt({hash, publicClient});
     },
     [publicClient],
   );
@@ -179,8 +181,9 @@ export function useSwap() {
 
   const ensurePermit2 = useCallback(
     async (token: `0x${string}`, amount: bigint) => {
+      if (!address) throw new Error("Sign in to trade from your wallet.");
+      if (!publicClient) throw new Error("Wallet is not ready. Wait a moment and try again.");
       await ensureErc20Allowance(token, PERMIT2, amount);
-      if (!publicClient || !address) return;
       const [allowed, expiration] = await publicClient.readContract({
         address: PERMIT2,
         abi: permit2Abi,
@@ -191,6 +194,16 @@ export function useSwap() {
       if (allowed >= amount && fresh) return;
       const hash = await sendTx(encodePermit2Approve(token, UNIVERSAL_ROUTER));
       await wait(hash);
+      const [after, afterExp] = await publicClient.readContract({
+        address: PERMIT2,
+        abi: permit2Abi,
+        functionName: "allowance",
+        args: [address, token, UNIVERSAL_ROUTER],
+      });
+      const landed = BigInt(afterExp) > BigInt(Math.floor(Date.now() / 1000) + 60);
+      if (after < amount || !landed) {
+        throw new Error("Permit2 is not approved for this token. Approve, then sell.");
+      }
     },
     [address, ensureErc20Allowance, publicClient, sendTx, wait],
   );
@@ -240,7 +253,14 @@ export function useSwap() {
         }
 
         const hash = await sendTx(swapTx);
-        await wait(hash);
+        try {
+          await wait(hash);
+        } catch (error) {
+          throw Object.assign(
+            error instanceof Error ? error : new Error(String(error)),
+            {txHash: hash},
+          );
+        }
         return hash;
       } finally {
         setSubmitting(false);
