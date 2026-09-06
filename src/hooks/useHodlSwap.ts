@@ -5,6 +5,7 @@ import {useQueryClient} from "@tanstack/react-query";
 import {usePublicClient, useSendTransaction} from "wagmi";
 import {RH_MAINNET_ID} from "@/config/chain";
 import {
+  assertSpendCovered,
   coversNative,
   encodeHodlApprove,
   nativeWeiForPath,
@@ -187,6 +188,21 @@ export function useHodlSwap() {
     [address, publicClient],
   );
 
+  const readBalance = useCallback(
+    async (token: `0x${string}`): Promise<bigint> => {
+      if (!publicClient || !address) {
+        throw new Error("Wallet is not ready. Wait a moment and try again.");
+      }
+      return publicClient.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [address],
+      });
+    },
+    [address, publicClient],
+  );
+
   const invalidateCaches = useCallback(() => {
     void queryClient.invalidateQueries({queryKey: ["portfolio-tokens"]});
     void queryClient.invalidateQueries({queryKey: ["portfolio-native"]});
@@ -225,6 +241,8 @@ export function useHodlSwap() {
       }
       const gen = runId.current;
       try {
+        const held = await readBalance(token);
+        assertSpendCovered({heldRaw: held, amount});
         const current = await readAllowance(token, router);
         if (current >= amount) {
           setLastGrant({token: token.toLowerCase(), amount: current});
@@ -249,7 +267,7 @@ export function useHodlSwap() {
         throw error;
       }
     },
-    [address, ensureNativeForPath, readAllowance, router, sendTx, wait],
+    [address, ensureNativeForPath, readAllowance, readBalance, router, sendTx, wait],
   );
 
   const submit = useCallback(
@@ -304,6 +322,11 @@ export function useHodlSwap() {
               ? "0x0000000000000000000000000000000000000000"
               : opts.quote.quoteToken;
 
+        if (opts.side === "sell") {
+          const held = await readBalance(tokenIn);
+          assertSpendCovered({heldRaw: held, amount: amountIn});
+        }
+
         const allowed = await readAllowance(tokenIn, router);
         if (allowed < amountIn) {
           throw new Error("Approve this token first.");
@@ -345,7 +368,7 @@ export function useHodlSwap() {
         invalidateCaches();
       }
     },
-    [address, ensureNativeForPath, invalidateCaches, readAllowance, router, sendTx, wait],
+    [address, ensureNativeForPath, invalidateCaches, readAllowance, readBalance, router, sendTx, wait],
   );
 
   return {

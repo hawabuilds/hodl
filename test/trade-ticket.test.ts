@@ -89,6 +89,43 @@ describe("sell 100% uses the real balance mark", () => {
     assert.notEqual(sellMaxEntered({heldUsd: 50, currencyEth: false, ethUsd: 2500}), 5000);
   });
 
+  it("does not invent a sell size when the wallet holds 0", () => {
+    assert.equal(
+      sellAmountInRaw({
+        amountUsd: 25,
+        heldUsd: 0,
+        heldRaw: 0n,
+        priceUsd: 0.01,
+        decimals: 18,
+      }),
+      undefined,
+    );
+    assert.equal(
+      sellAmountInRaw({
+        amountUsd: 180,
+        heldUsd: 0,
+        heldRaw: 0n,
+        priceUsd: 180,
+        decimals: 6,
+      }),
+      undefined,
+    );
+  });
+
+  it("never requests more raw tokens than the on-chain balance", () => {
+    const heldRaw = 10n ** 18n;
+    assert.equal(
+      sellAmountInRaw({
+        amountUsd: 100,
+        heldUsd: 50,
+        heldRaw,
+        priceUsd: 0.01,
+        decimals: 18,
+      }),
+      heldRaw,
+    );
+  });
+
   it("sends the on-chain balance at 100%", () => {
     const heldRaw = 10n ** 18n;
     assert.equal(

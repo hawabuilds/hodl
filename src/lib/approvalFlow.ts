@@ -75,6 +75,71 @@ export function allowanceSufficient(current: bigint, needed: bigint): boolean {
   return needed <= 0n || current >= needed;
 }
 
+/**
+ * Sell (and any ERC-20 spend approve) may start only when the wallet holds
+ * the exact token being spent. Buy must not use this against the *output*
+ * token — buyers spend ETH/USDG, not the asset they are buying.
+ */
+export function canStartSellApprove(opts: {
+  heldRaw: bigint | null | undefined;
+  amountIn: bigint;
+}): boolean {
+  if (opts.heldRaw == null || opts.heldRaw <= 0n) return false;
+  return opts.amountIn > 0n && opts.amountIn <= opts.heldRaw;
+}
+
+export function spendBalanceBlockReason(opts: {
+  heldRaw: bigint;
+  amount: bigint;
+  symbol?: string;
+}): string | null {
+  if (opts.amount <= 0n) return null;
+  if (opts.heldRaw <= 0n) {
+    const symbol = opts.symbol?.trim();
+    return symbol ? `You have 0 ${symbol}` : "You have 0 of this token";
+  }
+  if (opts.heldRaw < opts.amount) return "Amount exceeds your balance";
+  return null;
+}
+
+export function sellBalanceBlockReason(opts: {
+  side: TradeSide;
+  symbol: string;
+  heldRaw: bigint | null | undefined;
+  amountIn?: bigint;
+  amountUsd?: number;
+  heldUsd?: number;
+}): string | null {
+  if (opts.side !== "sell") return null;
+  if (opts.heldRaw == null) return null;
+  if (opts.heldRaw <= 0n) {
+    const symbol = opts.symbol.trim();
+    return symbol ? `You have 0 ${symbol}` : "You have 0 of this token";
+  }
+  if (opts.amountIn != null && opts.amountIn > opts.heldRaw) {
+    return "Amount exceeds your balance";
+  }
+  if (
+    opts.heldUsd != null
+    && opts.amountUsd != null
+    && Number.isFinite(opts.heldUsd)
+    && Number.isFinite(opts.amountUsd)
+    && opts.amountUsd > opts.heldUsd * 1.001
+  ) {
+    return "Amount exceeds your balance";
+  }
+  return null;
+}
+
+export function assertSpendCovered(opts: {
+  heldRaw: bigint;
+  amount: bigint;
+  symbol?: string;
+}): void {
+  const reason = spendBalanceBlockReason(opts);
+  if (reason) throw new Error(reason);
+}
+
 export function requiresAllowanceReset(token: string): boolean {
   return USDT_STYLE_RESET.has(token.toLowerCase());
 }

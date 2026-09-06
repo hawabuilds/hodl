@@ -142,7 +142,8 @@ export function sellAmountInRaw(opts: {
   priceUsd: number | null;
   decimals: number;
 }): bigint | undefined {
-  if (opts.heldRaw > 0n && opts.heldUsd > 0 && Number.isFinite(opts.amountUsd) && opts.amountUsd > 0) {
+  if (opts.heldRaw <= 0n) return undefined;
+  if (opts.heldUsd > 0 && Number.isFinite(opts.amountUsd) && opts.amountUsd > 0) {
     if (opts.amountUsd >= opts.heldUsd * 0.999) return opts.heldRaw;
     const bps = BigInt(Math.max(1, Math.round((opts.amountUsd / opts.heldUsd) * 10_000)));
     const raw = (opts.heldRaw * bps) / 10_000n;
@@ -151,8 +152,7 @@ export function sellAmountInRaw(opts: {
   }
   if (opts.priceUsd != null && opts.priceUsd > 0 && Number.isFinite(opts.amountUsd) && opts.amountUsd > 0) {
     const raw = humanToRaw(opts.amountUsd / opts.priceUsd, opts.decimals);
-    if (opts.heldRaw > 0n && raw > opts.heldRaw) return opts.heldRaw;
-    return raw > 0n ? raw : undefined;
+    return raw > opts.heldRaw ? opts.heldRaw : raw > 0n ? raw : undefined;
   }
   return undefined;
 }

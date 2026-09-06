@@ -12,6 +12,7 @@ import {
   idleSignHint,
   nextTicketAction,
   pendingSignatureCopy,
+  sellBalanceBlockReason,
   ticketButtonLabel,
 } from "@/lib/approvalFlow";
 import {QUOTE_USDG} from "@/lib/contracts";
@@ -237,6 +238,10 @@ export function OrderModal({
         spendUsd,
       })
     : sellMaxEntered({heldUsd, currencyEth: eth, ethUsd});
+  const heldRaw = tokenBal.data ?? null;
+  const sellBalancePending = Boolean(
+    !buying && wallet && token && tokenBal.isLoading && heldRaw == null,
+  );
 
   const fee = useMemo(() => feeFor(amountUsd), [amountUsd]);
   const undersized = valid ? tooSmall(amountUsd) : null;
@@ -280,13 +285,30 @@ export function OrderModal({
     return undefined;
   }, [valid, buying, eth, entered, asset, amountUsd, tokenDecimals, quote, sellAll, tokenBal.data, heldUsd]);
 
+  const sellBlocked = sellBalanceBlockReason({
+    side: activeSide,
+    symbol,
+    heldRaw,
+    amountIn: !buying ? quoteAmountIn : undefined,
+    amountUsd: !buying && valid ? amountUsd : undefined,
+    heldUsd,
+  });
+
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
   }, []);
 
   useEffect(() => {
-    if (!token || !valid) {
+    if (!token || !valid || sellBlocked || sellBalancePending) {
+      setQuote(null);
+      setQuoteMiss(false);
+      setQuoteError(null);
+      setQuotePending(false);
+      setQuoteAt(0);
+      return;
+    }
+    if (!buying && (quoteAmountIn == null || quoteAmountIn <= 0n)) {
       setQuote(null);
       setQuoteMiss(false);
       setQuoteError(null);
@@ -346,7 +368,7 @@ export function OrderModal({
       window.clearTimeout(start);
       window.clearInterval(refresh);
     };
-  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address]);
+  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, buying]);
 
   const blocked = ticketBlockReason({
     kind: asset?.kind ?? "token",
@@ -442,6 +464,24 @@ export function OrderModal({
       setError(blocked);
       return;
     }
+    if (!buying) {
+      if (sellBalancePending || heldRaw == null) {
+        setError("Checking your balance…");
+        return;
+      }
+      const reason = sellBalanceBlockReason({
+        side: "sell",
+        symbol,
+        heldRaw,
+        amountIn: quote ? BigInt(quote.amountIn) : quoteAmountIn,
+        amountUsd,
+        heldUsd,
+      });
+      if (reason) {
+        setError(reason);
+        return;
+      }
+    }
     if (!token || !quote) {
       setError(
         quoteMiss
@@ -485,6 +525,20 @@ export function OrderModal({
       let q = quote;
       if (quoteExpired) {
         q = await pullFreshQuote();
+      }
+      if (!buying && heldRaw != null) {
+        const reason = sellBalanceBlockReason({
+          side: "sell",
+          symbol,
+          heldRaw,
+          amountIn: BigInt(q.amountIn),
+          amountUsd,
+          heldUsd,
+        });
+        if (reason) {
+          setError(reason);
+          return;
+        }
       }
       const payNative = buying && buyPaysNative(q);
       const spend = approvalSpendToken({
@@ -532,6 +586,7 @@ export function OrderModal({
     undersized !== null ||
     (!live && quoteExpired) ||
     (live && allowancePending) ||
+    (ticket.authenticated && (sellBlocked != null || sellBalancePending)) ||
     (ticket.authenticated && !ticket.demo && valid && (quotePending || (!quote && !quoteMiss)));
 
   const confirmLabel = (() => {
@@ -545,6 +600,8 @@ export function OrderModal({
     if (live && hodl.phase === "confirmed") return "Confirmed";
     if (ticket.submitting) return pendingSignatureCopy(walletKind, "swap");
     if (!ticket.authenticated) return "Sign in to trade";
+    if (sellBalancePending) return "Checking balance…";
+    if (sellBlocked) return `${buying ? "Buy" : "Sell"} ${symbol}`;
     if (quotePending) return "Finding route…";
     if (quoteMiss && quoteError && /can't exit to eth/i.test(quoteError)) {
       return "Can't exit to ETH";
@@ -670,11 +727,19 @@ export function OrderModal({
                   const next = event.target.value.replace(/[^0-9.]/g, "");
                   const parts = next.split(".");
                   const places = eth ? 6 : 2;
-                  setAmount(
+                  let nextAmount =
                     parts.length > 1
                       ? `${parts[0]}.${parts.slice(1).join("").slice(0, places)}`
-                      : parts[0],
-                  );
+                      : parts[0];
+                  if (!buying && maxEntered > 0) {
+                    const typed = Number.parseFloat(nextAmount);
+                    if (Number.isFinite(typed) && typed > maxEntered) {
+                      nextAmount = eth
+                        ? maxEntered.toFixed(6)
+                        : maxEntered.toFixed(2);
+                    }
+                  }
+                  setAmount(nextAmount);
                   setSellAll(false);
                   setError(null);
                   setFilled(null);
@@ -782,9 +847,9 @@ export function OrderModal({
             </p>
           ) : null}
 
-          {error || (blocked && ticket.authenticated && !quotePending) ? (
+          {error || sellBlocked || (blocked && ticket.authenticated && !quotePending) ? (
             <p role="alert" className="mt-3 text-[12.5px] font-semibold text-red">
-              {error ?? blocked}
+              {error ?? sellBlocked ?? blocked}
               {error && txHash && !filled ? (
                 <>
                   {" · "}

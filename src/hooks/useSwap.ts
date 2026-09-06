@@ -23,7 +23,7 @@ import {
   prepareExactInSwap,
   type PreparedTx,
 } from "@/lib/swapTx";
-import {walletKindFrom, type WalletKind} from "@/lib/approvalFlow";
+import {assertSpendCovered, walletKindFrom, type WalletKind} from "@/lib/approvalFlow";
 import {formatRevertForUser, waitForTradeReceipt} from "@/lib/revertReason";
 import {estimatePreparedGas, readTxFeeFields, rpcTxRequest} from "@/lib/txGas";
 import {useUser} from "./useUser";
@@ -169,6 +169,21 @@ export function useSwap() {
     [address, publicClient],
   );
 
+  const readBalance = useCallback(
+    async (token: `0x${string}`): Promise<bigint> => {
+      if (!publicClient || !address) {
+        throw new Error("Wallet is not ready. Wait a moment and try again.");
+      }
+      return publicClient.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [address],
+      });
+    },
+    [address, publicClient],
+  );
+
   const ensureErc20Allowance = useCallback(
     async (token: `0x${string}`, spender: `0x${string}`, amount: bigint) => {
       const current = await readAllowance(token, spender);
@@ -245,6 +260,10 @@ export function useSwap() {
         });
 
         if (!nativePay) {
+          if (opts.side === "sell") {
+            const held = await readBalance(tokenIn);
+            assertSpendCovered({heldRaw: held, amount: amountIn});
+          }
           if (opts.side === "sell" || opts.quote.venue === "v4") {
             await ensurePermit2(tokenIn, amountIn);
           } else {
@@ -268,7 +287,7 @@ export function useSwap() {
         void queryClient.invalidateQueries({queryKey: ["portfolio-native"]});
       }
     },
-    [address, ensureErc20Allowance, ensurePermit2, queryClient, sendTx, wait],
+    [address, ensureErc20Allowance, ensurePermit2, queryClient, readBalance, sendTx, wait],
   );
 
   return {

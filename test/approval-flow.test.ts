@@ -12,6 +12,8 @@ import {
   approvalSpendToken,
   approvalSymbol,
   approveButtonLabel,
+  assertSpendCovered,
+  canStartSellApprove,
   coversNative,
   decodedApprove,
   encodeHodlApprove,
@@ -21,7 +23,9 @@ import {
   nextTicketAction,
   pendingSignatureCopy,
   requiresAllowanceReset,
+  sellBalanceBlockReason,
   shouldRequoteAfterApproval,
+  spendBalanceBlockReason,
   ticketButtonLabel,
   tradeButtonLabel,
   walletKindFrom,
@@ -102,6 +106,87 @@ describe("approval spend paths", () => {
     assert.equal(approvalSymbol({side: "sell", tokenSymbol: "PEPE", quoteToken: QUOTE_USDG}), "PEPE");
     assert.equal(approveButtonLabel("PEPE"), "Approve PEPE");
     assert.equal(tradeButtonLabel("sell", "PEPE"), "Sell PEPE");
+  });
+});
+
+describe("sell balance must cover approve", () => {
+  it("cannot start sell approve at 0 balance", () => {
+    assert.equal(canStartSellApprove({heldRaw: 0n, amountIn: 1n}), false);
+    assert.equal(canStartSellApprove({heldRaw: 0n, amountIn: 0n}), false);
+    assert.equal(
+      sellBalanceBlockReason({side: "sell", symbol: "AI", heldRaw: 0n, amountIn: 1n}),
+      "You have 0 AI",
+    );
+    assert.equal(
+      spendBalanceBlockReason({heldRaw: 0n, amount: AMOUNT, symbol: "AI"}),
+      "You have 0 AI",
+    );
+    assert.throws(
+      () => assertSpendCovered({heldRaw: 0n, amount: AMOUNT, symbol: "AI"}),
+      /You have 0 AI/,
+    );
+  });
+
+  it("blocks a sell size above the on-chain balance", () => {
+    assert.equal(canStartSellApprove({heldRaw: AMOUNT, amountIn: AMOUNT + 1n}), false);
+    assert.equal(
+      sellBalanceBlockReason({
+        side: "sell",
+        symbol: "AI",
+        heldRaw: AMOUNT,
+        amountIn: AMOUNT + 1n,
+      }),
+      "Amount exceeds your balance",
+    );
+    assert.equal(
+      sellBalanceBlockReason({
+        side: "sell",
+        symbol: "AI",
+        heldRaw: AMOUNT,
+        amountUsd: 26,
+        heldUsd: 25,
+      }),
+      "Amount exceeds your balance",
+    );
+    assert.throws(
+      () => assertSpendCovered({heldRaw: AMOUNT, amount: AMOUNT + 1n}),
+      /Amount exceeds your balance/,
+    );
+  });
+
+  it("applies the same sell rule to an RWA ticker", () => {
+    assert.equal(canStartSellApprove({heldRaw: 0n, amountIn: 1n}), false);
+    assert.equal(
+      sellBalanceBlockReason({side: "sell", symbol: "IBM", heldRaw: 0n, amountIn: 1n}),
+      "You have 0 IBM",
+    );
+    assert.equal(
+      sellBalanceBlockReason({
+        side: "sell",
+        symbol: "IBM",
+        heldRaw: 50n,
+        amountIn: 51n,
+      }),
+      "Amount exceeds your balance",
+    );
+    assert.equal(canStartSellApprove({heldRaw: 50n, amountIn: 50n}), true);
+  });
+
+  it("does not block a buy when the wallet holds 0 of the output token", () => {
+    assert.equal(
+      sellBalanceBlockReason({side: "buy", symbol: "AI", heldRaw: 0n, amountIn: AMOUNT}),
+      null,
+    );
+    assert.equal(
+      approvalSpendToken({
+        side: "buy",
+        payNative: true,
+        quoteToken: QUOTE_ETH,
+        token: TOKEN,
+      }),
+      null,
+    );
+    assert.equal(canStartSellApprove({heldRaw: AMOUNT, amountIn: AMOUNT}), true);
   });
 });
 
