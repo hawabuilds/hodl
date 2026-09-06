@@ -4,25 +4,21 @@ import {describe, it} from "node:test";
 import {MIN_LIQUIDITY_USD} from "../src/config/liquidity.ts";
 import {
   applyAgeBounds,
-  applyListedSinceFilter,
   applyLiveVolumeFilter,
   applyLiquidityBoundFilter,
   applyMeasuredMcapFilter,
   applyNumericBounds,
-  mergeNewestListed,
   formatLiquidityUsd,
   formatMarketCapAt,
   formatMarketCapUsd,
   formatPriceUsd,
   formatVolumeUsd,
   hasVolume24h,
-  inNewVolumeGrace,
   isMeasuredMcap,
   isPriced,
   isTradeableFromLiquidity,
   isUserBound,
   meetsBound,
-  NEW_VOLUME_GRACE_MS,
   rowPassesFeedBounds,
   rowPassesMarketBounds,
   showsOnNew,
@@ -325,10 +321,6 @@ describe("explicit numeric bounds", () => {
 });
 
 describe("live 24h volume browse gate", () => {
-  const now = Date.parse("2026-01-02T06:00:00.000Z");
-  const freshListed = "2026-01-02T05:00:00.000Z";
-  const staleListed = "2026-01-01T00:00:00.000Z";
-
   it("hides zero and null volume, shows a positive print", () => {
     assert.equal(hasVolume24h(0), false);
     assert.equal(hasVolume24h(null), false);
@@ -338,32 +330,16 @@ describe("live 24h volume browse gate", () => {
     assert.equal(showsWithVolume24h(0), false);
     assert.equal(showsWithVolume24h(null), false);
     assert.equal(showsWithVolume24h(12), true);
+    assert.equal(formatVolumeUsd(0), "—");
+    assert.equal(formatVolumeUsd(null), "—");
+    assert.equal(formatVolumeUsd(12), "$12.00");
   });
 
-  it("lets a just-listed token onto New before it has volume", () => {
-    assert.equal(inNewVolumeGrace(freshListed, now), true);
-    assert.equal(inNewVolumeGrace(staleListed, now), false);
-    assert.equal(inNewVolumeGrace(null, now), false);
-    assert.equal(
-      showsWithVolume24h(0, {listedAt: freshListed, now, allowNewGrace: true}),
-      true,
-    );
-    assert.equal(
-      showsWithVolume24h(null, {listedAt: freshListed, now, allowNewGrace: true}),
-      true,
-    );
-    assert.equal(
-      showsWithVolume24h(0, {listedAt: staleListed, now, allowNewGrace: true}),
-      false,
-    );
-    assert.equal(
-      showsWithVolume24h(0, {listedAt: freshListed, now, allowNewGrace: false}),
-      false,
-    );
-    assert.equal(
-      now - Date.parse(staleListed) > NEW_VOLUME_GRACE_MS,
-      true,
-    );
+  it("hides New rows with -- volume even if they just listed", () => {
+    assert.equal(showsWithVolume24h(0), false);
+    assert.equal(showsWithVolume24h(null), false);
+    assert.equal(showsWithVolume24h(undefined), false);
+    assert.equal(hasVolume24h(0), false);
   });
 
   it("builds vol_24h > 0 and never a cross-table or() on New", () => {
@@ -374,33 +350,7 @@ describe("live 24h volume browse gate", () => {
     const prefixed = recordingQuery();
     applyLiveVolumeFilter(prefixed, {columnPrefix: "token_stats"});
     assert.deepEqual(prefixed.calls, ["gt:token_stats.vol_24h:0"]);
-
-    const since = new Date(now - NEW_VOLUME_GRACE_MS).toISOString();
-    const grace = recordingQuery();
-    applyListedSinceFilter(grace, since);
-    assert.deepEqual(grace.calls, [`gte:listed_at:${since}`]);
-
-    const neu = recordingQuery();
-    applyLiveVolumeFilter(neu, {columnPrefix: "token_stats"});
-    applyListedSinceFilter(neu, since);
-    assert.deepEqual(neu.calls, [
-      "gt:token_stats.vol_24h:0",
-      `gte:listed_at:${since}`,
-    ]);
-    assert.ok(!neu.calls.some((call) => call.startsWith("or:")));
-    assert.ok(!neu.calls.some((call) => /eligible|is_tradeable/i.test(call)));
-  });
-
-  it("merges volume and grace pages by newest listed_at", () => {
-    const merged = mergeNewestListed([
-      {address: "0xBBB", listed_at: "2026-01-02T01:00:00.000Z"},
-      {address: "0xaaa", listed_at: "2026-01-02T03:00:00.000Z"},
-      {address: "0xAAA", listed_at: "2026-01-02T03:00:00.000Z"},
-      {address: "0xccc", listed_at: "2026-01-02T02:00:00.000Z"},
-    ]);
-    assert.deepEqual(
-      merged.map((row) => row.address.toLowerCase()),
-      ["0xaaa", "0xccc", "0xbbb"],
-    );
+    assert.ok(!prefixed.calls.some((call) => call.startsWith("or:")));
+    assert.ok(!prefixed.calls.some((call) => /eligible|is_tradeable/i.test(call)));
   });
 });

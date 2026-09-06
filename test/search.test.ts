@@ -7,6 +7,7 @@ import {
   isProvenLaunchpadRwaPair,
   qualifiesAsNewListing,
 } from "../src/lib/tokenUniverse.ts";
+import {hasVolume24h} from "../src/lib/priceState.ts";
 import {searchCategory, matchesSearchCategory} from "../src/lib/searchable.ts";
 
 /**
@@ -98,6 +99,15 @@ test("a token meeting both arms is included once, not twice", () => {
   });
   assert.equal(isProvenLaunchpadRwaPair(both), true);
   assert.equal(qualifiesForUniverse(both), true);
+});
+
+test("search still returns a token with no 24h volume", () => {
+  const idle = tok({volume24hUsd: 0});
+  const missing = tok({volume24hUsd: null});
+  assert.equal(hasVolume24h(0), false);
+  assert.equal(hasVolume24h(null), false);
+  assert.equal(qualifiesForUniverse(idle), true);
+  assert.equal(qualifiesForUniverse(missing), true);
 });
 
 test("the New tab is stricter than the universe", () => {

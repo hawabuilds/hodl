@@ -4,15 +4,12 @@ import type {LaunchpadId, QuoteKind, TokenStatus} from "@/lib/universe";
 import {isListed, qualifiesForUniverse} from "@/lib/universe";
 import {
   applyAgeBounds,
-  applyListedSinceFilter,
   applyLiveVolumeFilter,
   applyLiquidityBoundFilter,
   applyMeasuredMcapFilter,
   applyNumericBounds,
   isTradeableFromLiquidity,
   isUserBound,
-  mergeNewestListed,
-  NEW_VOLUME_GRACE_MS,
   REQUIRE_MEASURED_MCAP_ON_NEW,
   rowPassesFeedBounds,
   showsOnNew,
@@ -323,9 +320,8 @@ function newListStatsBound(query: TokenPageQuery): boolean {
 }
 
 /**
- * New feed base query. Volume (`vol_24h > 0`) and the 6h launch window are
- * applied by the caller as two requests — a single PostgREST `.or()` cannot
- * mix `token_stats.vol_24h` with `listed_at`.
+ * New feed base query. Volume (`vol_24h > 0`) is applied by the caller —
+ * never as a cross-table `.or()` with `listed_at`.
  */
 function newListBaseQuery(
   query: TokenPageQuery,
@@ -390,30 +386,15 @@ async function fetchNewListRows(
   universe: "three-state" | "legacy",
 ): Promise<{rows: TokenRow[]; error: {message: string} | null}> {
   const statsBound = newListStatsBound(query);
-  const graceSince = new Date(Date.now() - NEW_VOLUME_GRACE_MS).toISOString();
-  const volumeReq = applyLiveVolumeFilter(newListBaseQuery(query, limit, universe), {
+  const request = applyLiveVolumeFilter(newListBaseQuery(query, limit, universe), {
     columnPrefix: statsBound ? "token_stats" : undefined,
   });
-  const graceReq = applyListedSinceFilter(
-    newListBaseQuery(query, limit, universe),
-    graceSince,
-  );
-  const [volume, grace] = await Promise.all([volumeReq, graceReq]);
-  if (volume.error && grace.error) {
-    return {rows: [], error: volume.error};
-  }
-  if (volume.error) {
-    console.error("new feed volume filter failed; serving 6h listings", volume.error);
-  }
-  if (grace.error) {
-    console.error("new feed grace window failed; serving live-volume rows", grace.error);
-  }
-  const rows = mergeNewestListed(
-    [...((volume.data as TokenRow[]) ?? []), ...((grace.data as TokenRow[]) ?? [])].map(
-      flattenTokenRow,
-    ),
-  );
-  return {rows, error: null};
+  const {data, error} = await request;
+  if (error) return {rows: [], error};
+  return {
+    rows: ((data as TokenRow[]) ?? []).map(flattenTokenRow),
+    error: null,
+  };
 }
 
 export async function listTokensPage(
@@ -465,14 +446,7 @@ export async function listTokensPage(
       return false;
     }
     if (!showsOnNew(stat)) return false;
-    if (
-      !showsWithVolume24h(finiteOrNull(stat?.vol_24h), {
-        listedAt: row.listed_at,
-        allowNewGrace: true,
-      })
-    ) {
-      return false;
-    }
+    if (!showsWithVolume24h(finiteOrNull(stat?.vol_24h))) return false;
     return rowPassesUniverse(row);
   });
 

@@ -223,7 +223,6 @@ export async function loadDecoratedFeedPage(query: TokenPageQuery): Promise<{
       rowToAsset(row, page.stats.get(row.address.toLowerCase())),
     );
   }
-  const allowNewGrace = (query.sort ?? "new") === "new";
   const tokens = decorated.filter(
     (token) =>
       rowPassesFeedBounds({
@@ -240,11 +239,7 @@ export async function loadDecoratedFeedPage(query: TokenPageQuery): Promise<{
         maxVolume: query.maxVolume,
         minAgeHours: query.minAgeHours,
         maxAgeHours: query.maxAgeHours,
-      }) &&
-      showsWithVolume24h(token.volume24hUsd, {
-        listedAt: token.listedAt,
-        allowNewGrace,
-      }),
+      }) && showsWithVolume24h(token.volume24hUsd),
   );
   return {
     tokens,

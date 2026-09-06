@@ -285,44 +285,18 @@ export function formatVolumeUsd(value: number | null | undefined): string {
 
 /**
  * Live 24h volume for browse lists. Null / non-finite / zero all mean
- * "no trades in the window" — hide from home, New (after the launch
- * grace), trending, market cap, and rewards. Search does not use this.
+ * "no trades in the window" — hide from home, New, trending, market cap,
+ * and rewards. Search does not use this.
  */
 export function hasVolume24h(volume: number | null | undefined): boolean {
   return volume != null && Number.isFinite(Number(volume)) && Number(volume) > 0;
 }
 
-/**
- * New can keep a just-listed token with no volume yet. Same 6h window as
- * `RECENT_MISSING_IMAGE_MAX_AGE_MS` — after that, `vol_24h` must be > 0.
- */
-export const NEW_VOLUME_GRACE_MS = 6 * 60 * 60 * 1000;
-
-export function inNewVolumeGrace(
-  listedAt: string | null | undefined,
-  now: number = Date.now(),
-): boolean {
-  if (listedAt == null || listedAt === "") return false;
-  const ms = Date.parse(listedAt);
-  if (!Number.isFinite(ms)) return false;
-  const age = now - ms;
-  return age >= 0 && age < NEW_VOLUME_GRACE_MS;
-}
-
-/** Browse-list volume gate. Search must not call this. */
+/** Browse-list volume gate. Same as `hasVolume24h`. Search must not call this. */
 export function showsWithVolume24h(
   volume: number | null | undefined,
-  opts?: {
-    listedAt?: string | null;
-    now?: number;
-    allowNewGrace?: boolean;
-  },
 ): boolean {
-  if (hasVolume24h(volume)) return true;
-  if (opts?.allowNewGrace) {
-    return inNewVolumeGrace(opts.listedAt, opts.now ?? Date.now());
-  }
-  return false;
+  return hasVolume24h(volume);
 }
 
 /**
@@ -330,8 +304,7 @@ export function showsWithVolume24h(
  * `.gt` drops null — that is the hide. Never emit a standalone IS NOT NULL.
  *
  * Do not put `token_stats.vol_24h` inside `.or()` with `listed_at`. PostgREST
- * cannot parse that cross-table OR and `/api/tokens/new` 503s. New's 6h
- * launch window is a second query (`applyListedSinceFilter`) merged in JS.
+ * cannot parse that cross-table OR and `/api/tokens/new` 503s.
  */
 export function applyLiveVolumeFilter<T>(
   request: T,
