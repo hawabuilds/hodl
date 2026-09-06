@@ -16,6 +16,7 @@ import {cn} from "@/lib/cn";
 import {clock, compactMoney, percent, shortAddress} from "@/lib/format";
 import {lastHomePath} from "@/lib/homeState";
 import {sectorFor} from "@/lib/sectors";
+import {defaultChartTimeframe} from "@/lib/chartTimeframe";
 import type {AssetKind, ChartPoint, ChartStyle, Timeframe} from "@/lib/types";
 import {RWA_TIMEFRAMES, TIMEFRAMES, timeframeLabel} from "@/lib/types";
 import {AssetSkeleton} from "./AssetPageSkeleton";
@@ -71,17 +72,35 @@ type PanelKey = "trades" | "comments" | "detail";
  * identical — chart, timeframes, trades, comments — and the third tab is the
  * only real fork: a token gets pool and supply stats, an RWA gets coverage.
  */
-export function AssetPage({kind, id}: {kind: AssetKind; id: string}) {
+export function AssetPage({
+  kind,
+  id,
+  requestedTimeframe,
+}: {
+  kind: AssetKind;
+  id: string;
+  /** `?tf=` from the chart URL. New-row clicks send `1m`. */
+  requestedTimeframe?: string | null;
+}) {
   const router = useRouter();
   const {asset, isLoading, error} = useAsset(kind, id);
-  const [timeframe, setTimeframe] = useState<Timeframe>("1h");
+  const listedAt = asset?.kind === "token" ? asset.listedAt : null;
+  const autoTimeframe = defaultChartTimeframe({
+    kind,
+    listedAt,
+    requested: requestedTimeframe,
+  });
+  const scope = `${kind}:${id}`;
+  const [picked, setPicked] = useState<Timeframe | null>(null);
+  const [pickedScope, setPickedScope] = useState<string | null>(null);
+  const timeframe =
+    pickedScope === scope && picked ? picked : autoTimeframe;
+  const setTimeframe = (next: Timeframe) => {
+    setPicked(next);
+    setPickedScope(scope);
+  };
   const tfOptions: readonly Timeframe[] =
     kind === "rwa" ? RWA_TIMEFRAMES : TIMEFRAMES;
-  useEffect(() => {
-    if (!(tfOptions as readonly string[]).includes(timeframe)) {
-      setTimeframe("1h");
-    }
-  }, [kind, timeframe, tfOptions]);
   const [panel, setPanel] = useState<PanelKey>("trades");
   const [scrubbed, setScrubbed] = useState<ChartPoint | null>(null);
   const [orderSide, setOrderSide] = useState<"buy" | "sell" | null>(null);

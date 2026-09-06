@@ -1,5 +1,19 @@
 import {AssetPage} from "@/components/AssetPage";
 
-export default function RwaChartPage({params}: {params: {id: string}}) {
-  return <AssetPage kind="rwa" id={params.id} />;
+export default function RwaChartPage({
+  params,
+  searchParams,
+}: {
+  params: {id: string};
+  searchParams: {tf?: string | string[]};
+}) {
+  const raw = searchParams.tf;
+  const requestedTimeframe = Array.isArray(raw) ? raw[0] : raw;
+  return (
+    <AssetPage
+      kind="rwa"
+      id={params.id}
+      requestedTimeframe={requestedTimeframe}
+    />
+  );
 }

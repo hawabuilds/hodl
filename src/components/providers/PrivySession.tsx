@@ -10,12 +10,13 @@ import {SessionContext, type AppUser, type Session} from "@/lib/session";
 export function PrivySessionProvider({children}: {children: ReactNode}) {
   const {theme} = useTheme();
 
+  // Never key this provider on theme. A remount mid-OAuth drops the callback
+  // after X Allow and sends the user around the login loop again.
   return (
     <PrivyProvider
-      key={theme}
       appId={PRIVY_APP_ID}
       config={{
-        loginMethods: ["twitter", "email"],
+        loginMethods: ["twitter"],
         embeddedWallets: {
           ethereum: {createOnLogin: "users-without-wallets"},
         },
@@ -114,7 +115,7 @@ function PrivyBridge({children}: {children: ReactNode}) {
       ready,
       authenticated,
       user: appUser,
-      login: () => login(),
+      login: () => login({loginMethods: ["twitter"]}),
       logout: () => void logout(),
       mode: "privy",
       getEmbeddedProvider,

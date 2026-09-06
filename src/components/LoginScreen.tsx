@@ -4,7 +4,7 @@ import {useEffect, useState} from "react";
 import {useRouter} from "next/navigation";
 import {useUser} from "@/hooks/useUser";
 import {Button} from "./ui/Button";
-import {AppleIcon, ArrowRightIcon, MailIcon, XIcon} from "./ui/Icons";
+import {AppleIcon, ArrowRightIcon, XIcon} from "./ui/Icons";
 import {Modal} from "./ui/Modal";
 
 /**
@@ -75,14 +75,6 @@ export function LoginScreen() {
         >
           <XIcon className="h-[18px] w-[18px]" />
           Continue with X
-        </button>
-        <button
-          type="button"
-          onClick={startLogin}
-          className="mb-2.5 flex w-full items-center justify-center gap-3 rounded-[15px] border border-hairline bg-card px-4 py-[15px] text-[15px] font-bold text-ink transition-transform hover:-translate-y-px"
-        >
-          <MailIcon className="h-[18px] w-[18px]" />
-          Continue with email
         </button>
         <p className="mx-auto mt-4 max-w-[32ch] text-center text-[11.5px] leading-[1.5] text-muted">
           A wallet is created for you on the way in. Nothing here executes a real

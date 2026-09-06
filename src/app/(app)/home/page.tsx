@@ -281,6 +281,9 @@ function HomeFeed() {
           <AssetList
             assets={showing}
             markArrivals={tab === "tokens" && tokenSort === "new"}
+            chartTimeframe={
+              tab === "tokens" && tokenSort === "new" ? "1m" : undefined
+            }
           />
           {tab === "tokens" && tokenSort === "new" && newFeed.hasMore ? (
             <button

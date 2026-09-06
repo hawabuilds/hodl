@@ -12,7 +12,7 @@ import {cn} from "@/lib/cn";
 import {percent, tokenAge} from "@/lib/format";
 import {SECTORS} from "@/lib/sectors";
 import {assetHref} from "@/lib/routes";
-import type {Asset} from "@/lib/types";
+import type {Asset, Timeframe} from "@/lib/types";
 import {Sparkline} from "./Sparkline";
 import {Avatar} from "./ui/Avatar";
 import {PairTicker, VerifiedTick} from "./ui/Badges";
@@ -35,10 +35,13 @@ export function AssetRow({
   asset,
   fresh,
   eager = false,
+  chartTimeframe,
 }: {
   asset: Asset;
   fresh?: boolean;
   eager?: boolean;
+  /** Opens the chart on this interval. New rows pass `1m`. */
+  chartTimeframe?: Timeframe;
 }) {
   const prefetch = usePrefetchAsset();
   // The same shared price the chart page publishes into, so a row and the page
@@ -46,14 +49,14 @@ export function AssetRow({
   const livePrice = useLivePrice(asset.id);
   const token = asset.kind === "token" ? applyCachedToken(asset) : null;
   const shownPrice = livePrice ?? asset.priceUsd;
-  const warm = () => prefetch(asset.kind, asset.id);
+  const warm = () => prefetch(asset.kind, asset.id, chartTimeframe);
   const positive = asset.changePct >= 0;
   const rwa = asset.kind === "rwa";
   const symbol = rwa ? asset.ticker : asset.symbol;
 
   return (
     <Link
-      href={assetHref(asset)}
+      href={assetHref(asset, chartTimeframe)}
       prefetch
       // Pointer-down rather than click: the page's data starts loading while
       // the finger is still on the row, which is most of the gap a first tap
@@ -160,9 +163,11 @@ export function AssetRow({
 export function AssetList({
   assets,
   markArrivals = false,
+  chartTimeframe,
 }: {
   assets: Asset[];
   markArrivals?: boolean;
+  chartTimeframe?: Timeframe;
 }) {
   const tokens = assets.filter((asset): asset is Extract<Asset, {kind: "token"}> => asset.kind === "token");
   const logoKey = tokens
@@ -190,6 +195,7 @@ export function AssetList({
             asset={asset}
             fresh={arrivals.has(ids[i])}
             eager={i < 15}
+            chartTimeframe={chartTimeframe}
           />
         </li>
       ))}

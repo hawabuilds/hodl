@@ -3,6 +3,7 @@
 import {useEffect, type ReactNode} from "react";
 import {useRouter} from "next/navigation";
 import {hasCachedMe} from "@/lib/localStore";
+import {isPrivyOAuthReturn} from "@/lib/session";
 import {useUser} from "@/hooks/useUser";
 import {TabBar} from "./TabBar";
 
@@ -12,6 +13,7 @@ export function AppShell({children}: {children: ReactNode}) {
   const cached = hasCachedMe();
 
   useEffect(() => {
+    if (isPrivyOAuthReturn()) return;
     if (ready && !authenticated) router.replace("/");
   }, [ready, authenticated, router]);
 

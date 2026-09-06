@@ -47,3 +47,14 @@ export function useSession(): Session {
   }
   return session;
 }
+
+/** True while Privy is finishing an X OAuth redirect on this page. */
+export function isPrivyOAuthReturn(): boolean {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  return (
+    params.has("privy_oauth_code") ||
+    params.has("privy_oauth_state") ||
+    params.has("privy_oauth_provider")
+  );
+}
