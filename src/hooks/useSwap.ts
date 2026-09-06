@@ -25,6 +25,7 @@ import {
   permit2Abi,
   type PreparedTx,
 } from "@/lib/swapTx";
+import {walletKindFrom, type WalletKind} from "@/lib/approvalFlow";
 import {useUser} from "./useUser";
 import {useWallet} from "./useWallet";
 
@@ -70,6 +71,7 @@ export function useSwap() {
 
   const imported = wallet.isConnected ? wallet.address : null;
   const address = (imported ?? user.embeddedWallet ?? null) as `0x${string}` | null;
+  const walletKind: WalletKind = walletKindFrom(Boolean(imported));
 
   const sendTx = useCallback(
     async (tx: PreparedTx): Promise<`0x${string}`> => {
@@ -263,6 +265,7 @@ export function useSwap() {
     login: user.login,
     submitting,
     submit,
+    walletKind,
     explain: explainSwapError,
   };
 }

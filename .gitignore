@@ -8,4 +8,6 @@ next-env.d.ts
 .vercel
 .env*
 .tools/
+contracts/out
+contracts/cache
 scripts/.backfill-pools-cursor.json

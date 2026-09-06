@@ -3,6 +3,7 @@
 import {useCallback} from "react";
 import {useAccount, useConnect, useDisconnect, useSwitchChain} from "wagmi";
 import {RH_MAINNET_ID} from "@/config/chain";
+import {walletKindFrom} from "@/lib/approvalFlow";
 
 /**
  * The external wallet someone imports alongside the Privy embedded one, and the
@@ -34,6 +35,7 @@ export function useWallet() {
     address: address ?? null,
     walletName: connector?.name ?? null,
     isConnected,
+    kind: walletKindFrom(isConnected),
     onWrongChain,
     connectors,
     connectWith,

@@ -140,109 +140,7 @@ export function readBook(): Book {
   };
 }
 
-export interface FillInput {
-  kind: AssetKind;
-  assetId: string;
-  symbol: string;
-  name: string;
-  side: "buy" | "sell";
-  amountUsd: number;
-  priceUsd: number;
-  /** Platform fee on this trade, in dollars. Taken off the top either way. */
-  feeUsd: number;
-}
-
-export interface FillResult {
-  ok: boolean;
-  error?: string;
-  order?: SimOrder;
-}
-
-/**
- * Records a simulated fill against the local book.
- *
- * Nothing here touches a wallet or a router — the trade is bookkeeping only,
- * and every surface that shows a position says so. Validation is still real,
- * because getting the failure modes right now is what makes the switch to a
- * live router a small change later.
- */
-export function applyFill(input: FillInput): FillResult {
-  const {kind, assetId, symbol, name, side, amountUsd, priceUsd} = input;
-  const feeUsd = Number.isFinite(input.feeUsd) ? Math.max(0, input.feeUsd) : 0;
-
-  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
-    return {ok: false, error: "Enter an amount."};
-  }
-  if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
-    return {ok: false, error: "No price for this asset right now."};
-  }
-  if (feeUsd >= amountUsd) {
-    return {ok: false, error: "That trade is too small to cover the fee."};
-  }
-
-  const book = readBook();
-  const positions = [...book.positions];
-  const index = positions.findIndex(
-    (p) => p.assetId === assetId && p.kind === kind,
-  );
-
-  // The fee comes off the top on both sides: a buyer converts less than they
-  // spent, a seller receives less than their position was worth. Units always
-  // price off the net amount, never the gross.
-  const netUsd = amountUsd - feeUsd;
-  const units = side === "buy" ? netUsd / priceUsd : amountUsd / priceUsd;
-
-  if (side === "buy") {
-    if (amountUsd > book.cashUsd + 1e-9) {
-      return {ok: false, error: "Not enough simulated cash."};
-    }
-    // Cost basis is what was actually paid, fee included — so a position opens
-    // slightly down, which is the truth of it.
-    if (index === -1) {
-      positions.push({kind, assetId, symbol, name, amount: units, costUsd: amountUsd});
-    } else {
-      positions[index] = {
-        ...positions[index],
-        amount: positions[index].amount + units,
-        costUsd: positions[index].costUsd + amountUsd,
-      };
-    }
-  } else {
-    if (index === -1) return {ok: false, error: `You do not hold any ${symbol}.`};
-    const held = positions[index];
-    if (units > held.amount + 1e-9) {
-      return {ok: false, error: `You only hold ${held.amount.toPrecision(6)} ${symbol}.`};
-    }
-    const remaining = held.amount - units;
-    // Cost basis is reduced proportionally, so a partial sell leaves the average
-    // entry price unchanged rather than flattering it.
-    const costLeft = held.amount === 0 ? 0 : held.costUsd * (remaining / held.amount);
-    if (remaining <= 1e-12) positions.splice(index, 1);
-    else positions[index] = {...held, amount: remaining, costUsd: costLeft};
-  }
-
-  const order: SimOrder = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    kind,
-    assetId,
-    symbol,
-    side,
-    amount: units,
-    amountUsd,
-    priceUsd,
-    feeUsd,
-    at: new Date().toISOString(),
-  };
-
-  write("book", {
-    cashUsd: side === "buy" ? book.cashUsd - amountUsd : book.cashUsd + netUsd,
-    positions,
-    orders: [order, ...book.orders].slice(0, 200),
-  } satisfies Book);
-  announce();
-
-  return {ok: true, order};
-}
+/** Paper fills are gone. A real trade or an error — nothing in between. */
 
 export function resetBook(): void {
   write("book", EMPTY_BOOK);
@@ -261,7 +159,8 @@ export interface TradeSettings {
 }
 
 export const SLIPPAGE_PRESETS = [0.5, 1, 3] as const;
-export const MAX_SLIPPAGE_PCT = 50;
+export const MAX_SLIPPAGE_PCT = 15;
+export const SLIPPAGE_WARN_PCT = 5;
 
 const DEFAULT_TRADE_SETTINGS: TradeSettings = {slippagePct: 1, currency: "USD"};
 

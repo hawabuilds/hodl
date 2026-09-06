@@ -1,6 +1,6 @@
 import {parseAbi, type PublicClient} from "viem";
 import {UNISWAP_QUOTER_V2} from "@/lib/contracts";
-import {amountOutFromQuoter, pickBestVenue, type VenueCandidate, type VenueDecision} from "@/lib/venueQuote";
+import {amountOutFromQuoter, inputAfterBuyFee, pickBestVenue, type VenueCandidate, type VenueDecision} from "@/lib/venueQuote";
 import {rpc} from "./chain";
 import {discoverV3Pools, pickBestPool} from "./v3Pools";
 import {quoteV4ExactIn, resolveV4PoolKeys, type V4PoolHit} from "./v4Pools";
@@ -53,6 +53,9 @@ export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | n
   const token = req.token.toLowerCase() as `0x${string}`;
   const candidates: VenueCandidate[] = [];
 
+  const quoteIn = req.side === "buy" ? inputAfterBuyFee(req.amountIn) : req.amountIn;
+  if (quoteIn <= 0n) return null;
+
   const v4Hits = await resolveV4PoolKeys({token, client});
   const wantedPool = req.v4PoolId?.toLowerCase();
   const ordered = wantedPool
@@ -67,7 +70,7 @@ export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | n
     const quoted = await quoteV4ExactIn({
       key: v4.key,
       zeroForOne,
-      amountIn: req.amountIn,
+      amountIn: quoteIn,
       client,
     });
     if (quoted.ok) {
@@ -89,7 +92,7 @@ export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | n
     const quote = bestV3.quote;
     const tokenIn = req.side === "buy" ? quote : token;
     const tokenOut = req.side === "buy" ? token : quote;
-    const amountOut = await quoteV3(tokenIn, tokenOut, bestV3.fee, req.amountIn, client);
+    const amountOut = await quoteV3(tokenIn, tokenOut, bestV3.fee, quoteIn, client);
     if (amountOut != null) {
       candidates.push({
         venue: "v3",
@@ -103,5 +106,10 @@ export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | n
     }
   }
 
-  return pickBestVenue(candidates);
+  return pickBestVenue(
+    candidates,
+    undefined,
+    req.side !== "buy",
+    req.amountIn,
+  );
 }

@@ -4,6 +4,8 @@ import {readFileSync} from "node:fs";
 import {join} from "node:path";
 import {
   amountOutFromQuoter,
+  feeOnAmount,
+  inputAfterBuyFee,
   netAfterPlatformFee,
   pickBestVenue,
   venueTicketCopy,
@@ -36,6 +38,7 @@ describe("venue quote", () => {
     assert.equal(best?.venue, "v3");
     assert.equal(best?.creatorTaxBps, 0);
     assert.equal(best?.netOut, netAfterPlatformFee(1100n));
+    assert.equal(best?.feeAmount, 1100n * 50n / 10_000n);
   });
 
   it("does not subtract stated creator tax a second time", () => {
@@ -56,6 +59,7 @@ describe("venue quote", () => {
     ]);
     assert.equal(best?.amountOut, quoted);
     assert.equal(best?.netOut, netAfterPlatformFee(quoted));
+    assert.equal(best?.feeAmount, quoted * 50n / 10_000n);
   });
 
   it("quote path source never re-applies creator tax bps", () => {
@@ -94,5 +98,27 @@ describe("venue quote", () => {
       venueTicketCopy(best!).creatorTax,
       "2.00% creator tax on this route",
     );
+  });
+
+  it("buy quotes the post-fee input so the ticket matches Trade", () => {
+    const amountIn = 1_000_000n;
+    assert.equal(inputAfterBuyFee(amountIn), 995_000n);
+    assert.equal(feeOnAmount(amountIn), 5_000n);
+    const best = pickBestVenue(
+      [
+        {
+          venue: "v4",
+          amountOut: 42_000n,
+          creatorTaxBps: 100,
+          quoteToken: WETH,
+          label: "v4",
+        },
+      ],
+      50,
+      false,
+      amountIn,
+    );
+    assert.equal(best?.netOut, 42_000n);
+    assert.equal(best?.feeAmount, 5_000n);
   });
 });

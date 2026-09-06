@@ -41,6 +41,6 @@ export function amountOutMinimum(amountOut: bigint, slippagePct: number): bigint
   return amountOut - (amountOut * bps) / 10_000n;
 }
 
-export function swapDeadlineSec(minutes = 20): bigint {
+export function swapDeadlineSec(minutes = 5): bigint {
   return BigInt(Math.floor(Date.now() / 1000) + minutes * 60);
 }

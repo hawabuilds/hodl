@@ -16,6 +16,11 @@ export interface SwapQuote {
   amountIn: string;
   amountOut: string;
   netOut: string;
+  feeAmount: string;
+  feeToken: `0x${string}` | null;
+  feeBps: number;
+  lpFee: string;
+  lpFeeBps: number | null;
   quoteToken: `0x${string}`;
   tokenDecimals: number;
   quoteDecimals: number;
@@ -88,6 +93,13 @@ export function parseSwapQuote(body: unknown): QuoteResult {
       amountIn,
       amountOut,
       netOut: String(row.netOut ?? amountOut),
+      feeAmount: String(row.feeAmount ?? "0"),
+      feeToken: typeof row.feeToken === "string" && /^0x[0-9a-f]{40}$/.test(String(row.feeToken).toLowerCase())
+        ? (String(row.feeToken).toLowerCase() as `0x${string}`)
+        : null,
+      feeBps: Number(row.feeBps ?? 50),
+      lpFee: String(row.lpFee ?? ""),
+      lpFeeBps: Number.isFinite(Number(row.lpFeeBps)) ? Number(row.lpFeeBps) : null,
       quoteToken: quoteToken as `0x${string}`,
       tokenDecimals: Number(row.tokenDecimals ?? 18),
       quoteDecimals: Number(row.quoteDecimals ?? 18),

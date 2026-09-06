@@ -1,13 +1,11 @@
 "use client";
 
-import {useCallback, useMemo} from "react";
-import {keepPreviousData, useQuery, useQueryClient} from "@tanstack/react-query";
+import {useMemo} from "react";
+import {keepPreviousData, useQuery} from "@tanstack/react-query";
 import {
-  applyFill,
   readBook,
   STARTING_CASH_USD,
   type Book,
-  type FillInput,
 } from "@/lib/localStore";
 import type {Asset, Holding, Range} from "@/lib/types";
 import {isPriced} from "@/lib/priceState";
@@ -34,7 +32,6 @@ export interface ValuedHolding extends Holding {
  * with a dozen names does not fire a dozen requests.
  */
 export function useBook(range: Range = "1D") {
-  const queryClient = useQueryClient();
   const [book] = useLocalStore<Book>(readBook, EMPTY);
 
   const ids = useMemo(
@@ -126,17 +123,6 @@ export function useBook(range: Range = "1D") {
   const changeUsd = totalValue - openValue;
   const changePct = openValue > 0 ? (changeUsd / openValue) * 100 : 0;
 
-  const trade = useCallback(
-    (input: FillInput) => {
-      const result = applyFill(input);
-      // A fill changes what needs pricing, so drop the batch result rather than
-      // waiting for the next interval to notice the new position.
-      if (result.ok) void queryClient.invalidateQueries({queryKey: ["book-prices"]});
-      return result;
-    },
-    [queryClient],
-  );
-
   return {
     cashUsd: book.cashUsd,
     orders: book.orders,
@@ -149,6 +135,5 @@ export function useBook(range: Range = "1D") {
     changeUsd,
     changePct,
     isLoading: ids.length > 0 && priced.isLoading,
-    trade,
   };
 }

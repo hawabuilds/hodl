@@ -1,7 +1,7 @@
 import {isAddress, normalizeAddress} from "@/lib/address";
 import {QUOTE_ETH, QUOTE_USDG, QUOTE_WETH} from "@/lib/contracts";
 import {humanToRaw, quoteTokenDecimals, usdgRawFromUsd} from "@/lib/quoteAmounts";
-import {venueTicketCopy} from "@/lib/venueQuote";
+import {lpFeeLabel, venueTicketCopy} from "@/lib/venueQuote";
 import {json} from "@/lib/server/http";
 import {quotePriceUsd} from "@/lib/server/quotePrice";
 import {erc20Abi, rpc} from "@/lib/server/live/chain";
@@ -123,6 +123,11 @@ export async function GET(req: Request) {
     amountIn: amountIn.toString(),
     amountOut: sized.amountOut.toString(),
     netOut: sized.netOut.toString(),
+    feeAmount: sized.feeAmount.toString(),
+    feeToken: side === "buy" ? sized.quoteToken : sized.quoteToken,
+    feeBps: sized.platformFeeBps,
+    lpFee: lpFeeLabel(sized),
+    lpFeeBps: sized.venue === "v3" && sized.v3Fee != null ? sized.v3Fee / 100 : sized.poolKey?.fee === 0 ? 0 : null,
     quoteToken: sized.quoteToken,
     label: sized.label,
     tokenDecimals: decimals,

@@ -5,17 +5,34 @@ import {formatUnits} from "viem";
 import {useBalance, useReadContract} from "wagmi";
 import {RH_MAINNET_ID, txUrlForChain} from "@/config/chain";
 import {feeFor, FEE_BPS, tooSmall} from "@/config/fees";
+import {
+  allowanceSufficient,
+  approvalSpendToken,
+  approvalSymbol,
+  idleSignHint,
+  nextTicketAction,
+  pendingSignatureCopy,
+  ticketButtonLabel,
+} from "@/lib/approvalFlow";
 import {QUOTE_USDG} from "@/lib/contracts";
 import {useEthPrice} from "@/hooks/useEthPrice";
+import {useHodlSwap} from "@/hooks/useHodlSwap";
 import {useLocalStore} from "@/hooks/useLocalStore";
 import {useSwap} from "@/hooks/useSwap";
 import {
+  HODL_ROUTER_ADDRESS,
+  isHodlRouterConfigured,
+  isLiveTrader,
+} from "@/lib/liveTrade";
+import {
   MAX_SLIPPAGE_PCT,
+  SLIPPAGE_WARN_PCT,
   readTradeSettings,
   SLIPPAGE_PRESETS,
   writeTradeSettings,
   type TradeSettings,
 } from "@/lib/localStore";
+import {amountOutMinimum} from "@/lib/tradePolicy";
 import {humanToRaw} from "@/lib/quoteAmounts";
 import {cn} from "@/lib/cn";
 import {formatPriceUsd, isPriced} from "@/lib/priceState";
@@ -51,6 +68,7 @@ export function OrderModal({
 }) {
   const {ethUsd} = useEthPrice();
   const swap = useSwap();
+  const hodl = useHodlSwap();
   const [settings] = useLocalStore<TradeSettings>(
     readTradeSettings,
     DEFAULT_SETTINGS,
@@ -65,6 +83,8 @@ export function OrderModal({
   const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [quotePending, setQuotePending] = useState(false);
   const [quoteMiss, setQuoteMiss] = useState(false);
+  const [quoteAt, setQuoteAt] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
 
   const symbol = asset?.kind === "rwa" ? asset.ticker : (asset?.symbol ?? "");
   const token =
@@ -72,7 +92,9 @@ export function OrderModal({
       ? (asset.address.toLowerCase() as `0x${string}`)
       : null;
   const eth = settings.currency === "ETH";
-  const wallet = swap.address ?? undefined;
+  const live = isLiveTrader(swap.address ?? hodl.address);
+  const ticket = live ? hodl : swap;
+  const wallet = ticket.address ?? undefined;
 
   const ethBal = useBalance({
     address: wallet,
@@ -107,6 +129,32 @@ export function OrderModal({
     chainId: RH_MAINNET_ID,
     query: {enabled: Boolean(wallet && token)},
   });
+  const payNativePreview = Boolean(
+    activeSide === "buy" && (eth || quote?.quoteIsNative || quote?.quoteIsWeth),
+  );
+  const spendForApproval =
+    live && quote && token
+      ? approvalSpendToken({
+          side: activeSide,
+          payNative: payNativePreview,
+          quoteToken: quote.quoteToken,
+          token,
+        })
+      : null;
+  const routerReady = isHodlRouterConfigured();
+  const allowanceQ = useReadContract({
+    address: spendForApproval ?? QUOTE_USDG,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args:
+      wallet && spendForApproval && routerReady
+        ? [wallet, HODL_ROUTER_ADDRESS as `0x${string}`]
+        : undefined,
+    chainId: RH_MAINNET_ID,
+    query: {
+      enabled: Boolean(live && wallet && spendForApproval && routerReady),
+    },
+  });
 
   useEffect(() => {
     setActiveSide(side);
@@ -117,7 +165,15 @@ export function OrderModal({
     setConfigOpen(false);
     setQuote(null);
     setQuoteMiss(false);
+    setQuoteAt(0);
+    hodl.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset on asset/side only
   }, [side, asset?.id]);
+
+  useEffect(() => {
+    if (!asset) hodl.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- close while a signature is pending
+  }, [asset]);
 
   useEffect(() => {
     if (eth && ethUsd === null) {
@@ -162,11 +218,17 @@ export function OrderModal({
 
   const estimatedOut = useMemo(() => {
     if (quote) {
-      return Number(formatUnits(BigInt(quote.amountOut), quote.outDecimals));
+      return Number(formatUnits(BigInt(quote.netOut), quote.outDecimals));
     }
     if (!asset || !valid || !isPriced(asset.priceUsd)) return 0;
     return (amountUsd - fee.usd) / asset.priceUsd;
   }, [asset, amountUsd, valid, fee.usd, quote]);
+
+  const quoteAgeMs = quoteAt > 0 ? now - quoteAt : 0;
+  const quoteLeftSec = quote
+    ? Math.max(0, Math.ceil((5000 - quoteAgeMs) / 1000))
+    : 0;
+  const quoteExpired = Boolean(quote && quoteAgeMs > 8000);
 
   const quoteAmountIn = useMemo(() => {
     if (!valid) return undefined;
@@ -178,55 +240,105 @@ export function OrderModal({
   }, [valid, buying, eth, entered, asset, amountUsd, tokenDecimals]);
 
   useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
     if (!token || !valid || asset?.kind !== "token") {
       setQuote(null);
       setQuoteMiss(false);
       setQuotePending(false);
+      setQuoteAt(0);
       return;
     }
     const sideNow = activeSide;
     const usd = amountUsd;
     const rawIn = quoteAmountIn;
     const ctrl = new AbortController();
-    const timer = setTimeout(() => {
-      setQuotePending(true);
-      void fetchSwapQuote({
-        token,
-        side: sideNow,
-        amountUsd: usd,
-        amountIn: rawIn,
-        signal: ctrl.signal,
-      })
-        .then((result) => {
-          if (result.ok) {
-            setQuote(result.quote);
-            setQuoteMiss(false);
-          } else {
-            setQuote(null);
-            setQuoteMiss(true);
+    let first = true;
+
+    async function pull() {
+      if (first) setQuotePending(true);
+      first = false;
+      try {
+        const result = await fetchSwapQuote({
+          token: token!,
+          side: sideNow,
+          amountUsd: usd,
+          amountIn: rawIn,
+          signal: ctrl.signal,
+        });
+        if (result.ok) {
+          setQuote(result.quote);
+          setQuoteMiss(false);
+          setQuoteAt(Date.now());
+          if (
+            isLiveTrader(ticket.address)
+            && (hodl.phase === "idle" || hodl.phase === "quoting")
+          ) {
+            hodl.setPhase("quoting");
           }
-        })
-        .catch((cause) => {
-          if ((cause as {name?: string})?.name === "AbortError") return;
+        } else {
           setQuote(null);
           setQuoteMiss(true);
-        })
-        .finally(() => setQuotePending(false));
-    }, 250);
+          setQuoteAt(0);
+        }
+      } catch (cause) {
+        if ((cause as {name?: string})?.name === "AbortError") return;
+        setQuote(null);
+        setQuoteMiss(true);
+        setQuoteAt(0);
+      } finally {
+        setQuotePending(false);
+      }
+    }
+
+    const start = window.setTimeout(() => void pull(), 250);
+    const refresh = window.setInterval(() => void pull(), 5000);
     return () => {
       ctrl.abort();
-      clearTimeout(timer);
+      window.clearTimeout(start);
+      window.clearInterval(refresh);
     };
-  }, [token, valid, activeSide, amountUsd, quoteAmountIn, asset?.kind]);
+  }, [token, valid, activeSide, amountUsd, quoteAmountIn, asset?.kind, ticket.address]);
 
   const blocked = ticketBlockReason({
     kind: asset?.kind ?? "token",
-    authenticated: swap.authenticated,
-    demo: swap.demo,
-    wallet: swap.address,
+    authenticated: ticket.authenticated,
+    demo: ticket.demo,
+    wallet: ticket.address,
     venue: quote?.venue ?? (quoteMiss ? null : undefined),
     quotePending,
   });
+
+  const approvalLabel = quote
+    ? approvalSymbol({
+        side: activeSide,
+        tokenSymbol: symbol,
+        quoteToken: quote.quoteToken,
+      })
+    : "USDG";
+  const amountInRaw = quote ? BigInt(quote.amountIn) : 0n;
+  const onChainAllowance = allowanceQ.data ?? 0n;
+  const granted =
+    live && hodl.lastGrant && spendForApproval && hodl.lastGrant.token === spendForApproval
+      ? hodl.lastGrant.amount
+      : 0n;
+  const seenAllowance = onChainAllowance > granted ? onChainAllowance : granted;
+  const allowanceOk =
+    !live || !spendForApproval || allowanceSufficient(seenAllowance, amountInRaw);
+  const allowancePending = Boolean(
+    live && spendForApproval && allowanceQ.isLoading && !hodl.lastGrant,
+  );
+  const ticketAction = nextTicketAction({
+    allowanceOk,
+    allowancePending,
+    side: activeSide,
+    symbol,
+    approvalSymbol: approvalLabel,
+  });
+  const walletKind = live ? hodl.walletKind : swap.walletKind;
 
   function setEntered(value: number) {
     setAmount(eth ? value.toFixed(6) : value.toFixed(2));
@@ -249,14 +361,33 @@ export function OrderModal({
     writeTradeSettings({...settings, currency: next});
   }
 
+  async function pullFreshQuote() {
+    const result = await fetchSwapQuote({
+      token: token!,
+      side: activeSide,
+      amountUsd,
+      amountIn: quoteAmountIn,
+    });
+    if (!result.ok) {
+      setQuote(null);
+      setQuoteMiss(true);
+      setQuoteAt(0);
+      throw new Error("No Uniswap pool for this token.");
+    }
+    setQuote(result.quote);
+    setQuoteMiss(false);
+    setQuoteAt(Date.now());
+    return result.quote;
+  }
+
   async function confirm() {
     if (!asset || !valid) {
       setError("Enter an amount.");
       return;
     }
     if (blocked) {
-      if (!swap.authenticated) {
-        swap.login();
+      if (!ticket.authenticated) {
+        ticket.login();
         return;
       }
       setError(blocked);
@@ -274,41 +405,103 @@ export function OrderModal({
       setError(undersized);
       return;
     }
+    if (!live && quoteExpired) {
+      setError("The quote expired. Wait for a refresh and try again.");
+      return;
+    }
 
     setError(null);
     setFilled(null);
     try {
-      const hash = await swap.submit({
-        quote,
+      if (!live) {
+        const hash = await swap.submit({
+          quote,
+          side: activeSide,
+          token,
+          slippagePct: settings.slippagePct,
+          payNative: buying && (eth || quote.quoteIsNative || quote.quoteIsWeth),
+          permit2Blocked: asset.kind === "token" && asset.launchpad?.id === "long",
+        });
+        setTxHash(hash);
+        setFilled(
+          `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : quote.quoteIsWeth || quote.quoteIsNative ? "ETH" : "USDG"}`,
+        );
+        setAmount("");
+        return;
+      }
+
+      const payNative = buying && (eth || quote.quoteIsNative || quote.quoteIsWeth);
+      let q = quote;
+      if (quoteExpired) {
+        q = await pullFreshQuote();
+      }
+      const spend = approvalSpendToken({
+        side: activeSide,
+        payNative,
+        quoteToken: q.quoteToken,
+        token,
+      });
+      const need = BigInt(q.amountIn);
+      const stillCovered =
+        !spend ||
+        allowanceSufficient(seenAllowance, need) ||
+        (hodl.lastGrant?.token === spend && hodl.lastGrant.amount >= need);
+
+      if (spend && !stillCovered) {
+        await hodl.approve(spend, need);
+        await allowanceQ.refetch();
+        return;
+      }
+
+      const hash = await hodl.submit({
+        quote: q,
         side: activeSide,
         token,
         slippagePct: settings.slippagePct,
-        payNative: buying && (eth || quote.quoteIsNative || quote.quoteIsWeth),
-        permit2Blocked: asset.kind === "token" && asset.launchpad?.id === "long",
+        payNative,
       });
       setTxHash(hash);
       setFilled(
-        `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : quote.quoteIsWeth || quote.quoteIsNative ? "ETH" : "USDG"}`,
+        `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : q.quoteIsWeth || q.quoteIsNative ? "ETH" : "USDG"}`,
       );
       setAmount("");
+      await allowanceQ.refetch();
     } catch (cause) {
-      setError(swap.explain(cause));
+      setError(live ? hodl.explain(cause) : swap.explain(cause));
     }
   }
 
   const confirmDisabled =
-    swap.submitting ||
-    (blocked != null && swap.authenticated) ||
-    (!valid && swap.authenticated) ||
+    ticket.submitting ||
+    (blocked != null && ticket.authenticated) ||
+    (!valid && ticket.authenticated) ||
     undersized !== null ||
-    (swap.authenticated && !swap.demo && valid && (quotePending || (!quote && !quoteMiss)));
+    (!live && quoteExpired) ||
+    (live && allowancePending) ||
+    (ticket.authenticated && !ticket.demo && valid && (quotePending || (!quote && !quoteMiss)));
 
   const confirmLabel = (() => {
-    if (swap.submitting) return "Confirm in wallet…";
-    if (!swap.authenticated) return "Sign in to trade";
+    if (live && hodl.phase === "approving") {
+      return pendingSignatureCopy(hodl.walletKind, "approve");
+    }
+    if (live && hodl.phase === "awaiting_signature") {
+      return pendingSignatureCopy(hodl.walletKind, "swap");
+    }
+    if (live && hodl.phase === "pending") return "Pending…";
+    if (live && hodl.phase === "confirmed") return "Confirmed";
+    if (ticket.submitting) return pendingSignatureCopy(walletKind, "swap");
+    if (!ticket.authenticated) return "Sign in to trade";
     if (blocked && asset?.kind === "rwa") return "Not on this ticket";
     if (quotePending) return "Finding route…";
     if (quoteMiss || (blocked && quote == null)) return "No pool";
+    if (!live && quoteExpired) return "Quote expired";
+    if (live && ticket.authenticated && quote) {
+      return ticketButtonLabel(ticketAction, {
+        side: activeSide,
+        symbol,
+        approvalSymbol: approvalLabel,
+      });
+    }
     return `${buying ? "Buy" : "Sell"} ${symbol}`;
   })();
 
@@ -487,40 +680,49 @@ export function OrderModal({
             </span>
           </div>
 
-          {valid ? (
+          {valid && quote ? (
+            <TicketBreakdown
+              quote={quote}
+              feeUsd={fee.usd}
+              slippagePct={settings.slippagePct}
+              quoteLeftSec={quoteLeftSec}
+            />
+          ) : valid ? (
             <div className="mt-2.5 flex items-center justify-between gap-3 px-1 text-[12px] font-semibold">
               <span className="text-faint">
                 Fee
-                {fee.atFloor ? (
-                  <span className="ml-1 font-medium opacity-80">minimum</span>
-                ) : (
-                  <span className="ml-1 font-medium opacity-80">{FEE_BPS / 100}%</span>
-                )}
+                <span className="ml-1 font-medium opacity-80">{FEE_BPS / 100}%</span>
               </span>
-              <span className="tnum font-bold text-muted">
-                {money(fee.usd)}
-              </span>
+              <span className="tnum font-bold text-muted">{money(fee.usd)}</span>
             </div>
           ) : null}
 
-          {quote ? (
-            <div className="mt-1.5 space-y-1 px-1 text-[12px] font-semibold">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-faint">Route</span>
-                <span className="font-bold text-muted">{quote.venueLabel}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-faint">Creator tax</span>
-                <span className="font-bold text-muted">{quote.creatorTax}</span>
-              </div>
-            </div>
-          ) : quotePending && valid ? (
+          {quotePending && valid && !quote ? (
             <p className="mt-1.5 px-1 text-[12px] font-semibold text-faint">
               Finding route…
             </p>
           ) : null}
 
-          {error || (blocked && swap.authenticated && !quotePending) ? (
+          {live && ticketAction === "approve" && !ticket.submitting ? (
+            <p className="mt-2 px-1 text-[12px] font-semibold text-muted">
+              Step 1 of 2 · Then {buying ? "Buy" : "Sell"}
+            </p>
+          ) : null}
+
+          {live && (hodl.phase === "approving" || hodl.phase === "awaiting_signature") ? (
+            <p className="mt-2 px-1 text-[12px] font-semibold text-muted">
+              {pendingSignatureCopy(
+                hodl.walletKind,
+                hodl.phase === "approving" ? "approve" : "swap",
+              )}
+            </p>
+          ) : live && hodl.phase === "pending" ? (
+            <p className="mt-2 px-1 text-[12px] font-semibold text-muted">
+              Waiting for the transaction to confirm…
+            </p>
+          ) : null}
+
+          {error || (blocked && ticket.authenticated && !quotePending) ? (
             <p role="alert" className="mt-3 text-[12.5px] font-semibold text-red">
               {error ?? blocked}
             </p>
@@ -562,12 +764,61 @@ export function OrderModal({
           </button>
 
           <p className="mt-2.5 text-center text-[11px] font-medium leading-[1.5] text-faint">
-            Max slippage {settings.slippagePct}% · Your wallet signs this swap
-            on Robinhood Chain. No simulated fill.
+            Max slippage {settings.slippagePct}% · {idleSignHint(walletKind)}
           </p>
         </>
       ) : null}
     </Modal>
+  );
+}
+
+function TicketBreakdown({
+  quote,
+  feeUsd,
+  slippagePct,
+  quoteLeftSec,
+}: {
+  quote: SwapQuote;
+  feeUsd: number;
+  slippagePct: number;
+  quoteLeftSec: number;
+}) {
+  const minOut = amountOutMinimum(BigInt(quote.netOut), slippagePct);
+  const feeRaw = quote.feeAmount ? formatUnits(BigInt(quote.feeAmount), quote.quoteDecimals) : null;
+  const minHuman = formatUnits(minOut, quote.outDecimals);
+  return (
+    <div className="mt-2.5 space-y-1 px-1 text-[12px] font-semibold">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-faint">HODL fee {quote.feeBps / 100}%</span>
+        <span className="tnum font-bold text-muted">
+          {feeRaw ? `${units(Number(feeRaw))} · ${money(feeUsd)}` : money(feeUsd)}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-faint">Creator tax</span>
+        <span className="font-bold text-muted">{quote.creatorTax}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-faint">LP fee</span>
+        <span className="font-bold text-muted">{quote.lpFee || "—"}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-faint">Price impact</span>
+        <span className="font-bold text-muted">—</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-faint">Minimum received</span>
+        <span className="tnum font-bold text-muted">{units(Number(minHuman))}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-faint">Route</span>
+        <span className="font-bold text-muted">{quote.venueLabel}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-faint">Quote refresh</span>
+        <span className="tnum font-bold text-muted">{quoteLeftSec}s</span>
+      </div>
+    </div>
   );
 }
 
@@ -669,10 +920,16 @@ function SlippageConfig({
         </label>
       </div>
 
-      <p className="mt-2 text-[11px] font-medium leading-[1.45] text-faint">
-        An order fills only if the price stays within this much of the quote.
-        Above {MAX_SLIPPAGE_PCT}% is rejected.
-      </p>
+      {settings.slippagePct > SLIPPAGE_WARN_PCT ? (
+        <p role="alert" className="mt-2 text-[11px] font-bold leading-[1.45] text-red">
+          Slippage above {SLIPPAGE_WARN_PCT}% can fill far from the quote.
+        </p>
+      ) : (
+        <p className="mt-2 text-[11px] font-medium leading-[1.45] text-faint">
+          An order fills only if the price stays within this much of the quote.
+          Above {MAX_SLIPPAGE_PCT}% is rejected.
+        </p>
+      )}
     </div>
   );
 }
