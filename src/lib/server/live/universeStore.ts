@@ -4,12 +4,14 @@ import type {LaunchpadId, QuoteKind, TokenStatus} from "@/lib/universe";
 import {isListed, qualifiesForUniverse} from "@/lib/universe";
 import {
   applyAgeBounds,
+  applyListedSinceFilter,
   applyLiveVolumeFilter,
   applyLiquidityBoundFilter,
   applyMeasuredMcapFilter,
   applyNumericBounds,
   isTradeableFromLiquidity,
   isUserBound,
+  mergeNewestListed,
   NEW_VOLUME_GRACE_MS,
   REQUIRE_MEASURED_MCAP_ON_NEW,
   rowPassesFeedBounds,
@@ -312,25 +314,26 @@ export interface TokenPageQuery {
   sort?: FeedSort;
 }
 
-export async function listTokensPage(
-  query: TokenPageQuery,
-): Promise<{rows: TokenRow[]; stats: Map<string, TokenStatRow>; next: string | null}> {
-  if (!hasDatabase) return {rows: [], stats: new Map(), next: null};
-  const sort = query.sort ?? "new";
-  if (sort === "volume" || sort === "mcap") {
-    return listStatsOrderedPage(query, sort === "mcap" ? "last_mcap" : "vol_24h");
-  }
-  if (sort === "rewards") {
-    return listRewardsOrderedPage(query);
-  }
-
-  const limit = Math.min(Math.max(query.limit ?? 50, 1), 100);
-  const statsBound =
+function newListStatsBound(query: TokenPageQuery): boolean {
+  return (
     isUserBound(query.minMarketCap, query.maxMarketCap) ||
     isUserBound(query.minVolume, query.maxVolume) ||
-    REQUIRE_MEASURED_MCAP_ON_NEW;
-  const liqBound = isUserBound(query.minLiquidity, query.maxLiquidity);
+    REQUIRE_MEASURED_MCAP_ON_NEW
+  );
+}
 
+/**
+ * New feed base query. Volume (`vol_24h > 0`) and the 6h launch window are
+ * applied by the caller as two requests — a single PostgREST `.or()` cannot
+ * mix `token_stats.vol_24h` with `listed_at`.
+ */
+function newListBaseQuery(
+  query: TokenPageQuery,
+  limit: number,
+  universe: "three-state" | "legacy",
+): any {
+  const statsBound = newListStatsBound(query);
+  const liqBound = isUserBound(query.minLiquidity, query.maxLiquidity);
   let request: any = db()
     .from("tokens")
     .select(statsBound ? TOKEN_STATS_INNER : "*")
@@ -340,7 +343,10 @@ export async function listTokensPage(
     .order("listed_at", {ascending: false})
     .order("address", {ascending: false})
     .limit(limit + 1);
-  request = applyUniverseFilter(request);
+  request =
+    universe === "legacy"
+      ? applyLegacyUniverseFilter(request)
+      : applyUniverseFilter(request);
   if (REQUIRE_MEASURED_MCAP_ON_NEW) {
     request = applyMeasuredMcapFilter(request, "token_stats");
   }
@@ -371,49 +377,67 @@ export async function listTokensPage(
     request = applyTradeableFilter(request, query.minLiquidity, query.maxLiquidity);
   }
   request = applyAgeBounds(request, query.minAgeHours, query.maxAgeHours);
-  request = applyLiveVolumeFilter(request, {
-    columnPrefix: statsBound ? "token_stats" : undefined,
-    graceListedSince: new Date(Date.now() - NEW_VOLUME_GRACE_MS).toISOString(),
-  });
-
   if (query.cursorListedAt) request = request.lt("listed_at", query.cursorListedAt);
   if (query.launchpad) request = request.eq("launchpad", query.launchpad);
   if (query.quoteKind) request = request.eq("quote_kind", query.quoteKind);
   if (query.rewardsOnly) request = applyRewardsAmountFilter(request);
+  return request;
+}
 
-  let {data, error} = await request;
+async function fetchNewListRows(
+  query: TokenPageQuery,
+  limit: number,
+  universe: "three-state" | "legacy",
+): Promise<{rows: TokenRow[]; error: {message: string} | null}> {
+  const statsBound = newListStatsBound(query);
+  const graceSince = new Date(Date.now() - NEW_VOLUME_GRACE_MS).toISOString();
+  const volumeReq = applyLiveVolumeFilter(newListBaseQuery(query, limit, universe), {
+    columnPrefix: statsBound ? "token_stats" : undefined,
+  });
+  const graceReq = applyListedSinceFilter(
+    newListBaseQuery(query, limit, universe),
+    graceSince,
+  );
+  const [volume, grace] = await Promise.all([volumeReq, graceReq]);
+  if (volume.error && grace.error) {
+    return {rows: [], error: volume.error};
+  }
+  if (volume.error) {
+    console.error("new feed volume filter failed; serving 6h listings", volume.error);
+  }
+  if (grace.error) {
+    console.error("new feed grace window failed; serving live-volume rows", grace.error);
+  }
+  const rows = mergeNewestListed(
+    [...((volume.data as TokenRow[]) ?? []), ...((grace.data as TokenRow[]) ?? [])].map(
+      flattenTokenRow,
+    ),
+  );
+  return {rows, error: null};
+}
+
+export async function listTokensPage(
+  query: TokenPageQuery,
+): Promise<{rows: TokenRow[]; stats: Map<string, TokenStatRow>; next: string | null}> {
+  if (!hasDatabase) return {rows: [], stats: new Map(), next: null};
+  const sort = query.sort ?? "new";
+  if (sort === "volume" || sort === "mcap") {
+    return listStatsOrderedPage(query, sort === "mcap" ? "last_mcap" : "vol_24h");
+  }
+  if (sort === "rewards") {
+    return listRewardsOrderedPage(query);
+  }
+
+  const limit = Math.min(Math.max(query.limit ?? 50, 1), 100);
+  let {rows: fetched, error} = await fetchNewListRows(query, limit, "three-state");
   if (error && /eligible/i.test(error.message)) {
     console.error("tokens.eligible filter failed; falling back to quote_kind");
-    request = applyLegacyUniverseFilter(
-      db()
-        .from("tokens")
-        .select(statsBound ? TOKEN_STATS_INNER : "*")
-        .eq("status", "listed")
-        .not("launchpad", "is", null)
-        .not("listed_at", "is", null)
-        .order("listed_at", {ascending: false})
-        .order("address", {ascending: false})
-        .limit(limit + 1),
-    );
-    if (REQUIRE_MEASURED_MCAP_ON_NEW) {
-      request = applyMeasuredMcapFilter(request, "token_stats");
-    }
-    request = applyLiveVolumeFilter(request, {
-      columnPrefix: statsBound ? "token_stats" : undefined,
-      graceListedSince: new Date(Date.now() - NEW_VOLUME_GRACE_MS).toISOString(),
-    });
-    const retry = await request;
-    data = retry.data;
-    error = retry.error;
+    ({rows: fetched, error} = await fetchNewListRows(query, limit, "legacy"));
   }
   if (error && /is_tradeable|liquidity_usd/i.test(error.message)) {
     console.error("tokens tradeable columns missing — run scripts/schema-tradeable.sql");
-    const retry = await request;
-    data = retry.data;
-    error = retry.error;
   }
   if (error) throw error;
-  const fetched = ((data as TokenRow[]) ?? []).map(flattenTokenRow);
   const page = fetched.slice(0, limit);
   const stats = await statsFor(page.map((row) => row.address));
 
@@ -812,7 +836,7 @@ export async function upsertTokens(rows: TokenWrite[]): Promise<number> {
       address: normalizeAddress(row.address),
       chain_id: row.chain_id ?? 4663,
       indexed_at: now,
-      eligible: true,
+      eligible: row.eligible ?? true,
     };
   });
 

@@ -4,10 +4,11 @@ import {isAddress, normalizeAddress} from "@/lib/address";
 import {isListed, qualifiesForUniverse, quoteKindFor, statusFor} from "@/lib/universe";
 import {RWA_BY_ADDRESS} from "./robinhood";
 import {launchpadsFor} from "./launchpads";
+import {resolveLongAuthenticity} from "./longAuthenticity";
 import {rpc, erc20Abi} from "./chain";
 import {db, hasDatabase} from "../db";
 import {commitListedWithPrice} from "./onchainPrice";
-import {upsertTokens, rowToAsset, type TokenWrite} from "./universeStore";
+import {getTokenRow, upsertTokens, rowToAsset, type TokenWrite} from "./universeStore";
 
 const ponsLaunchAbi = parseAbi([
   "function getLaunchedToken(address) view returns ((address token,address curve,address deployer,address creatorFeeRecipient,address pairToken,uint256 graduationThreshold,uint24 poolFee,int24 tickSpacing,uint16 creatorTaxBps,bool buybackEnabled,uint8 phase,uint256 sweptQuote,uint256 sweptTokens,uint256 sweptAt,bool exists))",
@@ -94,6 +95,15 @@ export async function qualifyAndInsert(address: string): Promise<QualifyResult> 
   };
   if (!qualifiesForUniverse(input)) return {status: "ineligible"};
 
+  let eligible = true;
+  if (pad.id === "long") {
+    const existing = hasDatabase ? await getTokenRow(wanted) : null;
+    const auth = await resolveLongAuthenticity(wanted);
+    if (auth === false || (auth == null && existing?.eligible === false)) {
+      eligible = false;
+    }
+  }
+
   let symbol = "???";
   let name = "Unknown";
   let decimals = 18;
@@ -135,7 +145,7 @@ export async function qualifyAndInsert(address: string): Promise<QualifyResult> 
     bonded_at: bonded && pad.id === "pons" ? now : null,
     listed_at: isListed(input) ? now : null,
     status,
-    eligible: true,
+    eligible,
   };
 
   if (!hasDatabase) return {status: "ineligible"};
@@ -144,6 +154,7 @@ export async function qualifyAndInsert(address: string): Promise<QualifyResult> 
   } else {
     await upsertTokens([row]);
   }
+  if (!row.eligible) return {status: "ineligible"};
   return {status: "listed", inserted: true, address: wanted};
 }
 

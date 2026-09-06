@@ -326,24 +326,46 @@ export function showsWithVolume24h(
 }
 
 /**
- * PostgREST: `vol_24h > 0`. With grace, `vol_24h > 0 OR listed_at >= since`.
+ * PostgREST: `vol_24h > 0` on one table (or `token_stats.vol_24h` via embed).
  * `.gt` drops null — that is the hide. Never emit a standalone IS NOT NULL.
+ *
+ * Do not put `token_stats.vol_24h` inside `.or()` with `listed_at`. PostgREST
+ * cannot parse that cross-table OR and `/api/tokens/new` 503s. New's 6h
+ * launch window is a second query (`applyListedSinceFilter`) merged in JS.
  */
 export function applyLiveVolumeFilter<T>(
   request: T,
-  opts?: {columnPrefix?: string; graceListedSince?: string | null},
+  opts?: {columnPrefix?: string},
 ): T {
   const col = opts?.columnPrefix ? `${opts.columnPrefix}.vol_24h` : "vol_24h";
-  const next = request as T & {
-    gt: (column: string, value: number) => T;
-    or: (filter: string) => T;
-  };
-  if (opts?.graceListedSince) {
-    return next.or(
-      `${col}.gt.0,listed_at.gte."${opts.graceListedSince}"`,
-    ) as T;
+  return (request as T & {gt: (column: string, value: number) => T}).gt(
+    col,
+    0,
+  ) as T;
+}
+
+/** Fresh listings: `listed_at >= since`. Same-table `.gte`, not an `.or()`. */
+export function applyListedSinceFilter<T>(request: T, since: string): T {
+  return (request as T & {gte: (column: string, value: string) => T}).gte(
+    "listed_at",
+    since,
+  ) as T;
+}
+
+/** Newest `listed_at` first, one row per address. */
+export function mergeNewestListed<T extends {address: string; listed_at?: string | null}>(
+  rows: T[],
+): T[] {
+  const seen = new Map<string, T>();
+  for (const row of rows) {
+    const key = row.address.toLowerCase();
+    if (!seen.has(key)) seen.set(key, row);
   }
-  return next.gt(col, 0) as T;
+  return [...seen.values()].sort((a, b) => {
+    const listed = (b.listed_at ?? "").localeCompare(a.listed_at ?? "");
+    if (listed !== 0) return listed;
+    return b.address.toLowerCase().localeCompare(a.address.toLowerCase());
+  });
 }
 
 function formatUsdStat(value: number | null | undefined): string {

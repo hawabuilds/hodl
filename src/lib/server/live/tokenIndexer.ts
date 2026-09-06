@@ -47,6 +47,8 @@ import {commitListedWithPrice, refreshOnchainPrices} from "./onchainPrice";
 import {persistResolvedImages} from "./tokenImages";
 import {rewardRwaFor} from "./rewardDetect";
 import {asAddress as parseAddress, normalizeAddress} from "@/lib/address";
+import {longWriteEligible} from "@/lib/longAuthenticity";
+import {resolveLongAuthenticity} from "./longAuthenticity";
 import {hasDatabase} from "../db";
 
 const PUBLIC_RPC = "https://rpc.mainnet.chain.robinhood.com";
@@ -607,6 +609,11 @@ async function writeLong(
     decimals: 18,
     supply: null,
   }));
+  const auth = await withTimeout(
+    resolveLongAuthenticity(token),
+    8_000,
+    "long authenticity",
+  ).catch(() => null);
   const at = await blockTime(block);
   const row: TokenWrite = {
     address: token,
@@ -626,7 +633,7 @@ async function writeLong(
     bonded_at: null,
     listed_at: at,
     status: "listed",
-    eligible: true,
+    eligible: longWriteEligible(auth),
   };
   if (!rowQualifies(row)) return null;
   return row;

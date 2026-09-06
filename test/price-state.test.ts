@@ -4,10 +4,12 @@ import {describe, it} from "node:test";
 import {MIN_LIQUIDITY_USD} from "../src/config/liquidity.ts";
 import {
   applyAgeBounds,
+  applyListedSinceFilter,
   applyLiveVolumeFilter,
   applyLiquidityBoundFilter,
   applyMeasuredMcapFilter,
   applyNumericBounds,
+  mergeNewestListed,
   formatLiquidityUsd,
   formatMarketCapAt,
   formatMarketCapUsd,
@@ -364,7 +366,7 @@ describe("live 24h volume browse gate", () => {
     );
   });
 
-  it("builds vol_24h > 0, or volume-or-listed_at on New", () => {
+  it("builds vol_24h > 0 and never a cross-table or() on New", () => {
     const trending = recordingQuery();
     applyLiveVolumeFilter(trending);
     assert.deepEqual(trending.calls, ["gt:vol_24h:0"]);
@@ -374,14 +376,31 @@ describe("live 24h volume browse gate", () => {
     assert.deepEqual(prefixed.calls, ["gt:token_stats.vol_24h:0"]);
 
     const since = new Date(now - NEW_VOLUME_GRACE_MS).toISOString();
+    const grace = recordingQuery();
+    applyListedSinceFilter(grace, since);
+    assert.deepEqual(grace.calls, [`gte:listed_at:${since}`]);
+
     const neu = recordingQuery();
-    applyLiveVolumeFilter(neu, {
-      columnPrefix: "token_stats",
-      graceListedSince: since,
-    });
+    applyLiveVolumeFilter(neu, {columnPrefix: "token_stats"});
+    applyListedSinceFilter(neu, since);
     assert.deepEqual(neu.calls, [
-      `or:token_stats.vol_24h.gt.0,listed_at.gte."${since}"`,
+      "gt:token_stats.vol_24h:0",
+      `gte:listed_at:${since}`,
     ]);
+    assert.ok(!neu.calls.some((call) => call.startsWith("or:")));
     assert.ok(!neu.calls.some((call) => /eligible|is_tradeable/i.test(call)));
+  });
+
+  it("merges volume and grace pages by newest listed_at", () => {
+    const merged = mergeNewestListed([
+      {address: "0xBBB", listed_at: "2026-01-02T01:00:00.000Z"},
+      {address: "0xaaa", listed_at: "2026-01-02T03:00:00.000Z"},
+      {address: "0xAAA", listed_at: "2026-01-02T03:00:00.000Z"},
+      {address: "0xccc", listed_at: "2026-01-02T02:00:00.000Z"},
+    ]);
+    assert.deepEqual(
+      merged.map((row) => row.address.toLowerCase()),
+      ["0xaaa", "0xccc", "0xbbb"],
+    );
   });
 });
