@@ -13,7 +13,7 @@ import {useRouter} from "next/navigation";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {useAsset, useChart, useNews, useTrades} from "@/hooks/useAsset";
 import {cn} from "@/lib/cn";
-import {clock, compactMoney, percent, shortAddress} from "@/lib/format";
+import {clock, percent, shortAddress} from "@/lib/format";
 import {lastHomePath} from "@/lib/homeState";
 import {sectorFor} from "@/lib/sectors";
 import {defaultChartTimeframe} from "@/lib/chartTimeframe";
@@ -331,12 +331,6 @@ export function AssetPage({
               </span>
             </div>
           ) : null}
-          {launchContext?.mcap != null ? (
-            <div className="tnum mt-1 text-[10px] font-bold uppercase tracking-[0.06em] text-faint">
-              {launchContext.label}{" "}
-              <span className="text-muted">{compactMoney(launchContext.mcap)}</span>
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -351,6 +345,7 @@ export function AssetPage({
           windowMs={chartWindowMs(timeframe)}
           emptyLabel={`Not enough history for ${timeframe}`}
           style={chartStyle}
+          showBaseline={asset.kind !== "token"}
           floorPrice={launchContext?.price ?? livePoints[0]?.price}
           onNeedOlder={chart.hasMore ? chart.loadOlder : undefined}
           onScrub={setScrubbed}

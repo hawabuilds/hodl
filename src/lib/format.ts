@@ -38,12 +38,32 @@ export function compact(value: number): string {
  * $0.000041 both have to read cleanly, so the precision follows the number
  * rather than being fixed at two places.
  */
+/**
+ * Always a dollar figure with a decimal point — never `1.2e-6`.
+ * Tiny prices keep every leading zero so $0.000041 and $0.00000012 stay readable.
+ */
+function decimalUsd(abs: number): string {
+  if (abs >= 1) return usd.format(abs);
+  if (abs === 0) return "$0.00";
+  const firstDigit = Math.floor(Math.log10(abs));
+  const decimals = Math.min(18, Math.max(2, -firstDigit + 3));
+  let digits = abs.toFixed(decimals);
+  if (digits.includes("e") || digits.includes("E")) {
+    digits = abs.toLocaleString("en-US", {
+      useGrouping: false,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  }
+  digits = digits.replace(/(\.\d*?[1-9])0+$/, "$1");
+  return `$${digits}`;
+}
+
 export function price(value: number): string {
   if (!Number.isFinite(value)) return "—";
-  if (value >= 1) return usd.format(value);
-  if (value >= 0.01) return `$${value.toFixed(4)}`;
-  if (value >= 0.0001) return `$${value.toFixed(6)}`;
-  return `$${value.toExponential(2)}`;
+  if (value === 0) return "$0.00";
+  const sign = value < 0 ? "-" : "";
+  return `${sign}${decimalUsd(Math.abs(value))}`;
 }
 
 /** Token balances run to the millions; RWA balances run to fractions of a share. */

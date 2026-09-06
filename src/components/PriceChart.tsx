@@ -373,7 +373,12 @@ export function PriceChart({
     if (showBaseline && points[0]) {
       const first = points[0].price;
       if (baselineRef.current) {
-        baselineRef.current.applyOptions({price: first, color: colors.faint});
+        baselineRef.current.applyOptions({
+          price: first,
+          color: colors.faint,
+          axisLabelVisible: false,
+          title: "",
+        });
       } else {
         baselineRef.current = series.createPriceLine({
           price: first,
@@ -381,6 +386,7 @@ export function PriceChart({
           lineStyle: LineStyle.Dashed,
           lineWidth: 1,
           axisLabelVisible: false,
+          title: "",
         });
       }
     } else if (baselineRef.current) {
