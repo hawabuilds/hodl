@@ -1,0 +1,18 @@
+# Second Railway service: scheduled HTTP hits against the Vercel app.
+# Create a new service from this repo and point it at this config file.
+#
+# Required env:
+#   VERCEL_APP_URL=https://hodl.fan
+#   CRON_SECRET=<same as Vercel>
+#
+# Railway minimum cron interval is five minutes (UTC). Prices refresh every
+# five minutes here instead of every minute on Vercel.
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm install"
+
+[deploy]
+startCommand = "npm run cron:railway"
+cronSchedule = "*/5 * * * *"
+restartPolicyType = "NEVER"

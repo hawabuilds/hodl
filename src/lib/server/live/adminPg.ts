@@ -14,7 +14,7 @@
 import dns from "node:dns";
 import {lookup as dnsLookup} from "node:dns/promises";
 import net from "node:net";
-import type pg from "pg";
+import pg from "pg";
 
 dns.setDefaultResultOrder("ipv4first");
 
@@ -177,14 +177,84 @@ function parseKeywordValue(trimmed: string): PgParts {
   return parts;
 }
 
+function supabaseProjectRef(): string {
+  const raw = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  try {
+    const host = new URL(raw).hostname;
+    const ref = host.split(".")[0] ?? "";
+    return ref && ref !== "localhost" ? ref : "";
+  } catch {
+    return "";
+  }
+}
+
+function assertSupabaseAuthShape(parts: PgParts): void {
+  if (parts.password.startsWith("[") && parts.password.endsWith("]") && parts.password.length > 2) {
+    throw new Error(
+      "DATABASE_URL password is wrapped in [ ]. Those brackets are the Supabase docs placeholder, not part of the password. Remove them, then encode / as %2F and @ as %40.",
+    );
+  }
+  if (/\.pooler\.supabase\.com$/i.test(parts.host) && /^postgres$/i.test(parts.user)) {
+    const ref = supabaseProjectRef();
+    throw new Error(
+      `Supabase pooler rejects user "postgres". Use postgres.<project-ref>${
+        ref ? ` (postgres.${ref})` : ""
+      } as the username.`,
+    );
+  }
+}
+
 function parseAdminParts(raw: string): PgParts {
   const trimmed = stripWrappingQuotes(raw);
   if (!trimmed) throw new Error("DATABASE_URL is not set (direct Postgres, port 5432)");
-  if (/^(postgres(?:ql)?):\/\//i.test(trimmed)) return parsePostgresUri(trimmed);
-  if (/^(?:host|hostaddr|dbname|database|user|username|password|port)\s*=/i.test(trimmed)) {
-    return parseKeywordValue(trimmed);
+  const parts = /^(postgres(?:ql)?):\/\//i.test(trimmed)
+    ? parsePostgresUri(trimmed)
+    : /^(?:host|hostaddr|dbname|database|user|username|password|port)\s*=/i.test(trimmed)
+      ? parseKeywordValue(trimmed)
+      : null;
+  if (!parts) throw invalidDatabaseUrl();
+  assertSupabaseAuthShape(parts);
+  return parts;
+}
+
+/** Safe user + host + password shape for logs. Never include the password. */
+export function describeAdminPgTarget(raw = process.env.DATABASE_URL ?? ""): {
+  user: string;
+  host: string;
+  port: string;
+  passwordLen: number;
+  slash: boolean;
+  at: boolean;
+  percent: boolean;
+  brackets: boolean;
+} {
+  const parts = parseAdminParts(raw);
+  const password = parts.password;
+  return {
+    user: parts.user,
+    host: parts.host,
+    port: parts.port || "5432",
+    passwordLen: password.length,
+    slash: password.includes("/"),
+    at: password.includes("@"),
+    percent: password.includes("%"),
+    brackets: password.startsWith("[") && password.endsWith("]"),
+  };
+}
+
+export function passwordRejectedError(raw = process.env.DATABASE_URL ?? ""): Error {
+  let target = {user: "postgres", host: "DATABASE_URL host"};
+  try {
+    target = describeAdminPgTarget(raw);
+  } catch {
+    // Keep the generic target if the URL itself is malformed.
   }
-  throw invalidDatabaseUrl();
+  return new Error(
+    `Postgres rejected the password for user "${target.user}" at ${target.host}. ` +
+      "TLSWrap.onStreamRead is only the socket read, not the cause. " +
+      "Do not wrap the password in [ ]. On *.pooler.supabase.com the user must be " +
+      "postgres.<project-ref>. Encode / as %2F and @ as %40 once.",
+  );
 }
 
 function buildAdminPgUrl(parts: PgParts): URL {
@@ -236,6 +306,34 @@ function isNoIpv4(error: unknown): boolean {
   );
 }
 
+export function isSessionPoolerHost(host: string): boolean {
+  return /\.pooler\.supabase\.com$/i.test(host);
+}
+
+export function isTransactionPoolerPort(port: string | number | undefined): boolean {
+  return String(port || "") === "6543";
+}
+
+export function isPoolerCheckoutTimeout(error: unknown): boolean {
+  const code =
+    error && typeof error === "object" && "code" in error ? String(error.code) : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    code === "XX000" &&
+    /ECHECKOUTTIMEOUT|unable to check out connection from the pool/i.test(message)
+  );
+}
+
+export function poolerCheckoutTimeoutError(): Error {
+  return new Error(
+    "Supabase session pooler timed out (ECHECKOUTTIMEOUT). " +
+      "This worker holds one session for the advisory lock. " +
+      "A crash loop leaks those sessions until they expire. " +
+      "Wait ~30s with the service stopped, keep replicas at 1, " +
+      "and use the session pooler on port 5432 — not transaction port 6543.",
+  );
+}
+
 export function ipv6UnreachableError(host: string): Error {
   return new Error(
     `Postgres host ${host} is IPv6-only and this runtime has no IPv6 route. ` +
@@ -283,4 +381,29 @@ export async function adminPgConfig(
     {...parts, host: address},
     {rejectUnauthorized: false, servername: host},
   );
+}
+
+/** Worker budget: 1 checked-out lock session + up to 4 short-lived work checkouts. */
+export const WORKER_POOL_MAX = 5;
+
+/**
+ * One Pool for the Railway worker. Callers must keep the advisory-lock
+ * client checked out and release every other checkout after the batch.
+ * Do not log the connection string.
+ */
+export async function createAdminPool(
+  opts: {
+    max?: number;
+    connectionTimeoutMillis?: number;
+    idleTimeoutMillis?: number;
+  } = {},
+): Promise<pg.Pool> {
+  const config = await adminPgConfig();
+  return new pg.Pool({
+    ...config,
+    max: opts.max ?? WORKER_POOL_MAX,
+    connectionTimeoutMillis: opts.connectionTimeoutMillis ?? 30_000,
+    idleTimeoutMillis: opts.idleTimeoutMillis ?? 10_000,
+    allowExitOnIdle: false,
+  });
 }

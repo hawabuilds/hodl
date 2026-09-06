@@ -13,6 +13,8 @@ export const CRON_LIVE_TIP = {
   skipImages: true,
   drainGap: false,
   writeCap: 8,
+  writeConcurrency: 1,
+  batchPauseMs: 250,
   maxBlocks: 1_000n,
   budgetMs: 45_000,
 } as const satisfies IndexOptions;
@@ -23,6 +25,9 @@ export const WORKER_LIVE_TIP = {
   refreshStats: false,
   skipImages: true,
   drainGap: false,
+  writeCap: 8,
+  writeConcurrency: 1,
+  batchPauseMs: 400,
   maxBlocks: 1_000n,
   budgetMs: 0,
 } as const satisfies IndexOptions;

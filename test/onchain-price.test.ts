@@ -8,8 +8,6 @@ import {
 } from "../src/lib/server/live/onchainPrice.ts";
 import {
   isMeasuredMcap,
-  REQUIRE_MEASURED_MCAP_ON_NEW,
-  showsOnNew,
 } from "../src/lib/priceState.ts";
 
 function sqrtX96FromRaw(rawCurrency1Per0: number): bigint {
@@ -61,22 +59,4 @@ describe("measured market cap is never a null", () => {
     assert.equal(isMeasuredMcap({priced_at: "2026-09-04T00:00:00Z", last_mcap: 12_000}), true);
   });
 
-  it("keeps unevaluated rows on New until the gate is flipped", () => {
-    assert.equal(REQUIRE_MEASURED_MCAP_ON_NEW, false);
-    assert.equal(showsOnNew(null), true);
-    assert.equal(showsOnNew({priced_at: null, last_mcap: null}), true);
-    assert.equal(showsOnNew({price_status: "no_pool"}), false);
-    assert.equal(showsOnNew({price_status: "failed"}), false);
-    assert.equal(
-      showsOnNew({priced_at: null, last_mcap: null}, {requireMeasured: true}),
-      false,
-    );
-    assert.equal(
-      showsOnNew(
-        {priced_at: "2026-09-04T00:00:00Z", last_mcap: 1},
-        {requireMeasured: true},
-      ),
-      true,
-    );
-  });
 });

@@ -15,6 +15,11 @@ import {
   redactSecrets,
   rowsWritten,
 } from "../src/lib/server/live/liveTip";
+import {
+  WORKER_POOL_MAX,
+  isPoolerCheckoutTimeout,
+  isTransactionPoolerPort,
+} from "../src/lib/server/live/adminPg";
 
 describe("live tip shared pass", () => {
   it("cron keeps the 45s budget; worker does not", () => {
@@ -24,7 +29,10 @@ describe("live tip shared pass", () => {
     assert.equal(CRON_LIVE_TIP.budgetMs, 45_000);
     assert.equal(CRON_LIVE_TIP.writeCap, 8);
     assert.equal(WORKER_LIVE_TIP.budgetMs, 0);
-    assert.equal("writeCap" in WORKER_LIVE_TIP, false);
+    assert.equal(WORKER_LIVE_TIP.writeCap, 8);
+    assert.equal(WORKER_LIVE_TIP.writeConcurrency, 1);
+    assert.equal(WORKER_LIVE_TIP.batchPauseMs, 400);
+    assert.equal(CRON_LIVE_TIP.writeConcurrency, 1);
   });
 
   it("cron route calls the extracted pass", () => {
@@ -36,11 +44,25 @@ describe("live tip shared pass", () => {
     assert.doesNotMatch(src, /indexTokens\(/);
   });
 
-  it("vercel.json still has the index-tokens cron", () => {
+  it("worker uses one Pool max 5 and never uncapped writes", () => {
+    const src = readFileSync(join(process.cwd(), "src/worker/index.ts"), "utf8");
+    assert.match(src, /createAdminPool/);
+    assert.match(src, /WORKER_POOL_MAX/);
+    assert.match(src, /pg_advisory_unlock/);
+    assert.match(src, /releaseWorkerPg/);
+    assert.doesNotMatch(src, /new pg\.Client/);
+    assert.doesNotMatch(src, /writeCap:\s*undefined/);
+    assert.doesNotMatch(src, /Promise\.all\(/);
+    assert.doesNotMatch(src, /another worker holds the advisory lock; exiting/);
+    assert.match(src, /advisory lock held by another session; waiting/);
+  });
+
+  it("vercel.json does not schedule token indexing (Railway worker owns it)", () => {
     const vercel = JSON.parse(readFileSync(join(process.cwd(), "vercel.json"), "utf8")) as {
       crons: {path: string}[];
     };
-    assert.ok(vercel.crons.some((cron) => cron.path === "/api/cron/index-tokens"));
+    const paths = vercel.crons.map((row) => row.path);
+    assert.ok(!paths.includes("/api/cron/index-tokens"));
   });
 });
 
@@ -87,6 +109,17 @@ describe("live tip backoff and errors", () => {
     assert.equal(pollIntervalMs(0, true), 2_000);
     assert.equal(pollIntervalMs(300, false), 50);
     assert.equal(pollIntervalMs(0, false), 250);
+  });
+
+  it("recognizes a session-pooler checkout timeout", () => {
+    const error = new Error(
+      "(ECHECKOUTTIMEOUT) unable to check out connection from the pool after 15000ms in Session mode",
+    ) as Error & {code: string};
+    error.code = "XX000";
+    assert.equal(isPoolerCheckoutTimeout(error), true);
+    assert.equal(isTransactionPoolerPort(6543), true);
+    assert.equal(isTransactionPoolerPort(5432), false);
+    assert.equal(WORKER_POOL_MAX, 5);
   });
 
   it("logs cause and status without leaking URLs", () => {

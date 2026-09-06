@@ -1,4 +1,5 @@
 import {cached, stale} from "./cache";
+import {linkPreviewUserAgent} from "@/config/appUrl";
 
 /**
  * The picture a story actually leads with.
@@ -37,8 +38,7 @@ const CONCURRENCY = 8;
  * a public article, and identifies who is asking. It does not send consent
  * cookies or otherwise pretend a choice was made.
  */
-const USER_AGENT =
-  "Mozilla/5.0 (compatible; RWA-link-preview/1.0; +https://rwa.app) facebookexternalhit/1.1";
+const USER_AGENT = linkPreviewUserAgent();
 
 const META_PATTERNS = [
   /<meta[^>]+property=["']og:image(?::secure_url|:url)?["'][^>]*content=["']([^"']+)["']/i,

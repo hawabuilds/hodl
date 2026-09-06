@@ -519,6 +519,8 @@ async function indexFactory(
   extras: {
     skipImages?: boolean;
     writeCap?: number;
+    writeConcurrency?: number;
+    batchPauseMs?: number;
     storedCursor?: bigint;
     bondedOnly?: boolean;
     /** Stop at this block even if head is further (gap walks toward live). */
@@ -529,10 +531,14 @@ async function indexFactory(
     persistWrites?: (rows: TokenWrite[]) => Promise<void>;
     /** Process-lifetime dedupe so a 30-block reorg overlap does not re-fetch. */
     seenTokens?: Set<string>;
+    cursorTimeoutMs?: number;
   } = {},
 ): Promise<IndexPass> {
   const tip = await head();
-  const stored = extras.storedCursor ?? (await readCursors([cursorName])).get(cursorName) ?? 0n;
+  const stored =
+    extras.storedCursor ??
+    (await readCursors([cursorName], undefined, extras.cursorTimeoutMs)).get(cursorName) ??
+    0n;
   const start = stored > 0n ? (stored > REORG ? stored - REORG : 0n) : factory.deployedAtBlock;
   const cap = extras.untilBlock != null && extras.untilBlock < tip ? extras.untilBlock : tip;
   const end = start + maxBlocks > cap ? cap : start + maxBlocks;
@@ -626,7 +632,7 @@ async function indexFactory(
     const persist = extras.bondedOnly ? jobs.filter((job) => job.bonded) : jobs;
     const capped = capByBlock(persist, (job) => job.block, extras.writeCap);
     if (capped.endAt != null) cursorTo = capped.endAt;
-    const rows = await mapLimit(capped.items, 8, (job) =>
+    const rows = await mapLimit(capped.items, extras.writeConcurrency ?? 8, (job) =>
       writePons(factory, job.token, job.pair, job.curve, job.block, job.bonded, unresolved),
     );
     for (const row of rows) if (row) writes.push(row);
@@ -634,7 +640,7 @@ async function indexFactory(
     const created = await logsUntil(factory.address, AIRLOCK_CREATE, start, end, `${factory.id} create logs`);
     const capped = capByBlock(created, (log) => log.blockNumber, extras.writeCap);
     if (capped.endAt != null) cursorTo = capped.endAt;
-    const rows = await mapLimit(capped.items, 8, (log) => {
+    const rows = await mapLimit(capped.items, extras.writeConcurrency ?? 8, (log) => {
       const token = asAddress(log.args?.asset);
       if (!token) return Promise.resolve(null);
       if (extras.seenTokens?.has(token)) return Promise.resolve(null);
@@ -689,6 +695,9 @@ async function indexFactory(
         writes.map((row) => ({address: row.address, launchpad: row.launchpad})),
       );
     }
+    if ((extras.batchPauseMs ?? 0) > 0) {
+      await sleep(extras.batchPauseMs!);
+    }
   }
   if (cursorTo !== stored && !extras.persistWrites) {
     try {
@@ -728,6 +737,10 @@ export interface IndexOptions {
   skipImages?: boolean;
   /** Cap new rows per factory so one busy window cannot eat the whole minute. */
   writeCap?: number;
+  /** Token meta fetches per factory. Live tip stays at 1. */
+  writeConcurrency?: number;
+  /** Sleep after a factory that wrote rows. */
+  batchPauseMs?: number;
   /**
    * Drain parked `live-gap` cursors. Cron must leave this false — sequential
    * gap scans are why the tip never persisted before the 60s kill.
@@ -739,6 +752,8 @@ export interface IndexOptions {
   persistWrites?: (rows: TokenWrite[]) => Promise<void>;
   /** Process-lifetime dedupe across live-tip ticks. */
   seenTokens?: Set<string>;
+  /** Backfill scripts may wait longer on a cold PostgREST. */
+  cursorTimeoutMs?: number;
 }
 
 /**
@@ -776,13 +791,17 @@ function emptyPass(factory: string): IndexPass {
   return {factory, from: "0", to: "0", cursorTo: "0", upserts: 0, unresolvedRewards: []};
 }
 
-async function readCursors(names: string[], held?: Map<string, bigint>): Promise<Map<string, bigint>> {
+async function readCursors(
+  names: string[],
+  held?: Map<string, bigint>,
+  timeoutMs = 8_000,
+): Promise<Map<string, bigint>> {
   if (held) {
     const map = new Map<string, bigint>();
     for (const name of names) map.set(name, held.get(name) ?? 0n);
     return map;
   }
-  return withTimeout(cursorsFor(names), 8_000, "cursor read");
+  return withTimeout(cursorsFor(names), timeoutMs, "cursor read");
 }
 
 /**
@@ -796,6 +815,8 @@ async function indexLiveTip(
   extras: {
     skipImages?: boolean;
     writeCap?: number;
+    writeConcurrency?: number;
+    batchPauseMs?: number;
     heldCursors?: Map<string, bigint>;
     persistWrites?: (rows: TokenWrite[]) => Promise<void>;
     seenTokens?: Set<string>;
@@ -804,6 +825,8 @@ async function indexLiveTip(
   const factoryExtras = {
     skipImages: extras.skipImages,
     writeCap: extras.writeCap,
+    writeConcurrency: extras.writeConcurrency ?? 1,
+    batchPauseMs: extras.batchPauseMs,
     persistWrites: extras.persistWrites,
     seenTokens: extras.seenTokens,
     bondedOnly: true,
@@ -891,6 +914,8 @@ export async function indexLiveGaps(
   extras: {
     skipImages?: boolean;
     writeCap?: number;
+    writeConcurrency?: number;
+    batchPauseMs?: number;
     heldCursors?: Map<string, bigint>;
     persistWrites?: (rows: TokenWrite[]) => Promise<void>;
   } = {},
@@ -916,6 +941,8 @@ export async function indexLiveGaps(
       const pass = await indexFactory(factory, window, deadline, gapKey, {
         skipImages: extras.skipImages,
         writeCap: extras.writeCap,
+        writeConcurrency: extras.writeConcurrency ?? 1,
+        batchPauseMs: extras.batchPauseMs,
         storedCursor: gapStored,
         untilBlock: until,
         bondedOnly: true,
@@ -954,6 +981,8 @@ export async function indexTokens(
       const live = await indexLiveTip(deadline, maxBlocks, {
         skipImages: opts.skipImages,
         writeCap: opts.writeCap,
+        writeConcurrency: opts.writeConcurrency,
+        batchPauseMs: opts.batchPauseMs,
         heldCursors: opts.heldCursors,
         persistWrites: opts.persistWrites,
         seenTokens: opts.seenTokens,
@@ -973,6 +1002,8 @@ export async function indexTokens(
       const gaps = await indexLiveGaps(deadline, maxBlocks, {
         skipImages: opts.skipImages,
         writeCap: opts.writeCap,
+        writeConcurrency: opts.writeConcurrency,
+        batchPauseMs: opts.batchPauseMs,
         heldCursors: opts.heldCursors,
         persistWrites: opts.persistWrites,
       });
@@ -999,7 +1030,10 @@ export async function indexTokens(
     if (factory.id === "long-factory") {
       // Same txs as Airlock Create; no ABI we can prove. Cursor still advances
       // so a later generation can be added without rescanning from zero.
-      const stored = (await readCursors([`tokens:${factory.id}`])).get(`tokens:${factory.id}`) ?? 0n;
+      const stored =
+        (await readCursors([`tokens:${factory.id}`], undefined, opts.cursorTimeoutMs)).get(
+          `tokens:${factory.id}`,
+        ) ?? 0n;
       const start = stored > 0n ? stored : factory.deployedAtBlock;
       const end = start + maxBlocks > tip ? tip : start + maxBlocks;
       if (end !== stored) await writeCursor(`tokens:${factory.id}`, end);
@@ -1016,6 +1050,9 @@ export async function indexTokens(
     const pass = await indexFactory(factory, maxBlocks, deadline, `tokens:${factory.id}`, {
       skipImages: opts.skipImages,
       writeCap: opts.writeCap,
+      writeConcurrency: opts.writeConcurrency,
+      batchPauseMs: opts.batchPauseMs,
+      cursorTimeoutMs: opts.cursorTimeoutMs,
     });
     passes.push(pass);
     for (const address of pass.unresolvedRewards) unresolved.add(address);

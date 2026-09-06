@@ -4,8 +4,10 @@ import {readFileSync} from "node:fs";
 import {join} from "node:path";
 import {
   adminPgConfig,
+  describeAdminPgTarget,
   ipv6UnreachableError,
   parseAdminDatabaseUrl,
+  passwordRejectedError,
   toAdminPgUrl,
 } from "../src/lib/server/live/adminPg.ts";
 
@@ -48,6 +50,49 @@ describe("admin postgres IPv4 connect", () => {
     assert.equal(parsed.username, "postgres");
     assert.equal(decodeURIComponent(parsed.password), "V/@tJzqEy4dG6Kk");
     assert.equal(parsed.searchParams.get("sslmode"), "require");
+  });
+
+  it("rejects a pooler URL that uses user postgres without the project ref", () => {
+    assert.throws(
+      () =>
+        toAdminPgUrl(
+          "postgresql://postgres:V%2F%40secret@aws-1-eu-west-1.pooler.supabase.com:5432/postgres",
+        ),
+      /postgres\.<project-ref>/,
+    );
+  });
+
+  it("rejects a password wrapped in the Supabase [YOUR-PASSWORD] placeholder", () => {
+    assert.throws(
+      () =>
+        toAdminPgUrl(
+          "postgresql://postgres.abcde:%5BV%2F%40secret%5D@aws-1-eu-west-1.pooler.supabase.com:5432/postgres",
+        ),
+      /wrapped in \[ \]/,
+    );
+  });
+
+  it("describes the target without leaking the password", () => {
+    const target = describeAdminPgTarget(
+      "postgresql://postgres.abcde:V%2F%40secret@aws-1-eu-west-1.pooler.supabase.com:5432/postgres",
+    );
+    assert.equal(target.user, "postgres.abcde");
+    assert.equal(target.host, "aws-1-eu-west-1.pooler.supabase.com");
+    assert.equal(target.passwordLen, 9);
+    assert.equal(target.slash, true);
+    assert.equal(target.at, true);
+    assert.equal(target.percent, false);
+    assert.equal(target.brackets, false);
+  });
+
+  it("names the 28P01 failure without leaking the password", () => {
+    const error = passwordRejectedError(
+      "postgresql://postgres.abcde:V%2F%40secret@aws-1-eu-west-1.pooler.supabase.com:5432/postgres",
+    );
+    assert.match(error.message, /postgres\.abcde/);
+    assert.match(error.message, /pooler\.supabase\.com/);
+    assert.match(error.message, /TLSWrap/);
+    assert.doesNotMatch(error.message, /secret/);
   });
 
   it("keeps already-encoded passwords and query params", () => {
@@ -141,6 +186,8 @@ describe("admin postgres IPv4 connect", () => {
       "utf8",
     );
     assert.match(worker, /adminPgConfig/);
+    assert.match(worker, /describeAdminPgTarget/);
+    assert.match(worker, /passwordRejectedError/);
     assert.match(catalogue, /adminPgConfig/);
     assert.doesNotMatch(worker, /new pg\.(?:Client|Pool)\(\{[\s\S]*connectionString: url/);
   });

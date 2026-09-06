@@ -1,13 +1,28 @@
 /**
  * Always-on live-tip indexer. Railway runs exactly one replica.
  *
+ * One `pg.Pool` (max 5): one checkout holds the advisory lock for the
+ * process lifetime; every other query checks out, runs the batch, and
+ * releases. Token pages stay sequential with a writeCap. SIGTERM unlocks
+ * and `pool.end()` so sessions cannot leak.
+ *
  * Shares `indexLiveTipPass` with the Vercel cron. Turn that cron off once
  * this process is keeping pace — two indexers racing is worse than one stall.
  */
 import pg from "pg";
 import {hasDatabase} from "@/lib/server/db";
 import {rpc} from "@/lib/server/live/chain";
-import {adminPgConfig, ipv6UnreachableError, parseAdminDatabaseUrl} from "@/lib/server/live/adminPg";
+import {
+  WORKER_POOL_MAX,
+  createAdminPool,
+  describeAdminPgTarget,
+  ipv6UnreachableError,
+  isPoolerCheckoutTimeout,
+  isTransactionPoolerPort,
+  parseAdminDatabaseUrl,
+  passwordRejectedError,
+  poolerCheckoutTimeoutError,
+} from "@/lib/server/live/adminPg";
 import {
   LIVE_TIP_HEARTBEAT,
   WORKER_LIVE_TIP,
@@ -32,8 +47,12 @@ import {
 const LOCK_CLASS = 4663;
 const LOCK_ID = 1;
 const PUBLIC_RPC = "https://rpc.mainnet.chain.robinhood.com";
+/** Extra pause after a pass that wrote rows so PostgREST is not hammered. */
+const WRITE_PASS_PAUSE_MS = 400;
 
 let exiting = false;
+let workerPool: pg.Pool | null = null;
+let lockClient: pg.PoolClient | null = null;
 
 function alchemyWsUrl(): string | null {
   const wss = process.env.ALCHEMY_WSS_URL?.trim();
@@ -225,72 +244,182 @@ class HeadFeed {
   }
 }
 
-async function createPool(): Promise<pg.Pool> {
-  const config = await adminPgConfig();
-  const pool = new pg.Pool({
-    ...config,
-    max: 3,
-    idleTimeoutMillis: 60_000,
+function rewritePoolConnectError(error: unknown): never {
+  const code =
+    error && typeof error === "object" && "code" in error ? String(error.code) : "";
+  const message = error instanceof Error ? error.message : String(error);
+  if (isPoolerCheckoutTimeout(error)) throw poolerCheckoutTimeoutError();
+  if (code === "ENETUNREACH" && /:[0-9a-f]{0,4}:/i.test(message)) {
+    const host = new URL(parseAdminDatabaseUrl(process.env.DATABASE_URL ?? "")).hostname;
+    throw ipv6UnreachableError(host);
+  }
+  if (code === "28P01" || /password authentication failed/i.test(message)) {
+    throw passwordRejectedError();
+  }
+  throw error instanceof Error ? error : new Error(message);
+}
+
+async function openWorkerPool(): Promise<pg.Pool> {
+  const target = describeAdminPgTarget();
+  if (isTransactionPoolerPort(target.port)) {
+    throw new Error(
+      "DATABASE_URL is the transaction pooler (port 6543). " +
+        "Advisory locks need a session. Use the session pooler on port 5432.",
+    );
+  }
+  console.info(
+    `live-tip: pg user=${target.user} host=${target.host} port=${target.port} ` +
+      `passwordLen=${target.passwordLen} slash=${target.slash} at=${target.at} ` +
+      `percent=${target.percent} brackets=${target.brackets} ` +
+      `poolMax=${WORKER_POOL_MAX} lock=1 work<=${WORKER_POOL_MAX - 1}`,
+  );
+  const pool = await createAdminPool({
+    max: WORKER_POOL_MAX,
     connectionTimeoutMillis: 30_000,
+    idleTimeoutMillis: 10_000,
   });
   pool.on("error", (error) => {
-    logFailure("live-tip pg pool error", error);
+    if (exiting) return;
+    logFailure("live-tip postgres pool error", error);
   });
   return pool;
 }
 
-async function acquireLock(): Promise<pg.Client> {
-  const config = await adminPgConfig();
-  const client = new pg.Client({
-    ...config,
-    connectionTimeoutMillis: 30_000,
-  });
-  client.on("error", (error) => {
-    if (exiting) return;
-    logFailure("live-tip lock connection lost", error);
-    process.exit(1);
-  });
+async function releaseWorkerPg(): Promise<void> {
+  const held = lockClient;
+  lockClient = null;
+  if (held) {
+    try {
+      await held.query("select pg_advisory_unlock($1, $2)", [LOCK_CLASS, LOCK_ID]);
+    } catch {
+      // session may already be dead
+    }
+    try {
+      held.release();
+    } catch {
+      // ignore
+    }
+  }
+  const pool = workerPool;
+  workerPool = null;
+  if (pool) await pool.end().catch(() => undefined);
+}
+
+async function acquireLock(pool: pg.Pool): Promise<pg.PoolClient> {
+  const lockWait = new AbortController();
+  const abortWait = () => {
+    exiting = true;
+    lockWait.abort();
+  };
+  process.once("SIGTERM", abortWait);
+  process.once("SIGINT", abortWait);
+
+  let lastError: unknown;
+  let client: pg.PoolClient | undefined;
   try {
-    await client.connect();
+    for (let connectAttempt = 0; connectAttempt < 8 && !exiting; connectAttempt++) {
+      try {
+        client = await pool.connect();
+        client.on("error", (error) => {
+          if (exiting) return;
+          logFailure("live-tip lock session lost", error);
+          exiting = true;
+          void releaseWorkerPg().finally(() => process.exit(1));
+        });
+        break;
+      } catch (error) {
+        lastError = error;
+        if (
+          !isPoolerCheckoutTimeout(error) &&
+          !(error instanceof Error && /session pooler timed out/i.test(error.message))
+        ) {
+          rewritePoolConnectError(error);
+        }
+        const wait = Math.min(5_000 * 2 ** connectAttempt, 30_000);
+        console.warn(
+          `live-tip: session pooler busy; retry in ${wait}ms (attempt ${connectAttempt + 1})`,
+        );
+        await sleep(wait, lockWait.signal);
+      }
+    }
+    if (exiting) {
+      throw new Error("live-tip: shutdown before lock session");
+    }
+    if (!client) {
+      throw lastError instanceof Error ? lastError : poolerCheckoutTimeoutError();
+    }
+
+    // Stay up and retry. Exit(1) on a held lock is a Railway restart loop:
+    // overlapping deploys and leaked pooler sessions both look like "another worker".
+    for (let attempt = 1; !exiting; attempt++) {
+      const {rows} = await client.query<{pg_try_advisory_lock: boolean}>(
+        "select pg_try_advisory_lock($1, $2) as pg_try_advisory_lock",
+        [LOCK_CLASS, LOCK_ID],
+      );
+      if (rows[0]?.pg_try_advisory_lock) {
+        console.info(
+          `live-tip: advisory lock acquired (${LOCK_CLASS},${LOCK_ID}) ` +
+            `poolMax=${WORKER_POOL_MAX} lockHeld=1 work<=${WORKER_POOL_MAX - 1}`,
+        );
+        return client;
+      }
+      const wait = Math.min(5_000 * 2 ** Math.min(attempt - 1, 3), 30_000);
+      if (attempt === 1 || attempt % 6 === 0) {
+        console.warn(
+          `live-tip: advisory lock held by another session; waiting ` +
+            `(attempt ${attempt}). Keep exactly one Railway service on npm run worker.`,
+        );
+      }
+      await sleep(wait, lockWait.signal);
+    }
+    throw new Error("live-tip: shutdown before advisory lock");
   } catch (error) {
-    await client.end().catch(() => undefined);
-    const code =
-      error && typeof error === "object" && "code" in error ? String(error.code) : "";
-    const message = error instanceof Error ? error.message : String(error);
-    if (code === "ENETUNREACH" && /:[0-9a-f]{0,4}:/i.test(message)) {
-      const host = new URL(parseAdminDatabaseUrl(process.env.DATABASE_URL ?? "")).hostname;
-      throw ipv6UnreachableError(host);
+    if (client) {
+      try {
+        client.release();
+      } catch {
+        // ignore
+      }
+      client = undefined;
     }
     throw error;
+  } finally {
+    process.removeListener("SIGTERM", abortWait);
+    process.removeListener("SIGINT", abortWait);
   }
-  const {rows} = await client.query<{pg_try_advisory_lock: boolean}>(
-    "select pg_try_advisory_lock($1, $2) as pg_try_advisory_lock",
-    [LOCK_CLASS, LOCK_ID],
-  );
-  if (!rows[0]?.pg_try_advisory_lock) {
-    await client.end().catch(() => undefined);
-    console.error("live-tip: another worker holds the advisory lock; exiting");
-    process.exit(1);
+}
+
+async function withWorkClient<T>(
+  pool: pg.Pool,
+  run: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    return await run(client);
+  } finally {
+    client.release();
   }
-  console.info(`live-tip: advisory lock acquired (${LOCK_CLASS},${LOCK_ID})`);
-  return client;
 }
 
 async function ensureHeartbeatColumns(pool: pg.Pool): Promise<void> {
-  await pool.query(`
-    alter table indexer_state add column if not exists last_run_at timestamptz;
-    alter table indexer_state add column if not exists blocks_behind bigint;
-  `);
+  await withWorkClient(pool, (client) =>
+    client.query(`
+      alter table indexer_state add column if not exists last_run_at timestamptz;
+      alter table indexer_state add column if not exists blocks_behind bigint;
+    `),
+  );
 }
 
 async function loadCursors(pool: pg.Pool): Promise<Map<string, bigint>> {
   const names = liveTipCursorNames();
   const held = emptyLiveCursors();
-  const {rows} = await pool.query<{name: string; last_block: string}>(
-    `select name, last_block::text as last_block
-     from indexer_state
-     where name = any($1::text[])`,
-    [names],
+  const {rows} = await withWorkClient(pool, (client) =>
+    client.query<{name: string; last_block: string}>(
+      `select name, last_block::text as last_block
+       from indexer_state
+       where name = any($1::text[])`,
+      [names],
+    ),
   );
   for (const row of rows) held.set(row.name, BigInt(row.last_block));
   return held;
@@ -301,50 +430,49 @@ async function checkpoint(
   held: Map<string, bigint>,
   heartbeat: {head: bigint; behind: number},
 ): Promise<void> {
-  const client = await pool.connect();
-  try {
+  await withWorkClient(pool, async (client) => {
     await client.query("begin");
-    for (const [name, block] of held) {
-      await client.query(
-        `insert into indexer_state (name, last_block, updated_at)
-         values ($1, $2, now())
-         on conflict (name) do update
-           set last_block = excluded.last_block,
-               updated_at = excluded.updated_at
-         where excluded.last_block >= indexer_state.last_block`,
-        [name, block.toString()],
-      );
-    }
     try {
-      await client.query(
-        `insert into indexer_state (name, last_block, updated_at, last_run_at, blocks_behind)
-         values ($1, $2, now(), now(), $3)
-         on conflict (name) do update
-           set last_block = excluded.last_block,
-               updated_at = excluded.updated_at,
-               last_run_at = excluded.last_run_at,
-               blocks_behind = excluded.blocks_behind`,
-        [LIVE_TIP_HEARTBEAT, heartbeat.head.toString(), heartbeat.behind],
-      );
+      for (const [name, block] of held) {
+        await client.query(
+          `insert into indexer_state (name, last_block, updated_at)
+           values ($1, $2, now())
+           on conflict (name) do update
+             set last_block = excluded.last_block,
+                 updated_at = excluded.updated_at
+           where excluded.last_block >= indexer_state.last_block`,
+          [name, block.toString()],
+        );
+      }
+      try {
+        await client.query(
+          `insert into indexer_state (name, last_block, updated_at, last_run_at, blocks_behind)
+           values ($1, $2, now(), now(), $3)
+           on conflict (name) do update
+             set last_block = excluded.last_block,
+                 updated_at = excluded.updated_at,
+                 last_run_at = excluded.last_run_at,
+                 blocks_behind = excluded.blocks_behind`,
+          [LIVE_TIP_HEARTBEAT, heartbeat.head.toString(), heartbeat.behind],
+        );
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        if (!/last_run_at|blocks_behind/i.test(text)) throw error;
+        await client.query(
+          `insert into indexer_state (name, last_block, updated_at)
+           values ($1, $2, now())
+           on conflict (name) do update
+             set last_block = excluded.last_block,
+                 updated_at = excluded.updated_at`,
+          [LIVE_TIP_HEARTBEAT, heartbeat.behind.toString()],
+        );
+      }
+      await client.query("commit");
     } catch (error) {
-      const text = error instanceof Error ? error.message : String(error);
-      if (!/last_run_at|blocks_behind/i.test(text)) throw error;
-      await client.query(
-        `insert into indexer_state (name, last_block, updated_at)
-         values ($1, $2, now())
-         on conflict (name) do update
-           set last_block = excluded.last_block,
-               updated_at = excluded.updated_at`,
-        [LIVE_TIP_HEARTBEAT, heartbeat.behind.toString()],
-      );
+      await client.query("rollback").catch(() => undefined);
+      throw error;
     }
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 async function publicHead(): Promise<bigint> {
@@ -387,8 +515,9 @@ async function main(): Promise<void> {
     console.warn("live-tip: ALCHEMY_RPC_URL unset; token meta will use the public RPC");
   }
 
-  const lock = await acquireLock();
-  const pool = await createPool();
+  const pool = await openWorkerPool();
+  workerPool = pool;
+  lockClient = await acquireLock(pool);
   await ensureHeartbeatColumns(pool);
 
   // Warm the module-level viem clients once. They stay up for every tick.
@@ -423,8 +552,7 @@ async function main(): Promise<void> {
     } catch (error) {
       logFailure("live-tip shutdown checkpoint failed", error);
     }
-    await pool.end().catch(() => undefined);
-    await lock.end().catch(() => undefined);
+    await releaseWorkerPg();
     console.info("live-tip: checkpointed; exiting 0");
     process.exit(0);
   };
@@ -451,7 +579,6 @@ async function main(): Promise<void> {
         invalidateHeadCache();
         const result = await indexLiveTipPass({
           ...WORKER_LIVE_TIP,
-          writeCap: undefined,
           heldCursors: held,
           seenTokens,
         });
@@ -460,10 +587,14 @@ async function main(): Promise<void> {
         const behind = blocksBehindTip(head, held);
         await checkpoint(pool, held, {head, behind});
         failures = 0;
+        const upserts = rowsWritten(result.passes);
         console.info(
           `live-tip mode=${heads.mode} blocks=${blocksProcessed(result.passes)} ` +
-            `upserts=${rowsWritten(result.passes)} behind=${behind} ms=${Date.now() - started}`,
+            `upserts=${upserts} behind=${behind} ms=${Date.now() - started}`,
         );
+        if (upserts > 0) {
+          await sleep(Math.min(WRITE_PASS_PAUSE_MS + upserts * 50, 2_000), stop.signal);
+        }
       } catch (error) {
         failures += 1;
         logFailure("live-tip pass failed", error);
@@ -479,5 +610,5 @@ async function main(): Promise<void> {
 
 main().catch((error) => {
   logFailure("live-tip worker crashed", error);
-  process.exit(1);
+  void releaseWorkerPg().finally(() => process.exit(1));
 });

@@ -1,6 +1,7 @@
 import type {Metadata, Viewport} from "next";
 import {Inter_Tight, JetBrains_Mono} from "next/font/google";
 import {APP_NAME, APP_SUBTITLE, APP_TAGLINE} from "@/config/app";
+import {appOrigin} from "@/config/appUrl";
 import {Providers} from "@/components/providers/Providers";
 import {OVERLAY_ROOT_ID} from "@/components/ui/OverlayPortal";
 import "./globals.css";
@@ -32,8 +33,15 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(appOrigin()),
   title: `${APP_NAME} — ${APP_TAGLINE}`,
   description: APP_SUBTITLE,
+  openGraph: {
+    title: `${APP_NAME} — ${APP_TAGLINE}`,
+    description: APP_SUBTITLE,
+    siteName: APP_NAME,
+    type: "website",
+  },
 };
 
 export const viewport: Viewport = {

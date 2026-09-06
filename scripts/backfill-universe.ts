@@ -33,6 +33,8 @@ async function main() {
         maxBlocks: 50_000n,
         budgetMs: 0,
         refreshStats: false,
+        live: false,
+        cursorTimeoutMs: 60_000,
       });
       const hist = result.passes.find((row) => row.factory === factory.id);
       const upserts = hist?.upserts ?? 0;
@@ -57,6 +59,8 @@ async function main() {
     maxBlocks: 1n,
     budgetMs: 0,
     refreshStats: true,
+    live: false,
+    cursorTimeoutMs: 60_000,
   });
   console.log(JSON.stringify({stats: statsPass.stats}));
 

@@ -18,7 +18,8 @@
     "audit:charts": "node --import ./test/resolver.mjs --env-file=.env.local scripts/audit-chart-inversion.ts",
     "backfill:eligible": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-eligible.ts",
     "backfill:prices": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-prices.ts",
-    "worker": "node --import ./test/resolver.mjs src/worker/index.ts"
+    "worker": "node --import ./test/resolver.mjs src/worker/index.ts",
+    "cron:railway": "node --import ./test/resolver.mjs scripts/railway-cron.ts"
   },
   "engines": {
     "node": ">=22.12.0"

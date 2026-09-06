@@ -2,7 +2,7 @@ import {json} from "@/lib/server/http";
 import {refreshRewardTotals, scanRewards} from "@/lib/server/live/rewards";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /**
  * Bounded, resumable payout scan plus a light 24h total rollup.

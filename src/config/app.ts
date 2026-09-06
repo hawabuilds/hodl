@@ -3,8 +3,8 @@ export const APP_TAGLINE = "Every tokenized stock, and everything trading agains
 export const APP_SUBTITLE =
   "Trending Robinhood RWAs and the tokens with RWA liquidity, in one feed.";
 
-/** Domain used in share copy. Swap once the real domain is registered. */
-export const APP_DOMAIN = "hodl.xyz";
+/** Hostname for share copy when NEXT_PUBLIC_APP_URL is unset. */
+export const APP_DOMAIN = "hodl.fan";
 
 /**
  * The four destinations. Labels are for screen readers and tooltips only — the

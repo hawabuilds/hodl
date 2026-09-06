@@ -1,30 +1,13 @@
 {
-  "crons": [
+  "redirects": [
     {
-      "path": "/api/cron/rewards",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/index-tokens",
-      "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/cron/prices",
-      "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/cron/stats",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/market",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/news",
-      "schedule": "*/5 * * * *"
+      "source": "/:path*",
+      "has": [{"type": "host", "value": "rwa-mauve.vercel.app"}],
+      "destination": "https://hodl.fan/:path*",
+      "permanent": true
     }
   ],
+  "crons": [],
   "regions": [
     "iad1"
   ]

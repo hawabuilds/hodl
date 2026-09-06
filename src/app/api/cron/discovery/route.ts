@@ -2,7 +2,7 @@ import {json} from "@/lib/server/http";
 import {allRwaPairs, quotePairsFromMegafilter} from "@/lib/server/live/dexscreener";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /**
  * Warms the Gecko-backed discovery caches before user traffic hits a cold

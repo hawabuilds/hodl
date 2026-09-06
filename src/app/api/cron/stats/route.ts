@@ -8,7 +8,7 @@ import {
 } from "@/lib/server/live/universeStore";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const PAGE = 50;
 const PAGES_PER_TICK = 8;
@@ -43,6 +43,15 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     console.error("stats warm failed", error);
-    return json({error: String(error)}, 500);
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof (error as {message: unknown}).message === "string"
+          ? (error as {message: string}).message
+          : String(error);
+    return json({error: message}, 500);
   }
 }
