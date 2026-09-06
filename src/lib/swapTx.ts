@@ -1,4 +1,5 @@
 import {
+  decodeFunctionData,
   encodeAbiParameters,
   encodeFunctionData,
   maxUint256,
@@ -100,12 +101,47 @@ export function encodeApprove(
   };
 }
 
+export const ERC20_TRANSFER_SELECTOR = "0xa9059cbb";
+
 export function encodeTransfer(to: `0x${string}`, amount: bigint): `0x${string}` {
   return encodeFunctionData({
     abi: erc20Abi,
     functionName: "transfer",
     args: [to, amount],
   });
+}
+
+export function isErc20TransferCalldata(data: `0x${string}`): boolean {
+  return data.slice(0, 10).toLowerCase() === ERC20_TRANSFER_SELECTOR;
+}
+
+/** Recipient of `transfer(address,uint256)`, or null when calldata is not a transfer. */
+export function transferRecipient(data: `0x${string}`): `0x${string}` | null {
+  if (!isErc20TransferCalldata(data)) return null;
+  const decoded = decodeFunctionData({abi: erc20Abi, data});
+  if (decoded.functionName !== "transfer") return null;
+  return decoded.args[0];
+}
+
+/**
+ * The failed SPACEHOOD sell: `token.transfer(UniversalRouter, amount)`.
+ * Tokens sit on the router; no swap runs.
+ */
+export function isTransferToSwapRouter(tx: PreparedTx): boolean {
+  const recipient = transferRecipient(tx.data);
+  if (!recipient) return false;
+  const dest = recipient.toLowerCase();
+  return dest === UNIVERSAL_ROUTER || dest === UNISWAP_SWAP_ROUTER_02;
+}
+
+export function assertSwapNotErc20Transfer(tx: PreparedTx): void {
+  if (isErc20TransferCalldata(tx.data) || isTransferToSwapRouter(tx)) {
+    throw new Error("Sell must be a swap, not an ERC-20 transfer to the router.");
+  }
+  const to = tx.to.toLowerCase();
+  if (to !== UNIVERSAL_ROUTER && to !== UNISWAP_SWAP_ROUTER_02) {
+    throw new Error("Swap must target Universal Router or SwapRouter02.");
+  }
 }
 
 export function encodePermit2Approve(
@@ -135,7 +171,10 @@ export interface V4SwapBuild {
   nativeIn?: boolean;
   /** User pays ETH; pool is WETH — wrap first. */
   wrapEth?: boolean;
-  /** Tokens are already on the Universal Router (Long / transfer-first). */
+  /**
+   * Tokens already sit on the Universal Router. Ticket code must never
+   * transfer user tokens here to set this — that is how SPACEHOOD was lost.
+   */
   alreadyOnRouter?: boolean;
 }
 
@@ -228,6 +267,63 @@ export function buildV3Swap(swap: V3SwapBuild): PreparedTx {
     }),
     value: swap.nativeIn ? swap.amountIn : 0n,
   };
+}
+
+export interface ExactInSwapBuild {
+  venue: "v4" | "v3";
+  side: "buy" | "sell";
+  token: `0x${string}`;
+  quoteToken: `0x${string}`;
+  quoteIsNative?: boolean;
+  quoteIsWeth?: boolean;
+  poolKey?: V4PoolKey | null;
+  v3Fee?: number | null;
+  zeroForOne?: boolean;
+  amountIn: bigint;
+  amountOutMinimum: bigint;
+  deadline: bigint;
+  recipient: `0x${string}`;
+  payNative: boolean;
+}
+
+/**
+ * Value-moving swap the ticket signs. Always UR `execute` or SwapRouter02
+ * `exactInputSingle`. Never `token.transfer(router, amount)`.
+ */
+export function prepareExactInSwap(swap: ExactInSwapBuild): PreparedTx {
+  const nativePay = swap.side === "buy" && swap.payNative;
+  if (swap.venue === "v4") {
+    if (!swap.poolKey) {
+      throw new Error("No Uniswap pool for this token.");
+    }
+    const tx = buildV4Swap({
+      poolKey: swap.poolKey,
+      zeroForOne: Boolean(swap.zeroForOne),
+      amountIn: swap.amountIn,
+      amountOutMinimum: swap.amountOutMinimum,
+      deadline: swap.deadline,
+      nativeIn: nativePay && swap.quoteIsNative,
+      wrapEth: nativePay && swap.quoteIsWeth,
+    });
+    assertSwapNotErc20Transfer(tx);
+    return tx;
+  }
+  if (swap.v3Fee == null) {
+    throw new Error("No Uniswap pool for this token.");
+  }
+  const tokenIn = swap.side === "buy" ? swap.quoteToken : swap.token;
+  const tokenOut = swap.side === "buy" ? swap.token : swap.quoteToken;
+  const tx = buildV3Swap({
+    tokenIn,
+    tokenOut,
+    fee: swap.v3Fee,
+    recipient: swap.recipient,
+    amountIn: swap.amountIn,
+    amountOutMinimum: swap.amountOutMinimum,
+    nativeIn: nativePay && (swap.quoteIsWeth || swap.quoteIsNative),
+  });
+  assertSwapNotErc20Transfer(tx);
+  return tx;
 }
 
 export function isNativeQuote(token: string): boolean {

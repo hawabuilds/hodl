@@ -455,7 +455,6 @@ export function OrderModal({
           token,
           slippagePct: settings.slippagePct,
           payNative: buying && (quote.quoteIsNative || quote.quoteIsWeth),
-          permit2Blocked: asset.kind === "token" && asset.launchpad?.id === "long",
         });
         setTxHash(hash);
         setFilled(

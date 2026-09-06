@@ -1,5 +1,6 @@
 import {describe, it} from "node:test";
 import assert from "node:assert/strict";
+import {decodeFunctionData} from "viem";
 import {
   UR_COMMAND_V4_SWAP,
   V4_ACTION_SETTLE,
@@ -8,15 +9,23 @@ import {
   V4_ACTION_TAKE_ALL,
 } from "../src/lib/v4Encoding";
 import {
+  LONG_DOPPLER_HOOK,
   UNIVERSAL_ROUTER,
   UNISWAP_SWAP_ROUTER_02,
 } from "../src/lib/contracts";
+import {encodeHodlSell, hodlRouterAbi} from "../src/lib/hodlRouter";
 import {amountOutMinimum, ticketBlockReason} from "../src/lib/tradePolicy";
 import {parseSwapQuote} from "../src/lib/swapQuote";
 import {
+  assertSwapNotErc20Transfer,
   buildV3Swap,
   buildV4Swap,
+  encodeTransfer,
+  ERC20_TRANSFER_SELECTOR,
+  isErc20TransferCalldata,
+  isTransferToSwapRouter,
   packCommands,
+  prepareExactInSwap,
   UR_COMMAND_PERMIT2_TRANSFER_FROM,
   UR_COMMAND_WRAP_ETH,
 } from "../src/lib/swapTx";
@@ -90,6 +99,116 @@ describe("swap tx encoding", () => {
       [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE_ALL, V4_ACTION_TAKE_ALL].join(","),
       "6,12,15",
     );
+  });
+
+  it("encodes a V4 or V3 sell as execute/swap, never transfer to the router", () => {
+    const recipient = "0x1111111111111111111111111111111111111111" as const;
+    const token = KEY.currency0;
+    const v4Sell = prepareExactInSwap({
+      venue: "v4",
+      side: "sell",
+      token,
+      quoteToken: KEY.currency1,
+      poolKey: KEY,
+      zeroForOne: true,
+      amountIn: 10n ** 16n,
+      amountOutMinimum: 1n,
+      deadline: 1n,
+      recipient,
+      payNative: false,
+    });
+    assert.equal(v4Sell.to, UNIVERSAL_ROUTER);
+    assert.equal(v4Sell.value, 0n);
+    assert.equal(v4Sell.data.slice(0, 10), "0x3593564c");
+    assert.equal(isErc20TransferCalldata(v4Sell.data), false);
+    assert.equal(isTransferToSwapRouter(v4Sell), false);
+    assert.doesNotThrow(() => assertSwapNotErc20Transfer(v4Sell));
+    assert.equal(
+      packCommands([UR_COMMAND_PERMIT2_TRANSFER_FROM, UR_COMMAND_V4_SWAP]),
+      "0x0210",
+    );
+
+    const v3Sell = prepareExactInSwap({
+      venue: "v3",
+      side: "sell",
+      token,
+      quoteToken: KEY.currency1,
+      v3Fee: 100,
+      amountIn: 10n ** 16n,
+      amountOutMinimum: 1n,
+      deadline: 1n,
+      recipient,
+      payNative: false,
+    });
+    assert.equal(v3Sell.to, UNISWAP_SWAP_ROUTER_02);
+    assert.equal(v3Sell.data.slice(0, 10), "0x04e45aaf");
+    assert.equal(isErc20TransferCalldata(v3Sell.data), false);
+    assert.doesNotThrow(() => assertSwapNotErc20Transfer(v3Sell));
+  });
+
+  it("sells a Doppler stock pair as UR execute, not transfer(SPCX router)", () => {
+    const spacehood = "0xfe7e19cbce2f896c6c528bc355baf5a768291e18" as const;
+    const spcx = "0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea" as const;
+    const tx = prepareExactInSwap({
+      venue: "v4",
+      side: "sell",
+      token: spacehood,
+      quoteToken: spcx,
+      quoteIsNative: false,
+      quoteIsWeth: false,
+      poolKey: {
+        currency0: spcx,
+        currency1: spacehood,
+        fee: 0x800000,
+        tickSpacing: 8,
+        hooks: LONG_DOPPLER_HOOK,
+      },
+      zeroForOne: false,
+      amountIn: 824215482000000000000n,
+      amountOutMinimum: 1n,
+      deadline: 1n,
+      recipient: "0xb2ae947b9e64aa58c6cbdb136acef4b501fb1202",
+      payNative: false,
+    });
+    assert.equal(tx.to, UNIVERSAL_ROUTER);
+    assert.equal(tx.data.slice(0, 10), "0x3593564c");
+    assert.notEqual(tx.data.slice(0, 10), ERC20_TRANSFER_SELECTOR);
+    assert.equal(isTransferToSwapRouter(tx), false);
+
+    const lost = {
+      to: spacehood,
+      data: encodeTransfer(UNIVERSAL_ROUTER, 824215482000000000000n),
+      value: 0n,
+    };
+    assert.equal(lost.data.slice(0, 10), ERC20_TRANSFER_SELECTOR);
+    assert.equal(isTransferToSwapRouter(lost), true);
+    assert.throws(() => assertSwapNotErc20Transfer(lost), /swap/i);
+  });
+
+  it("encodes HodlRouter sell() rather than a token transfer", () => {
+    const router = "0x50cb78e0034b4869d8d42ad901c614866f5c5e99" as const;
+    const token = KEY.currency0;
+    const tx = encodeHodlSell({
+      router,
+      tokenIn: token,
+      amountIn: 10n ** 16n,
+      tokenOut: "0x0000000000000000000000000000000000000000",
+      minAmountOut: 1n,
+      hint: {
+        currency0: "0x0000000000000000000000000000000000000000",
+        currency1: token,
+        fee: 3000,
+        tickSpacing: 0,
+        hooks: "0x0000000000000000000000000000000000000000",
+      },
+      deadline: 1n,
+    });
+    assert.equal(tx.to, router);
+    assert.notEqual(tx.to, UNIVERSAL_ROUTER);
+    assert.equal(isErc20TransferCalldata(tx.data), false);
+    assert.equal(isTransferToSwapRouter(tx), false);
+    const decoded = decodeFunctionData({abi: hodlRouterAbi, data: tx.data});
+    assert.equal(decoded.functionName, "sell");
   });
 
   it("encodes SwapRouter02 exactInputSingle for the V3 venue", () => {

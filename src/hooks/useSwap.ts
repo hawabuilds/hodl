@@ -16,13 +16,11 @@ import {
 } from "@/lib/tradePolicy";
 import type {SwapQuote} from "@/lib/swapQuote";
 import {
-  buildV3Swap,
-  buildV4Swap,
   encodeApprove,
   encodePermit2Approve,
-  encodeTransfer,
   erc20Abi,
   permit2Abi,
+  prepareExactInSwap,
   type PreparedTx,
 } from "@/lib/swapTx";
 import {walletKindFrom, type WalletKind} from "@/lib/approvalFlow";
@@ -50,7 +48,7 @@ function explainSwapError(error: unknown): string {
     return "The wallet set a gas limit that was too low. Retry the transaction.";
   }
   if (/allowance|transfer amount exceeds|Permit2/i.test(message)) {
-    return "Token approval failed. Long tokens block Permit2 — try again and the ticket will transfer first.";
+    return "Token approval failed. Approve the token, then confirm the swap. Tokens stay in your wallet until the swap.";
   }
   if (/reverted|execution reverted|slippage/i.test(message)) {
     return "The pool rejected this swap. Try a smaller size or more slippage.";
@@ -204,7 +202,6 @@ export function useSwap() {
       token: `0x${string}`;
       slippagePct: number;
       payNative: boolean;
-      permit2Blocked: boolean;
     }): Promise<`0x${string}`> => {
       if (!address) throw new Error("Sign in to trade from your wallet.");
       const amountIn = BigInt(opts.quote.amountIn);
@@ -212,79 +209,36 @@ export function useSwap() {
       const deadline = swapDeadlineSec();
       const tokenIn =
         opts.side === "buy" ? opts.quote.quoteToken : opts.token;
-      const tokenOut =
-        opts.side === "buy" ? opts.token : opts.quote.quoteToken;
       const nativePay = opts.side === "buy" && opts.payNative;
 
       setSubmitting(true);
       try {
-        if (opts.quote.venue === "v4") {
-          if (!opts.quote.poolKey) {
-            throw new Error("No Uniswap pool for this token.");
-          }
-          if (nativePay && (opts.quote.quoteIsNative || opts.quote.quoteIsWeth)) {
-            const hash = await sendTx(
-              buildV4Swap({
-                poolKey: opts.quote.poolKey,
-                zeroForOne: opts.quote.zeroForOne,
-                amountIn,
-                amountOutMinimum: minOut,
-                deadline,
-                nativeIn: opts.quote.quoteIsNative,
-                wrapEth: opts.quote.quoteIsWeth,
-              }),
-            );
-            await wait(hash);
-            return hash;
-          }
+        const swapTx = prepareExactInSwap({
+          venue: opts.quote.venue,
+          side: opts.side,
+          token: opts.token,
+          quoteToken: opts.quote.quoteToken,
+          quoteIsNative: opts.quote.quoteIsNative,
+          quoteIsWeth: opts.quote.quoteIsWeth,
+          poolKey: opts.quote.poolKey,
+          v3Fee: opts.quote.v3Fee,
+          zeroForOne: opts.quote.zeroForOne,
+          amountIn,
+          amountOutMinimum: minOut,
+          deadline,
+          recipient: address,
+          payNative: opts.payNative,
+        });
 
-          let alreadyOnRouter = opts.permit2Blocked;
-          if (!alreadyOnRouter) {
-            try {
-              await ensurePermit2(tokenIn, amountIn);
-            } catch {
-              alreadyOnRouter = true;
-            }
-          }
-          if (alreadyOnRouter) {
-            const move = await sendTx({
-              to: tokenIn,
-              data: encodeTransfer(UNIVERSAL_ROUTER, amountIn),
-              value: 0n,
-            });
-            await wait(move);
-          }
-          const hash = await sendTx(
-            buildV4Swap({
-              poolKey: opts.quote.poolKey,
-              zeroForOne: opts.quote.zeroForOne,
-              amountIn,
-              amountOutMinimum: minOut,
-              deadline,
-              alreadyOnRouter,
-            }),
-          );
-          await wait(hash);
-          return hash;
-        }
-
-        if (opts.quote.v3Fee == null) {
-          throw new Error("No Uniswap pool for this token.");
-        }
         if (!nativePay) {
-          await ensureErc20Allowance(tokenIn, UNISWAP_SWAP_ROUTER_02, amountIn);
+          if (opts.quote.venue === "v4") {
+            await ensurePermit2(tokenIn, amountIn);
+          } else {
+            await ensureErc20Allowance(tokenIn, UNISWAP_SWAP_ROUTER_02, amountIn);
+          }
         }
-        const hash = await sendTx(
-          buildV3Swap({
-            tokenIn,
-            tokenOut,
-            fee: opts.quote.v3Fee,
-            recipient: address,
-            amountIn,
-            amountOutMinimum: minOut,
-            nativeIn: nativePay && (opts.quote.quoteIsWeth || opts.quote.quoteIsNative),
-          }),
-        );
+
+        const hash = await sendTx(swapTx);
         await wait(hash);
         return hash;
       } finally {
