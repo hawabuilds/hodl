@@ -1,4 +1,5 @@
-import {QUOTE_USDG, QUOTE_WETH} from "./contracts";
+import {QUOTE_ETH, QUOTE_USDG, QUOTE_WETH} from "./contracts";
+import type {SwapHop} from "./swapRoute";
 import type {V4PoolKey} from "./v4Encoding";
 import type {VenueId} from "./venueQuote";
 
@@ -34,6 +35,9 @@ export interface SwapQuote {
   poolKey: V4PoolKey | null;
   v3Fee: number | null;
   v3Pool: `0x${string}` | null;
+  /** Immediate pool pair (SPCX, USDG, IBM…). Final `quoteToken` is ETH/WETH on sells. */
+  pairToken: `0x${string}` | null;
+  hops: SwapHop[];
 }
 
 export type QuoteResult =
@@ -47,6 +51,44 @@ function namedQuoteSymbol(row: Record<string, unknown>, quoteToken: string): str
   if (quoteToken === QUOTE_USDG) return "USDG";
   if (quoteToken === QUOTE_WETH) return "ETH";
   return "tokens";
+}
+
+function asHop(value: unknown): SwapHop | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (row.venue !== "v4" && row.venue !== "v3") return null;
+  const tokenIn = String(row.tokenIn ?? "").toLowerCase();
+  const tokenOut = String(row.tokenOut ?? "").toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(tokenIn) || !/^0x[0-9a-f]{40}$/.test(tokenOut)) {
+    return null;
+  }
+  const hop: SwapHop = {
+    venue: row.venue,
+    tokenIn: tokenIn as `0x${string}`,
+    tokenOut: tokenOut as `0x${string}`,
+  };
+  if (typeof row.amountIn === "string" && /^\d+$/.test(row.amountIn)) {
+    hop.amountIn = row.amountIn;
+  }
+  if (typeof row.zeroForOne === "boolean") hop.zeroForOne = row.zeroForOne;
+  const poolKey = asPoolKey(row.poolKey);
+  if (poolKey) hop.poolKey = poolKey;
+  const v3Fee = Number(row.v3Fee);
+  if (Number.isFinite(v3Fee)) hop.v3Fee = v3Fee;
+  if (row.venue === "v4" && !hop.poolKey) return null;
+  if (row.venue === "v3" && hop.v3Fee == null) return null;
+  return hop;
+}
+
+function asHops(value: unknown): SwapHop[] {
+  if (!Array.isArray(value)) return [];
+  const hops: SwapHop[] = [];
+  for (const row of value) {
+    const hop = asHop(row);
+    if (!hop) return [];
+    hops.push(hop);
+  }
+  return hops;
 }
 
 function asPoolKey(value: unknown): V4PoolKey | null {
@@ -94,6 +136,11 @@ export function parseSwapQuote(body: unknown): QuoteResult {
   if (row.venue === "v3" && !Number.isFinite(v3Fee)) {
     return {ok: false, venue: null};
   }
+  const hops = asHops(row.hops);
+  const pairRaw = String(row.pairToken ?? "").toLowerCase();
+  const pairToken = /^0x[0-9a-f]{40}$/.test(pairRaw)
+    ? (pairRaw as `0x${string}`)
+    : null;
 
   return {
     ok: true,
@@ -117,12 +164,14 @@ export function parseSwapQuote(body: unknown): QuoteResult {
       quoteDecimals: Number(row.quoteDecimals ?? 18),
       outDecimals: Number(row.outDecimals ?? 18),
       zeroForOne: Boolean(row.zeroForOne),
-      quoteIsNative: Boolean(row.quoteIsNative),
-      quoteIsWeth: Boolean(row.quoteIsWeth),
+      quoteIsNative: Boolean(row.quoteIsNative) || quoteToken === QUOTE_ETH,
+      quoteIsWeth: Boolean(row.quoteIsWeth) || quoteToken === QUOTE_WETH,
       quoteSymbol: namedQuoteSymbol(row, quoteToken),
       poolKey,
       v3Fee: Number.isFinite(v3Fee) ? v3Fee : null,
       v3Pool: typeof row.v3Pool === "string" ? (row.v3Pool as `0x${string}`) : null,
+      pairToken,
+      hops,
     },
   };
 }

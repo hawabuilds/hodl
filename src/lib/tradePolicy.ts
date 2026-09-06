@@ -16,6 +16,7 @@ export function ticketBlockReason(input: {
   wallet: string | null;
   venue: VenueId | null | undefined;
   quotePending: boolean;
+  quoteError?: string | null;
 }): string | null {
   if (input.demo) {
     return "Demo mode has no signing wallet. Sign in with Privy to trade.";
@@ -27,6 +28,9 @@ export function ticketBlockReason(input: {
   // Three-state: undefined = not quoted yet (keep the button usable),
   // null = quote ran and found no venue, v3/v4 = a real pool.
   if (input.venue === null) {
+    if (input.quoteError && /can't exit to eth/i.test(input.quoteError)) {
+      return "Can't exit to ETH";
+    }
     return "No Uniswap pool for this token.";
   }
   return null;

@@ -1,7 +1,8 @@
-import {QUOTE_USDG, QUOTE_WETH} from "./contracts";
+import {QUOTE_USDG} from "./contracts";
 import {humanToRaw} from "./quoteAmounts";
 import type {SwapQuote} from "./swapQuote";
 import type {Asset} from "./types";
+import {isEthish} from "./swapRoute";
 
 /**
  * Contract the ticket quotes and swaps. RWAs carry `contractAddress`;
@@ -26,11 +27,20 @@ export function tradeTokenAddress(asset: Asset | null | undefined): `0x${string}
 export function quoteOutSymbol(
   quote: Pick<SwapQuote, "quoteSymbol" | "quoteIsNative" | "quoteIsWeth" | "quoteToken">,
 ): string {
-  if (quote.quoteSymbol && quote.quoteSymbol !== "tokens") return quote.quoteSymbol;
-  if (quote.quoteIsNative || quote.quoteIsWeth) return "ETH";
+  if (quote.quoteIsNative || quote.quoteIsWeth || isEthish(quote.quoteToken)) return "ETH";
   if (quote.quoteToken.toLowerCase() === QUOTE_USDG) return "USDG";
-  if (quote.quoteToken.toLowerCase() === QUOTE_WETH) return "ETH";
+  if (quote.quoteSymbol && quote.quoteSymbol !== "tokens") return quote.quoteSymbol;
   return quote.quoteSymbol || "tokens";
+}
+
+export function sellRouteLabel(
+  quote: Pick<SwapQuote, "venueLabel" | "hops">,
+): string {
+  const hops = quote.hops ?? [];
+  if (hops.length > 1) {
+    return `Uniswap ${hops.map((hop) => (hop.venue === "v4" ? "V4" : "V3")).join(" → ")}`;
+  }
+  return quote.venueLabel;
 }
 
 /**

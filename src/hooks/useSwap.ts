@@ -228,10 +228,11 @@ export function useSwap() {
           deadline,
           recipient: address,
           payNative: opts.payNative,
+          hops: opts.quote.hops,
         });
 
         if (!nativePay) {
-          if (opts.quote.venue === "v4") {
+          if (opts.side === "sell" || opts.quote.venue === "v4") {
             await ensurePermit2(tokenIn, amountIn);
           } else {
             await ensureErc20Allowance(tokenIn, UNISWAP_SWAP_ROUTER_02, amountIn);

@@ -1,6 +1,7 @@
 import {isAddress, normalizeAddress} from "@/lib/address";
 import {QUOTE_ETH, QUOTE_USDG, QUOTE_WETH} from "@/lib/contracts";
 import {humanToRaw, quoteTokenDecimals, usdgRawFromUsd} from "@/lib/quoteAmounts";
+import {CANT_EXIT_TO_ETH, isEthish, type SwapHop} from "@/lib/swapRoute";
 import {lpFeeLabel, venueTicketCopy} from "@/lib/venueQuote";
 import {json} from "@/lib/server/http";
 import {quotePriceUsd} from "@/lib/server/quotePrice";
@@ -8,7 +9,7 @@ import {erc20Abi, rpc} from "@/lib/server/live/chain";
 import {poolFor} from "@/lib/server/live/market";
 import {ethUsd} from "@/lib/server/live/onchainPrice";
 import {RWA_BY_ADDRESS} from "@/lib/server/live/robinhood";
-import {resolveVenue} from "@/lib/server/live/venueResolve";
+import {resolveSellToEth, resolveVenue} from "@/lib/server/live/venueResolve";
 
 export const dynamic = "force-dynamic";
 
@@ -87,14 +88,36 @@ export async function GET(req: Request) {
   const amountInParam = /^\d+$/.test(rawAmountIn) ? BigInt(rawAmountIn) : null;
 
   let amountIn = await sizedAmountIn({side, amountUsd, amountInParam});
-  let sized = await resolveVenue({
-    token,
-    side,
-    amountIn,
-    v4PoolId,
-    extraQuotes,
-    v3Pool: v3PoolHint,
-  });
+  let hops: SwapHop[] = [];
+  let pairToken: `0x${string}` | null = null;
+
+  let sized = null as Awaited<ReturnType<typeof resolveVenue>>;
+  if (side === "sell") {
+    const sold = await resolveSellToEth({
+      token,
+      side: "sell",
+      amountIn,
+      v4PoolId,
+      extraQuotes,
+      v3Pool: v3PoolHint,
+    });
+    if (!sold.ok) {
+      if (sold.reason === "no_eth_exit") return json({error: CANT_EXIT_TO_ETH});
+      return json({venue: null});
+    }
+    sized = sold.decision;
+    hops = sold.hops;
+    pairToken = sold.pairToken;
+  } else {
+    sized = await resolveVenue({
+      token,
+      side,
+      amountIn,
+      v4PoolId,
+      extraQuotes,
+      v3Pool: v3PoolHint,
+    });
+  }
   if (!sized) return json({venue: null});
 
   // Probe used USDG units. Resize to the winning quote token (WETH, ETH, or RWA).
@@ -122,13 +145,18 @@ export async function GET(req: Request) {
 
   const decimals = await tokenDecimals(token as `0x${string}`);
   const copy = venueTicketCopy(sized);
+  const venueLabel = hops.length > 1
+    ? `Uniswap ${hops.map((hop) => (hop.venue === "v4" ? "V4" : "V3")).join(" → ")}`
+    : copy.venue;
   const quoteIsNative = sized.quoteToken === QUOTE_ETH;
   const quoteIsWeth = sized.quoteToken === QUOTE_WETH;
-  const quoteSymbol = quoteIsNative || quoteIsWeth
+  const quoteSymbol = side === "sell" && isEthish(sized.quoteToken)
     ? "ETH"
-    : sized.quoteToken === QUOTE_USDG
-      ? "USDG"
-      : (RWA_BY_ADDRESS.get(sized.quoteToken)?.ticker ?? "tokens");
+    : quoteIsNative || quoteIsWeth
+      ? "ETH"
+      : sized.quoteToken === QUOTE_USDG
+        ? "USDG"
+        : (RWA_BY_ADDRESS.get(sized.quoteToken)?.ticker ?? "tokens");
   let quoteDecimals = 18;
   try {
     quoteDecimals = quoteTokenDecimals(sized.quoteToken);
@@ -139,7 +167,7 @@ export async function GET(req: Request) {
 
   return json({
     venue: sized.venue,
-    venueLabel: copy.venue,
+    venueLabel,
     creatorTax: copy.creatorTax,
     creatorTaxBps: sized.creatorTaxBps,
     amountIn: amountIn.toString(),
@@ -162,5 +190,7 @@ export async function GET(req: Request) {
     poolKey: sized.poolKey ?? null,
     v3Fee: sized.v3Fee ?? null,
     v3Pool: sized.v3Pool ?? null,
+    pairToken,
+    hops,
   });
 }

@@ -1,10 +1,12 @@
 import {
+  concatHex,
   decodeFunctionData,
   encodeAbiParameters,
   encodeFunctionData,
   maxUint256,
   maxUint160,
   parseAbi,
+  toHex,
 } from "viem";
 import {
   PERMIT2,
@@ -13,16 +15,25 @@ import {
   UNIVERSAL_ROUTER,
   UNISWAP_SWAP_ROUTER_02,
 } from "./contracts";
+import {CANT_EXIT_TO_ETH, isEthish, type SwapHop} from "./swapRoute";
 import {
   encodeV4SwapExactInSingle,
+  UR_ADDRESS_THIS,
   UR_COMMAND_V4_SWAP,
+  UR_MSG_SENDER,
   type V4PoolKey,
 } from "./v4Encoding";
 
+/** Universal Router command: V3 exact-in. */
+export const UR_COMMAND_V3_SWAP_EXACT_IN = 0x00;
 /** Universal Router command: pull ERC-20 via Permit2 onto the router. */
 export const UR_COMMAND_PERMIT2_TRANSFER_FROM = 0x02;
 /** Wrap msg.value into WETH and leave it on the router. */
 export const UR_COMMAND_WRAP_ETH = 0x0b;
+/** Unwrap WETH on the router and send ETH to the recipient. */
+export const UR_COMMAND_UNWRAP_WETH = 0x0c;
+/** UR treats this amountIn as `IERC20.balanceOf(address(this))`. */
+export const UR_CONTRACT_BALANCE = 1n << 255n;
 
 export const erc20Abi = parseAbi([
   "function balanceOf(address) view returns (uint256)",
@@ -82,6 +93,48 @@ function encodeWrapEth(recipient: `0x${string}`, amount: bigint): `0x${string}` 
   return encodeAbiParameters(
     [{type: "address"}, {type: "uint256"}],
     [recipient, amount],
+  );
+}
+
+export function encodeV3Path(
+  tokenIn: `0x${string}`,
+  fee: number,
+  tokenOut: `0x${string}`,
+): `0x${string}` {
+  return concatHex([tokenIn, toHex(fee, {size: 3}), tokenOut]);
+}
+
+export function encodeV3ExactIn(opts: {
+  recipient: `0x${string}`;
+  amountIn: bigint;
+  amountOutMinimum: bigint;
+  tokenIn: `0x${string}`;
+  tokenOut: `0x${string}`;
+  fee: number;
+  payerIsUser: boolean;
+}): `0x${string}` {
+  return encodeAbiParameters(
+    [
+      {type: "address"},
+      {type: "uint256"},
+      {type: "uint256"},
+      {type: "bytes"},
+      {type: "bool"},
+    ],
+    [
+      opts.recipient,
+      opts.amountIn,
+      opts.amountOutMinimum,
+      encodeV3Path(opts.tokenIn, opts.fee, opts.tokenOut),
+      opts.payerIsUser,
+    ],
+  );
+}
+
+function encodeUnwrapWeth(recipient: `0x${string}`, amountMin: bigint): `0x${string}` {
+  return encodeAbiParameters(
+    [{type: "address"}, {type: "uint256"}],
+    [recipient, amountMin],
   );
 }
 
@@ -176,6 +229,8 @@ export interface V4SwapBuild {
    * transfer user tokens here to set this — that is how SPACEHOOD was lost.
    */
   alreadyOnRouter?: boolean;
+  /** Leave the output on the router (next hop or unwrap). */
+  takeToRouter?: boolean;
 }
 
 /**
@@ -192,6 +247,7 @@ export function buildV4Swap(swap: V4SwapBuild): PreparedTx {
     amountIn: swap.amountIn,
     amountOutMinimum: swap.amountOutMinimum,
     payerIsUser: swap.alreadyOnRouter ? false : undefined,
+    takeToRouter: swap.takeToRouter,
   });
 
   if (swap.nativeIn) {
@@ -284,14 +340,131 @@ export interface ExactInSwapBuild {
   deadline: bigint;
   recipient: `0x${string}`;
   payNative: boolean;
+  hops?: SwapHop[];
+}
+
+function hopsForSwap(swap: ExactInSwapBuild): SwapHop[] {
+  if (swap.hops && swap.hops.length > 0) return swap.hops;
+  const tokenIn = swap.side === "buy" ? swap.quoteToken : swap.token;
+  const tokenOut = swap.side === "buy" ? swap.token : swap.quoteToken;
+  if (swap.venue === "v4" && swap.poolKey) {
+    return [{
+      venue: "v4",
+      tokenIn,
+      tokenOut,
+      poolKey: swap.poolKey,
+      zeroForOne: swap.zeroForOne,
+    }];
+  }
+  if (swap.venue === "v3" && swap.v3Fee != null) {
+    return [{
+      venue: "v3",
+      tokenIn,
+      tokenOut,
+      v3Fee: swap.v3Fee,
+    }];
+  }
+  return [];
+}
+
+function encodeHopInput(opts: {
+  hop: SwapHop;
+  amountIn: bigint;
+  amountOutMinimum: bigint;
+  takeToRouter: boolean;
+}): `0x${string}` {
+  if (opts.hop.venue === "v4") {
+    if (!opts.hop.poolKey) {
+      throw new Error("No Uniswap pool for this token.");
+    }
+    return encodeV4SwapExactInSingle({
+      poolKey: opts.hop.poolKey,
+      zeroForOne: Boolean(opts.hop.zeroForOne),
+      amountIn: opts.amountIn,
+      amountOutMinimum: opts.takeToRouter ? 0n : opts.amountOutMinimum,
+      takeToRouter: opts.takeToRouter,
+    }).inputs[0];
+  }
+  if (opts.hop.v3Fee == null) {
+    throw new Error("No Uniswap pool for this token.");
+  }
+  return encodeV3ExactIn({
+    recipient: opts.takeToRouter ? UR_ADDRESS_THIS : UR_MSG_SENDER,
+    amountIn: opts.amountIn,
+    amountOutMinimum: opts.takeToRouter ? 0n : opts.amountOutMinimum,
+    tokenIn: opts.hop.tokenIn,
+    tokenOut: opts.hop.tokenOut,
+    fee: opts.hop.v3Fee,
+    payerIsUser: false,
+  });
+}
+
+/**
+ * Sell path: token → … → WETH/ETH via Universal Router, then unwrap WETH.
+ * Never leaves the user in SPCX / USDG / a stock token.
+ */
+export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
+  const hops = hopsForSwap(swap);
+  const tokenOut = hops.length > 0 ? hops[hops.length - 1].tokenOut : swap.quoteToken;
+  if (hops.length === 0 || !isEthish(tokenOut)) {
+    throw new Error(CANT_EXIT_TO_ETH);
+  }
+  const unwrap = tokenOut.toLowerCase() === QUOTE_WETH;
+  const commands: number[] = [UR_COMMAND_PERMIT2_TRANSFER_FROM];
+  const inputs: `0x${string}`[] = [
+    encodePermit2Pull(swap.token, swap.amountIn, UNIVERSAL_ROUTER),
+  ];
+
+  for (let i = 0; i < hops.length; i++) {
+    const hop = hops[i];
+    const last = i === hops.length - 1;
+    const takeToRouter = !last || unwrap;
+    const amountIn =
+      i === 0
+        ? swap.amountIn
+        : hop.venue === "v3"
+          ? UR_CONTRACT_BALANCE
+          : BigInt(hop.amountIn ?? "0");
+    if (i > 0 && hop.venue === "v4" && amountIn <= 0n) {
+      throw new Error(CANT_EXIT_TO_ETH);
+    }
+    commands.push(hop.venue === "v4" ? UR_COMMAND_V4_SWAP : UR_COMMAND_V3_SWAP_EXACT_IN);
+    inputs.push(
+      encodeHopInput({
+        hop,
+        amountIn,
+        amountOutMinimum: last && !unwrap ? swap.amountOutMinimum : 0n,
+        takeToRouter,
+      }),
+    );
+  }
+
+  if (unwrap) {
+    commands.push(UR_COMMAND_UNWRAP_WETH);
+    inputs.push(encodeUnwrapWeth(UR_MSG_SENDER, swap.amountOutMinimum));
+  }
+
+  const tx: PreparedTx = {
+    to: UNIVERSAL_ROUTER,
+    data: encodeUrExecute(packCommands(commands), inputs, swap.deadline),
+    value: 0n,
+  };
+  assertSwapNotErc20Transfer(tx);
+  return tx;
 }
 
 /**
  * Value-moving swap the ticket signs. Always UR `execute` or SwapRouter02
  * `exactInputSingle`. Never `token.transfer(router, amount)`.
+ *
+ * Sells always exit to ETH. A missing ETH hop fails instead of paying SPCX.
  */
 export function prepareExactInSwap(swap: ExactInSwapBuild): PreparedTx {
-  const nativePay = swap.side === "buy" && swap.payNative;
+  if (swap.side === "sell") {
+    return buildSellToEth(swap);
+  }
+
+  const nativePay = swap.payNative;
   if (swap.venue === "v4") {
     if (!swap.poolKey) {
       throw new Error("No Uniswap pool for this token.");
@@ -311,11 +484,9 @@ export function prepareExactInSwap(swap: ExactInSwapBuild): PreparedTx {
   if (swap.v3Fee == null) {
     throw new Error("No Uniswap pool for this token.");
   }
-  const tokenIn = swap.side === "buy" ? swap.quoteToken : swap.token;
-  const tokenOut = swap.side === "buy" ? swap.token : swap.quoteToken;
   const tx = buildV3Swap({
-    tokenIn,
-    tokenOut,
+    tokenIn: swap.quoteToken,
+    tokenOut: swap.token,
     fee: swap.v3Fee,
     recipient: swap.recipient,
     amountIn: swap.amountIn,

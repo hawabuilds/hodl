@@ -14,7 +14,13 @@ export const UR_COMMAND_V4_SWAP = 0x10;
 export const V4_ACTION_SWAP_EXACT_IN_SINGLE = 0x06;
 export const V4_ACTION_SETTLE = 0x0b;
 export const V4_ACTION_SETTLE_ALL = 0x0c;
+export const V4_ACTION_TAKE = 0x0e;
 export const V4_ACTION_TAKE_ALL = 0x0f;
+
+/** Universal Router maps this recipient to `address(this)`. */
+export const UR_ADDRESS_THIS = "0x0000000000000000000000000000000000000002" as const;
+/** Universal Router maps this recipient to `msg.sender`. */
+export const UR_MSG_SENDER = "0x0000000000000000000000000000000000000001" as const;
 
 export interface V4PoolKey {
   currency0: `0x${string}`;
@@ -54,6 +60,8 @@ export interface V4ExactInSingle {
   hookData?: `0x${string}`;
   /** false = tokens already on the router (Long tokens block Permit2). */
   payerIsUser?: boolean;
+  /** Keep the output on the router for a later hop or WETH unwrap. */
+  takeToRouter?: boolean;
 }
 
 /**
@@ -111,10 +119,11 @@ export function encodeV4SwapExactInSingle(swap: V4ExactInSingle): {
   );
 
   const settleFromRouter = swap.payerIsUser === false;
+  const takeAction = swap.takeToRouter ? V4_ACTION_TAKE : V4_ACTION_TAKE_ALL;
   const actions = packActions(
     settleFromRouter
-      ? [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE, V4_ACTION_TAKE_ALL]
-      : [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE_ALL, V4_ACTION_TAKE_ALL],
+      ? [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE, takeAction]
+      : [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE_ALL, takeAction],
   );
 
   const settle = settleFromRouter
@@ -126,10 +135,15 @@ export function encodeV4SwapExactInSingle(swap: V4ExactInSingle): {
         [{type: "address"}, {type: "uint256"}],
         [currencyIn, swap.amountIn],
       );
-  const take = encodeAbiParameters(
-    [{type: "address"}, {type: "uint256"}],
-    [currencyOut, swap.amountOutMinimum],
-  );
+  const take = swap.takeToRouter
+    ? encodeAbiParameters(
+        [{type: "address"}, {type: "address"}, {type: "uint256"}],
+        [currencyOut, UR_ADDRESS_THIS, 0n],
+      )
+    : encodeAbiParameters(
+        [{type: "address"}, {type: "uint256"}],
+        [currencyOut, swap.amountOutMinimum],
+      );
 
   const input = encodeAbiParameters(
     [{type: "bytes"}, {type: "bytes[]"}],

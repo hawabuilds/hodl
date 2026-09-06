@@ -7,6 +7,7 @@ import {
   V4_ACTION_SETTLE,
   V4_ACTION_SETTLE_ALL,
   V4_ACTION_SWAP_EXACT_IN_SINGLE,
+  V4_ACTION_TAKE,
   V4_ACTION_TAKE_ALL,
 } from "../src/lib/v4Encoding";
 
@@ -63,6 +64,25 @@ describe("v4 encoding", () => {
       ]),
     );
     assert.equal(encoded.actions, "0x060b0f");
+  });
+
+  it("keeps the output on the router for a later hop", () => {
+    const encoded = encodeV4SwapExactInSingle({
+      poolKey: KEY,
+      zeroForOne: true,
+      amountIn: 10n ** 16n,
+      amountOutMinimum: 1n,
+      takeToRouter: true,
+    });
+    assert.equal(
+      encoded.actions,
+      packActions([
+        V4_ACTION_SWAP_EXACT_IN_SINGLE,
+        V4_ACTION_SETTLE_ALL,
+        V4_ACTION_TAKE,
+      ]),
+    );
+    assert.equal(encoded.actions, "0x060c0e");
   });
 
   it("hashes PoolKey the Uniswap way", () => {

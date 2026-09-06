@@ -67,6 +67,29 @@ describe("live trade flag", () => {
       }),
       false,
     );
+    assert.equal(
+      hodlCanExecuteQuote({
+        quoteToken: QUOTE_WETH,
+        quoteIsNative: false,
+        quoteIsWeth: true,
+        pairToken: "0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea",
+        hops: [
+          {
+            venue: "v4",
+            tokenIn: "0xfe7e19cbce2f896c6c528bc355baf5a768291e18",
+            tokenOut: "0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea",
+          },
+          {
+            venue: "v3",
+            tokenIn: "0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea",
+            tokenOut: QUOTE_WETH,
+            v3Fee: 500,
+          },
+        ],
+      }),
+      false,
+      "SPACEHOOD ETH exit is Universal Router, not Hodl",
+    );
   });
 });
 

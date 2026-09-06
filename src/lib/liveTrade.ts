@@ -1,4 +1,6 @@
 import {QUOTE_USDG} from "./contracts";
+import {isEthish} from "./swapRoute";
+import type {SwapHop} from "./swapRoute";
 
 /**
  * Live HodlRouter ticket. Master switch is NEXT_PUBLIC_LIVE_TRADE=1 plus a
@@ -46,15 +48,21 @@ export function isLiveTrader(wallet: string | null | undefined): boolean {
 
 /**
  * HodlRouter._isQuote only accepts native ETH, WETH, and USDG.
- * New-feed launches are usually paired with a tokenized stock — those
- * quotes must go through Universal Router, not HodlRouter.
+ * Multi-hop stock/SPCX → ETH must go through Universal Router.
+ * A sell quote that already says "ETH out" is still Hodl-ineligible when
+ * the pool pair is a stock — Hodl cannot hop SPCX to ETH.
  */
 export function hodlCanExecuteQuote(quote: {
   quoteIsNative?: boolean;
   quoteIsWeth?: boolean;
   quoteToken?: string | null;
+  pairToken?: string | null;
+  hops?: SwapHop[];
 } | null | undefined): boolean {
   if (!quote) return false;
+  if (quote.hops && quote.hops.length > 1) return false;
+  const pair = quote.pairToken?.toLowerCase();
+  if (pair && !isEthish(pair) && pair !== QUOTE_USDG) return false;
   if (quote.quoteIsNative || quote.quoteIsWeth) return true;
   return quote.quoteToken?.toLowerCase() === QUOTE_USDG;
 }

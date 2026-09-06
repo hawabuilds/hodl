@@ -38,6 +38,7 @@ import {
   quoteOutSymbol,
   sellAmountInRaw,
   sellMaxEntered,
+  sellRouteLabel,
   tradeTokenAddress,
 } from "@/lib/tradeTicket";
 import {humanToRaw} from "@/lib/quoteAmounts";
@@ -89,6 +90,7 @@ export function OrderModal({
   const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [quotePending, setQuotePending] = useState(false);
   const [quoteMiss, setQuoteMiss] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
   const [quoteAt, setQuoteAt] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [sellAll, setSellAll] = useState(false);
@@ -177,6 +179,7 @@ export function OrderModal({
     setConfigOpen(false);
     setQuote(null);
     setQuoteMiss(false);
+    setQuoteError(null);
     setQuoteAt(0);
     setSellAll(false);
     hodl.reset();
@@ -278,6 +281,7 @@ export function OrderModal({
     if (!token || !valid) {
       setQuote(null);
       setQuoteMiss(false);
+      setQuoteError(null);
       setQuotePending(false);
       setQuoteAt(0);
       return;
@@ -302,6 +306,7 @@ export function OrderModal({
         if (result.ok) {
           setQuote(result.quote);
           setQuoteMiss(false);
+          setQuoteError(null);
           setQuoteAt(Date.now());
           if (
             isLiveTrader(ticket.address)
@@ -312,12 +317,14 @@ export function OrderModal({
         } else {
           setQuote(null);
           setQuoteMiss(true);
+          setQuoteError(result.error ?? null);
           setQuoteAt(0);
         }
       } catch (cause) {
         if ((cause as {name?: string})?.name === "AbortError") return;
         setQuote(null);
         setQuoteMiss(true);
+        setQuoteError(null);
         setQuoteAt(0);
       } finally {
         setQuotePending(false);
@@ -340,6 +347,7 @@ export function OrderModal({
     wallet: ticket.address,
     venue: quote?.venue ?? (quoteMiss ? null : undefined),
     quotePending,
+    quoteError,
   });
 
   const approvalLabel = quote
@@ -402,11 +410,13 @@ export function OrderModal({
     if (!result.ok) {
       setQuote(null);
       setQuoteMiss(true);
+      setQuoteError(result.error ?? null);
       setQuoteAt(0);
-      throw new Error("No Uniswap pool for this token.");
+      throw new Error(result.error || "No Uniswap pool for this token.");
     }
     setQuote(result.quote);
     setQuoteMiss(false);
+    setQuoteError(null);
     setQuoteAt(Date.now());
     return result.quote;
   }
@@ -427,7 +437,7 @@ export function OrderModal({
     if (!token || !quote) {
       setError(
         quoteMiss
-          ? "No Uniswap pool for this token."
+          ? (quoteError || "No Uniswap pool for this token.")
           : "Enter an amount.",
       );
       return;
@@ -526,6 +536,9 @@ export function OrderModal({
     if (ticket.submitting) return pendingSignatureCopy(walletKind, "swap");
     if (!ticket.authenticated) return "Sign in to trade";
     if (quotePending) return "Finding route…";
+    if (quoteMiss && quoteError && /can't exit to eth/i.test(quoteError)) {
+      return "Can't exit to ETH";
+    }
     if (quoteMiss || (blocked && quote == null)) return "No pool";
     if (!live && quoteExpired) return "Quote expired";
     if (live && ticket.authenticated && quote) {
@@ -851,11 +864,13 @@ function TicketBreakdown({
       </div>
       <div className="flex items-center justify-between gap-3">
         <span className="text-faint">Minimum received</span>
-        <span className="tnum font-bold text-muted">{units(Number(minHuman))}</span>
+        <span className="tnum font-bold text-muted">
+          {units(Number(minHuman))} {quoteOutSymbol(quote)}
+        </span>
       </div>
       <div className="flex items-center justify-between gap-3">
         <span className="text-faint">Route</span>
-        <span className="font-bold text-muted">{quote.venueLabel}</span>
+        <span className="font-bold text-muted">{sellRouteLabel(quote)}</span>
       </div>
       <div className="flex items-center justify-between gap-3">
         <span className="text-faint">Quote refresh</span>

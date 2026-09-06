@@ -1,14 +1,11 @@
-import {parseAbi, type PublicClient} from "viem";
-import {UNISWAP_QUOTER_V2} from "@/lib/contracts";
-import {amountOutFromQuoter, inputAfterBuyFee, pickBestVenue, type VenueCandidate, type VenueDecision} from "@/lib/venueQuote";
+import type {PublicClient} from "viem";
+import {amountOutFromQuoter, feeOnAmount, inputAfterBuyFee, pickBestVenue, type VenueCandidate, type VenueDecision} from "@/lib/venueQuote";
 import {QUOTE_USDG, QUOTE_WETH} from "@/lib/contracts";
+import {CANT_EXIT_TO_ETH, isEthish, type SwapHop} from "@/lib/swapRoute";
 import {rpc} from "./chain";
+import {quotePairToEth, quoteV3ExactIn} from "./ethExit";
 import {discoverV3Pools, pickBestPool, readV3Pool, V3_QUOTES} from "./v3Pools";
 import {quoteV4ExactIn, resolveV4PoolKeys, vanillaV4Candidates, type V4PoolHit} from "./v4Pools";
-
-const quoterV2Abi = parseAbi([
-  "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)",
-]);
 
 export interface QuoteRequest {
   token: string;
@@ -23,28 +20,25 @@ export interface QuoteRequest {
   client?: PublicClient;
 }
 
-async function quoteV3(
-  tokenIn: `0x${string}`,
-  tokenOut: `0x${string}`,
-  fee: number,
-  amountIn: bigint,
-  client: PublicClient,
-): Promise<bigint | null> {
-  try {
-    const sim = await client.simulateContract({
-      address: UNISWAP_QUOTER_V2,
-      abi: quoterV2Abi,
-      functionName: "quoteExactInputSingle",
-      args: [{tokenIn, tokenOut, amountIn, fee, sqrtPriceLimitX96: 0n}],
-    });
-    return sim.result[0];
-  } catch {
-    return null;
-  }
-}
-
 function v4ZeroForOne(hit: V4PoolHit, tokenIn: string): boolean {
   return hit.key.currency0.toLowerCase() === tokenIn.toLowerCase();
+}
+
+function hopFromCandidate(
+  candidate: VenueCandidate,
+  token: `0x${string}`,
+  side: "buy" | "sell",
+): SwapHop {
+  const tokenIn = side === "buy" ? candidate.quoteToken : token;
+  const tokenOut = side === "buy" ? token : candidate.quoteToken;
+  return {
+    venue: candidate.venue,
+    tokenIn,
+    tokenOut,
+    zeroForOne: candidate.zeroForOne,
+    poolKey: candidate.poolKey ?? null,
+    v3Fee: candidate.v3Fee ?? null,
+  };
 }
 
 /**
@@ -53,13 +47,13 @@ function v4ZeroForOne(hit: V4PoolHit, tokenIn: string): boolean {
  * Creator tax on V3 is zero — the hook never runs. That is disclosed on the
  * ticket. It is not a product we market.
  */
-export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | null> {
+export async function gatherVenueCandidates(req: QuoteRequest): Promise<VenueCandidate[]> {
   const client = req.client ?? rpc();
   const token = req.token.toLowerCase() as `0x${string}`;
   const candidates: VenueCandidate[] = [];
 
   const quoteIn = req.side === "buy" ? inputAfterBuyFee(req.amountIn) : req.amountIn;
-  if (quoteIn <= 0n) return null;
+  if (quoteIn <= 0n) return [];
 
   const extraQuotes = (req.extraQuotes ?? [])
     .map((quote) => quote.toLowerCase() as `0x${string}`)
@@ -115,7 +109,7 @@ export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | n
     const quote = bestV3.quote;
     const tokenIn = req.side === "buy" ? quote : token;
     const tokenOut = req.side === "buy" ? token : quote;
-    const amountOut = await quoteV3(tokenIn, tokenOut, bestV3.fee, quoteIn, client);
+    const amountOut = await quoteV3ExactIn(tokenIn, tokenOut, bestV3.fee, quoteIn, client);
     if (amountOut != null) {
       candidates.push({
         venue: "v3",
@@ -143,7 +137,7 @@ export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | n
     if (quote) {
       const tokenIn = req.side === "buy" ? quote : token;
       const tokenOut = req.side === "buy" ? token : quote;
-      const amountOut = await quoteV3(tokenIn, tokenOut, hintedV3.fee, quoteIn, client);
+      const amountOut = await quoteV3ExactIn(tokenIn, tokenOut, hintedV3.fee, quoteIn, client);
       if (amountOut != null) {
         candidates.push({
           venue: "v3",
@@ -158,10 +152,92 @@ export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | n
     }
   }
 
+  return candidates;
+}
+
+/**
+ * Quote V4 and V3 for this size and pick the better net output.
+ *
+ * Creator tax on V3 is zero — the hook never runs. That is disclosed on the
+ * ticket. It is not a product we market.
+ */
+export async function resolveVenue(req: QuoteRequest): Promise<VenueDecision | null> {
+  const candidates = await gatherVenueCandidates(req);
   return pickBestVenue(
     candidates,
     undefined,
     req.side !== "buy",
     req.amountIn,
   );
+}
+
+export type SellToEthResult =
+  | {
+      ok: true;
+      decision: VenueDecision;
+      hops: SwapHop[];
+      pairToken: `0x${string}`;
+      quoteToken: `0x${string}`;
+    }
+  | {ok: false; reason: "no_pool"}
+  | {ok: false; reason: "no_eth_exit"; error: typeof CANT_EXIT_TO_ETH};
+
+/**
+ * Sell quotes in ETH. Doppler / stock-paired tokens hop pair → WETH/ETH.
+ * If that hop is missing, fail honestly — do not pay SPCX.
+ */
+export async function resolveSellToEth(req: QuoteRequest): Promise<SellToEthResult> {
+  const token = req.token.toLowerCase() as `0x${string}`;
+  const candidates = await gatherVenueCandidates({...req, side: "sell"});
+  if (candidates.length === 0) return {ok: false, reason: "no_pool"};
+
+  type Ranked = {
+    first: VenueCandidate;
+    ethOut: bigint;
+    hop2?: SwapHop;
+    quoteToken: `0x${string}`;
+  };
+  const ranked: Ranked[] = [];
+  for (const first of candidates) {
+    if (first.amountOut <= 0n) continue;
+    if (isEthish(first.quoteToken)) {
+      ranked.push({first, ethOut: first.amountOut, quoteToken: first.quoteToken});
+      continue;
+    }
+    const exit = await quotePairToEth({
+      pairToken: first.quoteToken,
+      amountIn: first.amountOut,
+      client: req.client,
+    });
+    if (!exit) continue;
+    ranked.push({
+      first,
+      ethOut: exit.amountOut,
+      hop2: exit.hop,
+      quoteToken: exit.quoteToken,
+    });
+  }
+  if (ranked.length === 0) {
+    return {ok: false, reason: "no_eth_exit", error: CANT_EXIT_TO_ETH};
+  }
+  ranked.sort((a, b) => (a.ethOut === b.ethOut ? 0 : a.ethOut > b.ethOut ? -1 : 1));
+  const win = ranked[0];
+  const decided = pickBestVenue([win.first], undefined, true, req.amountIn);
+  if (!decided) return {ok: false, reason: "no_pool"};
+  const feeAmount = feeOnAmount(win.ethOut);
+  const hops: SwapHop[] = [hopFromCandidate(win.first, token, "sell")];
+  if (win.hop2) hops.push(win.hop2);
+  return {
+    ok: true,
+    decision: {
+      ...decided,
+      amountOut: win.ethOut,
+      netOut: win.ethOut - feeAmount,
+      feeAmount,
+      quoteToken: win.quoteToken,
+    },
+    hops,
+    pairToken: win.first.quoteToken,
+    quoteToken: win.quoteToken,
+  };
 }

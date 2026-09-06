@@ -301,7 +301,7 @@ export function useHodlSwap() {
         const tokenOut =
           opts.side === "buy"
             ? opts.token
-            : opts.quote.quoteIsNative
+            : opts.quote.quoteIsNative || opts.quote.quoteIsWeth
               ? "0x0000000000000000000000000000000000000000"
               : opts.quote.quoteToken;
 
