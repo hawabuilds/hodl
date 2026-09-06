@@ -22,15 +22,15 @@ import {PORTFOLIO_RANGES, type ChartPoint, type PortfolioRange} from "@/lib/type
 type Side = "rwa" | "token";
 
 const SIDES: FilterOption<Side>[] = [
-  {value: "rwa", label: "RWAs"},
   {value: "token", label: "Tokens"},
+  {value: "rwa", label: "RWAs"},
 ];
 
 export default function ProfilePage() {
   const me = useMe();
   const [range, setRange] = useState<PortfolioRange>("1D");
   const book = usePortfolio(range);
-  const [side, setSide] = useState<Side>("rwa");
+  const [side, setSide] = useState<Side>("token");
   const [editOpen, setEditOpen] = useState(false);
   const [scrubbed, setScrubbed] = useState<ChartPoint | null>(null);
   const [connections, setConnections] = useState<"followers" | "following" | null>(

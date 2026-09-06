@@ -1,10 +1,12 @@
 "use client";
 
-import {useCallback} from "react";
-import {useQuery} from "@tanstack/react-query";
-import {isFollowing, readFollowing, toggleFollow} from "@/lib/localStore";
+import {useCallback, useEffect, useRef} from "react";
+import {useQuery, useQueryClient} from "@tanstack/react-query";
+import {isFollowing, readFollowing, toggleFollow, writeFollowing} from "@/lib/localStore";
 import type {Profile} from "@/lib/types";
+import {useSession} from "@/lib/session";
 import {useLocalStore} from "./useLocalStore";
+import {useUser} from "./useUser";
 
 interface ProfileResponse {
   profile: Profile;
@@ -33,15 +35,96 @@ export function useProfile(handle: string) {
   };
 }
 
-/** Who this browser follows. Local until there is a follow graph to write to. */
+/** Who this account follows. Server graph when signed in; local only in demo. */
 export function useFollows() {
-  const [following] = useLocalStore<string[]>(readFollowing, []);
+  const session = useSession();
+  const user = useUser();
+  const queryClient = useQueryClient();
+  const [localFollowing] = useLocalStore<string[]>(readFollowing, []);
 
-  const toggle = useCallback((handle: string) => toggleFollow(handle), []);
+  const remote = useQuery({
+    queryKey: ["following", user.user?.id ?? ""],
+    enabled: user.authenticated && session.mode === "privy",
+    queryFn: async () => {
+      const token = await session.getAccessToken();
+      if (!token) return [] as string[];
+      const res = await fetch("/api/follows", {
+        headers: {authorization: `Bearer ${token}`},
+      });
+      if (!res.ok) throw new Error("Could not load who you follow.");
+      const data = (await res.json()) as {following: string[]};
+      return (data.following ?? []).map((handle) => handle.toLowerCase());
+    },
+  });
+
+  const following =
+    user.authenticated && session.mode === "privy"
+      ? (remote.data ?? [])
+      : localFollowing.map((handle) => handle.toLowerCase());
+
+  const migrated = useRef(false);
+  useEffect(() => {
+    if (migrated.current) return;
+    if (!user.authenticated || session.mode !== "privy") return;
+    if (!remote.isSuccess) return;
+    const leftover = localFollowing
+      .map((handle) => handle.replace(/^@/, "").toLowerCase())
+      .filter((handle) => handle && !following.includes(handle));
+    if (leftover.length === 0) {
+      migrated.current = true;
+      return;
+    }
+    migrated.current = true;
+    void (async () => {
+      const token = await session.getAccessToken();
+      if (!token) return;
+      for (const handle of leftover) {
+        await fetch("/api/follows", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({handle, following: true}),
+        });
+      }
+      writeFollowing([]);
+      await queryClient.invalidateQueries({queryKey: ["following"]});
+    })();
+  }, [following, localFollowing, queryClient, remote.isSuccess, session, user.authenticated]);
+
+  const toggle = useCallback(
+    (handle: string) => {
+      if (!user.authenticated || session.mode !== "privy") {
+        toggleFollow(handle);
+        return;
+      }
+      const key = handle.replace(/^@/, "").toLowerCase();
+      const next = !following.includes(key);
+      void (async () => {
+        const token = await session.getAccessToken();
+        if (!token) return;
+        const res = await fetch("/api/follows", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({handle, following: next}),
+        });
+        if (!res.ok) return;
+        await queryClient.invalidateQueries({queryKey: ["following"]});
+        await queryClient.invalidateQueries({queryKey: ["my-followers"]});
+        await queryClient.invalidateQueries({queryKey: ["profile"]});
+      })();
+    },
+    [following, queryClient, session, user.authenticated],
+  );
+
   const has = useCallback(
-    (handle: string) => following.includes(handle.toLowerCase()),
+    (handle: string) => following.includes(handle.replace(/^@/, "").toLowerCase()),
     [following],
   );
 
-  return {following, has, toggle, isFollowing};
+  return {following, has, toggle, isFollowing, isLoading: remote.isLoading};
 }

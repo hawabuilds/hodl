@@ -70,6 +70,28 @@ export function useMe() {
     writeCachedMe({displayName, handle, pfpUrl, wallet, bio});
   }, [displayName, handle, pfpUrl, wallet, bio]);
 
+  useEffect(() => {
+    if (!user.authenticated || !remote.isSuccess) return;
+    if (remote.data?.handle || !user.handle) return;
+    void session.getAccessToken().then(async (token) => {
+      if (!token) return;
+      await fetch("/api/me/profile", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          handle: user.handle,
+          displayName: user.displayName,
+          pfpUrl: user.pfpUrl,
+          wallet: user.embeddedWallet,
+        }),
+      });
+      await remote.refetch();
+    });
+  }, [remote, session, user]);
+
   const socials: SocialLinks = {
     x: edits.socials.x ?? (handle ? `https://x.com/${handle}` : null),
     telegram: edits.socials.telegram ?? null,

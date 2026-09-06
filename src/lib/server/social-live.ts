@@ -1,4 +1,5 @@
 import type {AssetComment, Profile} from "@/lib/types";
+import {fallbackHandle, handleIlike, normalizeHandle} from "@/lib/handle";
 import {db, hasDatabase} from "./db";
 
 /** People returned for one query. Twenty was a silent ceiling on the tab. */
@@ -66,9 +67,17 @@ export async function walletForHandle(
   const {data} = await db()
     .from("users")
     .select("wallet")
-    .eq("handle", handle.replace(/^@/, ""))
+    .ilike("handle", handleIlike(handle))
     .maybeSingle();
   return (data as {wallet?: string} | null)?.wallet ?? null;
+}
+
+/** Insert a users stub so follow FKs can land before they edit their profile. */
+export async function ensureUser(id: string): Promise<void> {
+  if (!hasDatabase || !id) return;
+  const existing = await userById(id);
+  if (existing) return;
+  await db().from("users").insert({id});
 }
 
 /** The caller's own users row. One indexed read. */
@@ -205,24 +214,31 @@ export async function setFollow(
 ): Promise<boolean> {
   if (!hasDatabase) return false;
 
+  const needle = handleIlike(followingHandle);
+  if (!needle) return false;
+
   const {data: target} = await db()
     .from("users")
     .select("id")
-    .eq("handle", followingHandle.replace(/^@/, ""))
+    .ilike("handle", needle)
     .maybeSingle();
 
   if (!target?.id) return false;
 
+  await ensureUser(followerId);
+
   if (following) {
-    await db()
+    const {error} = await db()
       .from("follows")
       .upsert({follower_id: followerId, following_id: target.id});
+    if (error) return false;
   } else {
-    await db()
+    const {error} = await db()
       .from("follows")
       .delete()
       .eq("follower_id", followerId)
       .eq("following_id", target.id);
+    if (error) return false;
   }
   return true;
 }
@@ -232,13 +248,16 @@ export async function followingOf(userId: string): Promise<string[]> {
   if (!hasDatabase) return [];
   const {data} = await db()
     .from("follows")
-    .select("users!follows_following_id_fkey(handle)")
+    .select("users!follows_following_id_fkey(id, handle)")
     .eq("follower_id", userId);
 
   return (data ?? [])
     .map((row) => {
-      const user = one((row as {users?: {handle?: string} | {handle?: string}[]}).users);
-      return user?.handle ?? null;
+      const user = one(
+        (row as {users?: {id?: string; handle?: string} | {id?: string; handle?: string}[]})
+          .users,
+      );
+      return fallbackHandle(user);
     })
     .filter((handle): handle is string => Boolean(handle));
 }
@@ -288,7 +307,7 @@ export async function profileByHandle(handle: string): Promise<Profile | null> {
   const {data} = await db()
     .from("users")
     .select("id, handle, display_name, pfp_url, bio, socials, wallet")
-    .eq("handle", handle.replace(/^@/, ""))
+    .ilike("handle", handleIlike(handle))
     .maybeSingle();
 
   if (!data) return null;
@@ -328,24 +347,25 @@ async function edgesFor(
   const {data: user} = await db()
     .from("users")
     .select("id")
-    .eq("handle", handle.replace(/^@/, ""))
+    .ilike("handle", handleIlike(handle))
     .maybeSingle();
 
   if (!user?.id) return [];
 
   const [match, join] =
     side === "followers"
-      ? (["following_id", "users!follows_follower_id_fkey(handle)"] as const)
-      : (["follower_id", "users!follows_following_id_fkey(handle)"] as const);
+      ? (["following_id", "users!follows_follower_id_fkey(id, handle)"] as const)
+      : (["follower_id", "users!follows_following_id_fkey(id, handle)"] as const);
 
   const {data} = await db().from("follows").select(join).eq(match, user.id);
 
   return (data ?? [])
     .map((row) => {
       const joined = one(
-        (row as {users?: {handle?: string} | {handle?: string}[]}).users,
+        (row as {users?: {id?: string; handle?: string} | {id?: string; handle?: string}[]})
+          .users,
       );
-      return joined?.handle ?? null;
+      return fallbackHandle(joined);
     })
     .filter((entry): entry is string => Boolean(entry));
 }
@@ -362,7 +382,7 @@ export async function profilesByHandles(
 ): Promise<Profile[]> {
   if (!hasDatabase || handles.length === 0) return [];
 
-  const wanted = handles.map((handle) => handle.replace(/^@/, ""));
+  const wanted = handles.map((handle) => normalizeHandle(handle));
 
   const {data} = await db()
     .from("users")
@@ -370,14 +390,14 @@ export async function profilesByHandles(
     .in("handle", wanted);
 
   const byHandle = new Map(
-    (data ?? []).map((row) => [
-      (row as UserRow).handle ?? "",
-      toProfile(row as UserRow),
-    ]),
+    (data ?? []).map((row) => {
+      const user = row as UserRow;
+      return [user.handle?.toLowerCase() ?? user.id.slice(-8).toLowerCase(), toProfile(user)];
+    }),
   );
 
   return wanted
-    .map((handle) => byHandle.get(handle))
+    .map((handle) => byHandle.get(handle.toLowerCase()))
     .filter((profile): profile is Profile => profile !== undefined);
 }
 
@@ -388,19 +408,26 @@ export async function profilesByHandles(
  * and works before the account has picked one.
  */
 export async function followersOfId(userId: string): Promise<string[]> {
+  return (await followerProfilesOfId(userId)).map((profile) => profile.handle);
+}
+
+/** Full follower profiles, including people who have not picked a handle. */
+export async function followerProfilesOfId(userId: string): Promise<Profile[]> {
   if (!hasDatabase) return [];
 
   const {data} = await db()
     .from("follows")
-    .select("users!follows_follower_id_fkey(handle)")
+    .select(
+      "users!follows_follower_id_fkey(id, handle, display_name, pfp_url, bio, socials, wallet)",
+    )
     .eq("following_id", userId);
 
   return (data ?? [])
     .map((row) => {
       const joined = one(
-        (row as {users?: {handle?: string} | {handle?: string}[]}).users,
+        (row as {users?: UserRow | UserRow[]}).users,
       );
-      return joined?.handle ?? null;
+      return joined ? toProfile(joined) : null;
     })
-    .filter((entry): entry is string => Boolean(entry));
+    .filter((profile): profile is Profile => profile !== null);
 }

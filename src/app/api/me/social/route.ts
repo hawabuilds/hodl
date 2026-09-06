@@ -1,7 +1,7 @@
 import {json} from "@/lib/server/http";
 import {callerId} from "@/lib/server/auth";
 import {hasDatabase} from "@/lib/server/db";
-import {followersOfId, profilesByHandles} from "@/lib/server/social-live";
+import {followerProfilesOfId} from "@/lib/server/social-live";
 import {connectionsFor, getProfile} from "@/lib/server/social";
 import type {Profile} from "@/lib/types";
 
@@ -18,8 +18,7 @@ export async function GET(request: Request) {
   const userId = await callerId(request);
 
   if (hasDatabase && userId) {
-    const handles = await followersOfId(userId);
-    const followers = await profilesByHandles(handles);
+    const followers = await followerProfilesOfId(userId);
     return json({followers, seeded: false});
   }
 

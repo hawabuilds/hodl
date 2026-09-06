@@ -2,6 +2,8 @@
 
 import {useQuery} from "@tanstack/react-query";
 import type {Profile} from "@/lib/types";
+import {useSession} from "@/lib/session";
+import {useUser} from "./useUser";
 
 /** Resolves handles to profiles. Skipped entirely when there are none. */
 export function usePeople(handles: string[], enabled = true) {
@@ -25,11 +27,17 @@ export function usePeople(handles: string[], enabled = true) {
 
 /** Who follows the signed-in account. Seeded until there is a follow table. */
 export function useMyFollowers(enabled = true) {
+  const session = useSession();
+  const user = useUser();
   const query = useQuery({
-    queryKey: ["my-followers"],
-    enabled,
+    queryKey: ["my-followers", user.user?.id ?? ""],
+    enabled: enabled && user.authenticated,
     queryFn: async () => {
-      const res = await fetch("/api/me/social");
+      const token = await session.getAccessToken();
+      if (!token) return {followers: [] as Profile[], seeded: false};
+      const res = await fetch("/api/me/social", {
+        headers: {authorization: `Bearer ${token}`},
+      });
       if (!res.ok) throw new Error("Could not load your followers.");
       return (await res.json()) as {followers: Profile[]; seeded: boolean};
     },

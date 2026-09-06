@@ -209,6 +209,14 @@ export function isFollowing(handle: string): boolean {
   return readFollowing().includes(handle.toLowerCase());
 }
 
+export function writeFollowing(handles: string[]): void {
+  write(
+    "following",
+    handles.map((handle) => handle.replace(/^@/, "").toLowerCase()),
+  );
+  announce();
+}
+
 export function toggleFollow(handle: string): boolean {
   const key = handle.toLowerCase();
   const current = readFollowing();

@@ -26,7 +26,7 @@ export default function PublicProfilePage({
   const {profile, followerHandles, followingHandles, isLoading, notFound} =
     useProfile(params.handle);
   const follows = useFollows();
-  const [side, setSide] = useState<Side>("rwa");
+  const [side, setSide] = useState<Side>("token");
   const [connections, setConnections] = useState<Connections | null>(null);
 
   const shownHandles =
@@ -46,20 +46,18 @@ export default function PublicProfilePage({
 
   const sides: FilterOption<Side>[] = [
     {
-      value: "rwa",
-      label: "RWAs",
-      hint: String(holdings.filter((h) => h.kind === "rwa").length),
-    },
-    {
       value: "token",
       label: "Tokens",
       hint: String(holdings.filter((h) => h.kind === "token").length),
     },
+    {
+      value: "rwa",
+      label: "RWAs",
+      hint: String(holdings.filter((h) => h.kind === "rwa").length),
+    },
   ];
 
-  // A local follow is only visible to this browser, so it is added to the
-  // seeded count rather than replacing it.
-  const followerCount = (profile?.followers ?? 0) + (following ? 1 : 0);
+  const followerCount = profile?.followers ?? 0;
 
   if (isLoading) return <ProfileSkeleton />;
 
