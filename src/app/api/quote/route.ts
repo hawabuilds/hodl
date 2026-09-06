@@ -1,7 +1,7 @@
 import {isAddress, normalizeAddress} from "@/lib/address";
 import {QUOTE_ETH, QUOTE_USDG, QUOTE_WETH} from "@/lib/contracts";
 import {humanToRaw, quoteTokenDecimals, usdgRawFromUsd} from "@/lib/quoteAmounts";
-import {CANT_EXIT_TO_ETH, isEthish, type SwapHop} from "@/lib/swapRoute";
+import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, isEthish, isHodlQuoteToken, type SwapHop} from "@/lib/swapRoute";
 import {lpFeeLabel, venueTicketCopy} from "@/lib/venueQuote";
 import {json} from "@/lib/server/http";
 import {quotePriceUsd} from "@/lib/server/quotePrice";
@@ -9,7 +9,7 @@ import {erc20Abi, rpc} from "@/lib/server/live/chain";
 import {poolFor} from "@/lib/server/live/market";
 import {ethUsd} from "@/lib/server/live/onchainPrice";
 import {RWA_BY_ADDRESS} from "@/lib/server/live/robinhood";
-import {resolveSellToEth, resolveVenue} from "@/lib/server/live/venueResolve";
+import {resolveBuyFromEth, resolveSellToEth, resolveVenue} from "@/lib/server/live/venueResolve";
 
 export const dynamic = "force-dynamic";
 
@@ -117,31 +117,62 @@ export async function GET(req: Request) {
       extraQuotes,
       v3Pool: v3PoolHint,
     });
-  }
-  if (!sized) return json({venue: null});
 
-  // Probe used USDG units. Resize to the winning quote token (WETH, ETH, or RWA).
-  if (
-    side === "buy" &&
-    amountInParam == null &&
-    Number.isFinite(amountUsd) &&
-    amountUsd > 0 &&
-    sized.quoteToken !== QUOTE_USDG
-  ) {
-    const resized = await buyAmountIn(amountUsd, sized.quoteToken);
-    if (resized != null && resized > 0n) {
-      amountIn = resized;
-      const retry = await resolveVenue({
+    if (sized && isHodlQuoteToken(sized.quoteToken)) {
+      // Probe used USDG units. Resize to the winning Hodl quote (WETH, ETH, USDG).
+      if (
+        amountInParam == null &&
+        Number.isFinite(amountUsd) &&
+        amountUsd > 0 &&
+        sized.quoteToken !== QUOTE_USDG
+      ) {
+        const resized = await buyAmountIn(amountUsd, sized.quoteToken);
+        if (resized != null && resized > 0n) {
+          amountIn = resized;
+          const retry = await resolveVenue({
+            token,
+            side,
+            amountIn,
+            v4PoolId,
+            extraQuotes,
+            v3Pool: v3PoolHint,
+          });
+          if (retry) sized = retry;
+        }
+      }
+      pairToken = sized.quoteToken;
+    } else {
+      const ethAmount =
+        amountInParam != null && amountInParam > 0n
+          ? amountInParam
+          : Number.isFinite(amountUsd) && amountUsd > 0
+            ? await buyAmountIn(amountUsd, QUOTE_WETH)
+            : null;
+      if (ethAmount == null || ethAmount <= 0n) {
+        return sized ? json({error: CANT_ENTER_FROM_ETH}) : json({venue: null});
+      }
+      amountIn = ethAmount;
+      const bought = await resolveBuyFromEth({
         token,
-        side,
-        amountIn,
+        side: "buy",
+        amountIn: ethAmount,
         v4PoolId,
         extraQuotes,
         v3Pool: v3PoolHint,
+        applyBuyFee: false,
       });
-      if (retry) sized = retry;
+      if (!bought.ok) {
+        if (bought.reason === "no_eth_entry") {
+          return json({error: bought.error ?? CANT_ENTER_FROM_ETH});
+        }
+        return json({venue: null});
+      }
+      sized = bought.decision;
+      hops = bought.hops;
+      pairToken = bought.pairToken;
     }
   }
+  if (!sized) return json({venue: null});
 
   const decimals = await tokenDecimals(token as `0x${string}`);
   const copy = venueTicketCopy(sized);

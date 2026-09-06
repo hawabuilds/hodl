@@ -5,6 +5,9 @@ import type {VenueId} from "./venueQuote";
 /** Ticket and wallet copy when a sell has no hop into ETH. */
 export const CANT_EXIT_TO_ETH = "Can't exit to ETH";
 
+/** Ticket copy when a stock-paired buy has no ETH → pair hop. */
+export const CANT_ENTER_FROM_ETH = "Can't buy with ETH";
+
 export interface SwapHop {
   venue: VenueId;
   tokenIn: `0x${string}`;

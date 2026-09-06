@@ -100,6 +100,26 @@ describe("venue quote", () => {
     );
   });
 
+  it("leaves the full output when the path takes no platform fee", () => {
+    const best = pickBestVenue(
+      [
+        {
+          venue: "v4",
+          amountOut: 10_000n,
+          creatorTaxBps: 0,
+          quoteToken: WETH,
+          label: "v4",
+        },
+      ],
+      0,
+      true,
+      10_000n,
+    );
+    assert.equal(best?.platformFeeBps, 0);
+    assert.equal(best?.feeAmount, 0n);
+    assert.equal(best?.netOut, 10_000n);
+  });
+
   it("buy quotes the post-fee input so the ticket matches Trade", () => {
     const amountIn = 1_000_000n;
     assert.equal(inputAfterBuyFee(amountIn), 995_000n);

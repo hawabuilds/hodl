@@ -16,7 +16,7 @@ import {
   UNIVERSAL_ROUTER,
   UNISWAP_SWAP_ROUTER_02,
 } from "../src/lib/contracts";
-import {encodeHodlSell, hodlRouterAbi} from "../src/lib/hodlRouter";
+import {encodeHodlBuy, encodeHodlSell, hodlRouterAbi} from "../src/lib/hodlRouter";
 import {CANT_EXIT_TO_ETH} from "../src/lib/swapRoute";
 import {amountOutMinimum, ticketBlockReason} from "../src/lib/tradePolicy";
 import {parseSwapQuote} from "../src/lib/swapQuote";
@@ -298,6 +298,94 @@ describe("swap tx encoding", () => {
     assert.equal(isTransferToSwapRouter(lost), true);
     assert.throws(() => assertSwapNotErc20Transfer(lost), /swap/i);
     assert.equal(CANT_EXIT_TO_ETH, "Can't exit to ETH");
+  });
+
+  it("encodes a stock-paired buy as UR execute from ETH, never transfer", () => {
+    const token = "0xf3239df6f081f7c98bc5ba27fb24eea66cd1d69c" as const;
+    const spy = "0x117cc2133c37b721f49de2a7a74833232b3b4c0c" as const;
+    const hop1 = {
+      currency0: QUOTE_WETH,
+      currency1: spy,
+      fee: 3000,
+      tickSpacing: 60,
+      hooks: "0x0000000000000000000000000000000000000000" as const,
+    };
+    const hop2 = {
+      currency0: spy,
+      currency1: token,
+      fee: 0,
+      tickSpacing: 200,
+      hooks: "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044" as const,
+    };
+    const tx = prepareExactInSwap({
+      venue: "v4",
+      side: "buy",
+      token,
+      quoteToken: QUOTE_WETH,
+      quoteIsNative: false,
+      quoteIsWeth: true,
+      poolKey: hop2,
+      zeroForOne: true,
+      amountIn: 10n ** 16n,
+      amountOutMinimum: 1n,
+      deadline: 1n,
+      recipient: "0x1111111111111111111111111111111111111111",
+      payNative: true,
+      hops: [
+        {
+          venue: "v4",
+          tokenIn: QUOTE_WETH,
+          tokenOut: spy,
+          poolKey: hop1,
+          zeroForOne: true,
+        },
+        {
+          venue: "v4",
+          tokenIn: spy,
+          tokenOut: token,
+          poolKey: hop2,
+          zeroForOne: true,
+          amountIn: "1000",
+        },
+      ],
+    });
+    assert.equal(tx.to, UNIVERSAL_ROUTER);
+    assert.equal(tx.value, 10n ** 16n);
+    assert.equal(tx.data.slice(0, 10), "0x3593564c");
+    assert.equal(
+      executeCommands(tx.data),
+      packCommands([UR_COMMAND_WRAP_ETH, UR_COMMAND_V4_SWAP, UR_COMMAND_V4_SWAP]),
+    );
+    assert.equal(isErc20TransferCalldata(tx.data), false);
+    assert.equal(isTransferToSwapRouter(tx), false);
+    assert.doesNotThrow(() => assertSwapNotErc20Transfer(tx));
+    assert.notEqual(tx.data.slice(0, 10), ERC20_TRANSFER_SELECTOR);
+  });
+
+  it("encodes HodlRouter buy() with value, not an ERC-20 transfer", () => {
+    const router = "0x50cb78e0034b4869d8d42ad901c614866f5c5e99" as const;
+    const token = KEY.currency1;
+    const tx = encodeHodlBuy({
+      router,
+      tokenOut: token,
+      minAmountOut: 1n,
+      hint: {
+        currency0: "0x0000000000000000000000000000000000000000",
+        currency1: token,
+        fee: 3000,
+        tickSpacing: 0,
+        hooks: "0x0000000000000000000000000000000000000000",
+      },
+      deadline: 1n,
+      value: 10n ** 16n,
+    });
+    assert.equal(tx.to, router);
+    assert.equal(tx.value, 10n ** 16n);
+    assert.notEqual(tx.to, UNIVERSAL_ROUTER);
+    assert.equal(isErc20TransferCalldata(tx.data), false);
+    assert.equal(isTransferToSwapRouter(tx), false);
+    const decoded = decodeFunctionData({abi: hodlRouterAbi, data: tx.data});
+    assert.equal(decoded.functionName, "buy");
   });
 
   it("encodes HodlRouter sell() rather than a token transfer", () => {

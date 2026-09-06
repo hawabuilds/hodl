@@ -1,8 +1,10 @@
 import {QUOTE_USDG} from "./contracts";
+import {hodlCanExecuteQuote} from "./liveTrade";
 import {humanToRaw} from "./quoteAmounts";
 import type {SwapQuote} from "./swapQuote";
 import type {Asset} from "./types";
 import {isEthish} from "./swapRoute";
+import {PLATFORM_FEE_BPS} from "./venueQuote";
 
 /**
  * Contract the ticket quotes and swaps. RWAs carry `contractAddress`;
@@ -41,6 +43,76 @@ export function sellRouteLabel(
     return `Uniswap ${hops.map((hop) => (hop.venue === "v4" ? "V4" : "V3")).join(" → ")}`;
   }
   return quote.venueLabel;
+}
+
+/** HodlRouter actually skims 50 bps. Universal Router multi-hop does not. */
+export function ticketTakesHodlFee(
+  quote: Parameters<typeof hodlCanExecuteQuote>[0],
+): boolean {
+  return hodlCanExecuteQuote(quote);
+}
+
+export function platformFeeLabel(
+  quote: Parameters<typeof hodlCanExecuteQuote>[0],
+): {
+  title: string;
+  note: string | null;
+  taken: boolean;
+  bps: number;
+} {
+  const taken = ticketTakesHodlFee(quote);
+  const bps = taken ? PLATFORM_FEE_BPS : 0;
+  return {
+    title: `Platform fee ${bps / 100}%`,
+    note: taken ? null : "No platform fee on this route",
+    taken,
+    bps,
+  };
+}
+
+/** What the user actually receives after any Hodl skim. UR uses the gross out. */
+export function ticketNetOut(quote: Pick<SwapQuote, "amountOut" | "netOut" | "hops" | "quoteToken" | "pairToken" | "quoteIsNative" | "quoteIsWeth">): bigint {
+  if (!ticketTakesHodlFee(quote)) return BigInt(quote.amountOut);
+  return BigInt(quote.netOut || quote.amountOut);
+}
+
+/** Buy spends ETH on Hodl native/WETH and on UR multi-hop. */
+export function buyPaysNative(
+  quote: Pick<SwapQuote, "quoteIsNative" | "quoteIsWeth" | "quoteToken" | "hops"> | null | undefined,
+): boolean {
+  if (!quote) return false;
+  if (quote.quoteIsNative || quote.quoteIsWeth) return true;
+  return (quote.hops?.length ?? 0) > 1 && isEthish(quote.quoteToken);
+}
+
+/** Before a quote lands, show ETH — not $0 USDG — so a funded wallet is visible. */
+export function buyAvailableIsEth(
+  quote: Pick<SwapQuote, "quoteIsNative" | "quoteIsWeth" | "quoteToken" | "hops"> | null | undefined,
+): boolean {
+  if (!quote) return true;
+  return buyPaysNative(quote);
+}
+
+export function buyMaxEntered(opts: {
+  paysNative: boolean;
+  ethUnits: number;
+  ethUsd: number | null;
+  currencyEth: boolean;
+  spendUsd: number;
+}): number {
+  if (!opts.paysNative) return opts.spendUsd;
+  if (!Number.isFinite(opts.ethUnits) || opts.ethUnits <= 0) return 0;
+  if (opts.currencyEth) return opts.ethUnits;
+  if (opts.ethUsd == null || opts.ethUsd <= 0) return 0;
+  return opts.ethUnits * opts.ethUsd;
+}
+
+export function feeAmountSymbol(
+  quote: Pick<SwapQuote, "quoteIsNative" | "quoteIsWeth" | "quoteToken" | "quoteSymbol">,
+): string {
+  if (quote.quoteIsNative || quote.quoteIsWeth || isEthish(quote.quoteToken)) return "ETH";
+  if (quote.quoteToken.toLowerCase() === QUOTE_USDG) return "USDG";
+  return quote.quoteSymbol || "tokens";
 }
 
 /**

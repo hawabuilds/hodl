@@ -15,7 +15,7 @@ import {
   UNIVERSAL_ROUTER,
   UNISWAP_SWAP_ROUTER_02,
 } from "./contracts";
-import {CANT_EXIT_TO_ETH, isEthish, type SwapHop} from "./swapRoute";
+import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, isEthish, type SwapHop} from "./swapRoute";
 import {
   encodeV4SwapExactInSingle,
   UR_ADDRESS_THIS,
@@ -189,7 +189,7 @@ export function isTransferToSwapRouter(tx: PreparedTx): boolean {
 
 export function assertSwapNotErc20Transfer(tx: PreparedTx): void {
   if (isErc20TransferCalldata(tx.data) || isTransferToSwapRouter(tx)) {
-    throw new Error("Sell must be a swap, not an ERC-20 transfer to the router.");
+    throw new Error("Trade must be a swap, not an ERC-20 transfer to the router.");
   }
   const to = tx.to.toLowerCase();
   if (to !== UNIVERSAL_ROUTER && to !== UNISWAP_SWAP_ROUTER_02) {
@@ -373,6 +373,8 @@ function encodeHopInput(opts: {
   amountIn: bigint;
   amountOutMinimum: bigint;
   takeToRouter: boolean;
+  /** true = SETTLE_ALL / msg.value. false = tokens already on the router. */
+  payerIsUser?: boolean;
 }): `0x${string}` {
   if (opts.hop.venue === "v4") {
     if (!opts.hop.poolKey) {
@@ -383,9 +385,9 @@ function encodeHopInput(opts: {
       zeroForOne: Boolean(opts.hop.zeroForOne),
       amountIn: opts.amountIn,
       amountOutMinimum: opts.takeToRouter ? 0n : opts.amountOutMinimum,
-      // Permit2 already pulled the token onto UR. SETTLE_ALL would try the
-      // user again and revert on a 100% sell (AllowanceExpired / no balance).
-      payerIsUser: false,
+      // Default false: Permit2 or WRAP_ETH already put tokens on UR.
+      // Native ETH first hop passes true so SETTLE_ALL takes msg.value.
+      payerIsUser: opts.payerIsUser === true ? undefined : false,
       takeToRouter: opts.takeToRouter,
     }).inputs[0];
   }
@@ -458,14 +460,74 @@ export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
 }
 
 /**
+ * Buy path: ETH → pair → token via Universal Router. Never
+ * `token.transfer(router)` and never asks the user to hold SPY/SPCX.
+ */
+export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
+  const hops = hopsForSwap(swap);
+  if (hops.length < 2) {
+    throw new Error(CANT_ENTER_FROM_ETH);
+  }
+  const firstIn = hops[0].tokenIn.toLowerCase();
+  const wrap = firstIn === QUOTE_WETH;
+  const nativeFirst = firstIn === QUOTE_ETH;
+  if (!wrap && !nativeFirst) {
+    throw new Error(CANT_ENTER_FROM_ETH);
+  }
+
+  const commands: number[] = [];
+  const inputs: `0x${string}`[] = [];
+  if (wrap) {
+    commands.push(UR_COMMAND_WRAP_ETH);
+    inputs.push(encodeWrapEth(UNIVERSAL_ROUTER, swap.amountIn));
+  }
+
+  for (let i = 0; i < hops.length; i++) {
+    const hop = hops[i];
+    const last = i === hops.length - 1;
+    const amountIn =
+      i === 0
+        ? swap.amountIn
+        : hop.venue === "v3"
+          ? UR_CONTRACT_BALANCE
+          : BigInt(hop.amountIn ?? "0");
+    if (i > 0 && hop.venue === "v4" && amountIn <= 0n) {
+      throw new Error(CANT_ENTER_FROM_ETH);
+    }
+    commands.push(hop.venue === "v4" ? UR_COMMAND_V4_SWAP : UR_COMMAND_V3_SWAP_EXACT_IN);
+    inputs.push(
+      encodeHopInput({
+        hop,
+        amountIn,
+        amountOutMinimum: last ? swap.amountOutMinimum : 0n,
+        takeToRouter: !last,
+        payerIsUser: i === 0 && nativeFirst,
+      }),
+    );
+  }
+
+  const tx: PreparedTx = {
+    to: UNIVERSAL_ROUTER,
+    data: encodeUrExecute(packCommands(commands), inputs, swap.deadline),
+    value: swap.amountIn,
+  };
+  assertSwapNotErc20Transfer(tx);
+  return tx;
+}
+
+/**
  * Value-moving swap the ticket signs. Always UR `execute` or SwapRouter02
  * `exactInputSingle`. Never `token.transfer(router, amount)`.
  *
  * Sells always exit to ETH. A missing ETH hop fails instead of paying SPCX.
+ * Stock-paired buys hop ETH → pair → token.
  */
 export function prepareExactInSwap(swap: ExactInSwapBuild): PreparedTx {
   if (swap.side === "sell") {
     return buildSellToEth(swap);
+  }
+  if (swap.hops && swap.hops.length > 1) {
+    return buildBuyFromEth(swap);
   }
 
   const nativePay = swap.payNative;

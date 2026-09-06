@@ -2,9 +2,15 @@ import {describe, it} from "node:test";
 import assert from "node:assert/strict";
 import {QUOTE_USDG, QUOTE_WETH} from "../src/lib/contracts";
 import {
+  buyAvailableIsEth,
+  buyMaxEntered,
+  buyPaysNative,
+  platformFeeLabel,
   quoteOutSymbol,
   sellAmountInRaw,
   sellMaxEntered,
+  ticketNetOut,
+  ticketTakesHodlFee,
   tradeTokenAddress,
 } from "../src/lib/tradeTicket";
 import type {RwaAsset, TokenAsset} from "../src/lib/types";
@@ -143,6 +149,88 @@ describe("sell 100% uses the real balance mark", () => {
         quoteToken: QUOTE_USDG,
       }),
       "ETH",
+    );
+  });
+});
+
+describe("platform fee label follows the execution path", () => {
+  const spy = "0x117cc2133c37b721f49de2a7a74833232b3b4c0c" as const;
+  const token = "0xf3239df6f081f7c98bc5ba27fb24eea66cd1d69c" as const;
+
+  it("shows Platform fee 0.5% on a Hodl ETH/USDG single hop", () => {
+    const hodlEth = platformFeeLabel({
+      quoteToken: QUOTE_WETH,
+      quoteIsNative: false,
+      quoteIsWeth: true,
+    });
+    assert.equal(hodlEth.taken, true);
+    assert.equal(hodlEth.bps, 50);
+    assert.equal(hodlEth.title, "Platform fee 0.5%");
+    assert.equal(hodlEth.note, null);
+
+    const usdgQuote = {
+      quoteToken: QUOTE_USDG,
+      quoteIsNative: false,
+      quoteIsWeth: false,
+    };
+    assert.equal(platformFeeLabel(usdgQuote).taken, true);
+    assert.equal(ticketTakesHodlFee(usdgQuote), true);
+  });
+
+  it("shows Platform fee 0% on a Universal Router multi-hop, even if feeBps is 50", () => {
+    const ur = {
+      quoteToken: QUOTE_WETH,
+      quoteIsNative: false,
+      quoteIsWeth: true,
+      pairToken: spy,
+      hops: [
+        {venue: "v4" as const, tokenIn: QUOTE_WETH, tokenOut: spy},
+        {venue: "v4" as const, tokenIn: spy, tokenOut: token},
+      ],
+      feeBps: 50,
+      amountOut: "1000",
+      netOut: "995",
+    };
+    const label = platformFeeLabel(ur);
+    assert.equal(ticketTakesHodlFee(ur), false);
+    assert.equal(label.taken, false);
+    assert.equal(label.bps, 0);
+    assert.equal(label.title, "Platform fee 0%");
+    assert.equal(label.note, "No platform fee on this route");
+    assert.equal(ticketNetOut(ur), 1000n);
+    assert.notEqual(label.title, "HODL fee 0.5%");
+  });
+
+  it("sizes buy Max from ETH, not $0 USDG, and shows ETH before a quote", () => {
+    assert.equal(buyAvailableIsEth(null), true);
+    assert.equal(
+      buyPaysNative({
+        quoteIsNative: false,
+        quoteIsWeth: true,
+        quoteToken: QUOTE_WETH,
+        hops: [],
+      }),
+      true,
+    );
+    assert.equal(
+      buyMaxEntered({
+        paysNative: true,
+        ethUnits: 0.05,
+        ethUsd: 2500,
+        currencyEth: false,
+        spendUsd: 0,
+      }),
+      125,
+    );
+    assert.equal(
+      buyMaxEntered({
+        paysNative: true,
+        ethUnits: 0.05,
+        ethUsd: 2500,
+        currencyEth: true,
+        spendUsd: 0,
+      }),
+      0.05,
     );
   });
 });

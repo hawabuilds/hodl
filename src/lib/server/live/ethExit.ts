@@ -97,3 +97,67 @@ export async function quotePairToEth(opts: {
 
   return best;
 }
+
+/**
+ * First hop of a stock-paired buy: ETH/WETH → pair (SPCX, IBM, SPY, …).
+ * Reverse of `quotePairToEth`. Null when that hop does not exist.
+ */
+export async function quoteEthToPair(opts: {
+  pairToken: `0x${string}`;
+  amountIn: bigint;
+  client?: PublicClient;
+}): Promise<EthExitHop | null> {
+  const pair = opts.pairToken.toLowerCase() as `0x${string}`;
+  if (isEthish(pair) || opts.amountIn <= 0n) return null;
+  const client = opts.client ?? rpc();
+
+  let best: EthExitHop | null = null;
+
+  const v3Hits = await discoverV3Pools([pair], client, [QUOTE_WETH]);
+  const bestV3 = pickBestPool(v3Hits.get(pair) ?? []);
+  if (bestV3 && bestV3.liquidity > 0n) {
+    const amountOut = await quoteV3ExactIn(QUOTE_WETH, pair, bestV3.fee, opts.amountIn, client);
+    if (amountOut != null && amountOut > 0n) {
+      best = {
+        amountOut,
+        quoteToken: QUOTE_WETH,
+        hop: {
+          venue: "v3",
+          tokenIn: QUOTE_WETH,
+          tokenOut: pair,
+          v3Fee: bestV3.fee,
+          amountIn: opts.amountIn.toString(),
+        },
+      };
+    }
+  }
+
+  const v4Hits = await resolveV4PoolKeys({token: pair, client});
+  for (const hit of v4Hits) {
+    if (!isEthish(hit.quote)) continue;
+    const tokenIn = hit.quote;
+    const zeroForOne = hit.key.currency0.toLowerCase() === tokenIn.toLowerCase();
+    const quoted = await quoteV4ExactIn({
+      key: hit.key,
+      zeroForOne,
+      amountIn: opts.amountIn,
+      client,
+    });
+    if (!quoted.ok || quoted.amountOut <= 0n) continue;
+    if (best && quoted.amountOut <= best.amountOut) continue;
+    best = {
+      amountOut: quoted.amountOut,
+      quoteToken: hit.quote,
+      hop: {
+        venue: "v4",
+        tokenIn: tokenIn,
+        tokenOut: pair,
+        poolKey: hit.key,
+        zeroForOne,
+        amountIn: opts.amountIn.toString(),
+      },
+    };
+  }
+
+  return best;
+}

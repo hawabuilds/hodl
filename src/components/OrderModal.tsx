@@ -4,7 +4,7 @@ import {useEffect, useMemo, useState} from "react";
 import {formatUnits} from "viem";
 import {useBalance, useReadContract} from "wagmi";
 import {RH_MAINNET_ID, txUrlForChain} from "@/config/chain";
-import {feeFor, FEE_BPS, tooSmall} from "@/config/fees";
+import {feeFor, tooSmall} from "@/config/fees";
 import {
   allowanceSufficient,
   approvalSpendToken,
@@ -35,10 +35,16 @@ import {
 } from "@/lib/localStore";
 import {amountOutMinimum, ticketBlockReason} from "@/lib/tradePolicy";
 import {
+  buyAvailableIsEth,
+  buyMaxEntered,
+  buyPaysNative,
+  feeAmountSymbol,
+  platformFeeLabel,
   quoteOutSymbol,
   sellAmountInRaw,
   sellMaxEntered,
   sellRouteLabel,
+  ticketNetOut,
   tradeTokenAddress,
 } from "@/lib/tradeTicket";
 import {humanToRaw} from "@/lib/quoteAmounts";
@@ -102,7 +108,7 @@ export function OrderModal({
   const live =
     isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote);
   const ticket = live ? hodl : swap;
-  const wallet = ticket.address ?? undefined;
+  const wallet = (swap.address ?? hodl.address) ?? undefined;
 
   const ethBal = useBalance({
     address: wallet,
@@ -144,9 +150,7 @@ export function OrderModal({
     chainId: RH_MAINNET_ID,
     query: {enabled: Boolean(token)},
   });
-  const payNativePreview = Boolean(
-    activeSide === "buy" && (quote?.quoteIsNative || quote?.quoteIsWeth),
-  );
+  const payNativePreview = Boolean(activeSide === "buy" && buyPaysNative(quote));
   const spendForApproval =
     live && quote && token
       ? approvalSpendToken({
@@ -212,9 +216,7 @@ export function OrderModal({
     tokenBal.data != null ? Number(formatUnits(tokenBal.data, tokenDecimals)) : 0;
   const heldUsd =
     asset && isPriced(asset.priceUsd) ? heldUnits * asset.priceUsd : 0;
-  const paysNative = quote
-    ? Boolean(quote.quoteIsNative || quote.quoteIsWeth)
-    : eth;
+  const paysNative = buying ? buyAvailableIsEth(quote) : false;
   const spendUnits =
     spendBal.data != null
       ? Number(formatUnits(spendBal.data, quoteDecimals))
@@ -227,23 +229,28 @@ export function OrderModal({
       : usdgUsd;
 
   const maxEntered = buying
-    ? paysNative
-      ? ethUnits
-      : spendUsd
+    ? buyMaxEntered({
+        paysNative,
+        ethUnits,
+        ethUsd,
+        currencyEth: eth,
+        spendUsd,
+      })
     : sellMaxEntered({heldUsd, currencyEth: eth, ethUsd});
 
   const fee = useMemo(() => feeFor(amountUsd), [amountUsd]);
   const undersized = valid ? tooSmall(amountUsd) : null;
+  const feeRow = quote ? platformFeeLabel(quote) : null;
 
   const estimatedOut = useMemo(() => {
     if (quote) {
-      return Number(formatUnits(BigInt(quote.netOut), quote.outDecimals));
+      return Number(formatUnits(ticketNetOut(quote), quote.outDecimals));
     }
     if (buying && asset && valid && isPriced(asset.priceUsd)) {
-      return (amountUsd - fee.usd) / asset.priceUsd;
+      return amountUsd / asset.priceUsd;
     }
     return 0;
-  }, [asset, amountUsd, valid, fee.usd, quote, buying]);
+  }, [asset, amountUsd, valid, quote, buying]);
 
   const quoteAgeMs = quoteAt > 0 ? now - quoteAt : 0;
   const quoteLeftSec = quote
@@ -255,7 +262,7 @@ export function OrderModal({
     if (!valid) return undefined;
     // ETH-denomination is only raw wei when the venue actually takes ETH/WETH.
     // RWA-paired New tokens must size via amountUsd so the server can convert.
-    if (buying && (quote?.quoteIsNative || quote?.quoteIsWeth) && eth) {
+    if (buying && buyPaysNative(quote) && eth) {
       return humanToRaw(entered, 18);
     }
     if (!buying) {
@@ -465,7 +472,7 @@ export function OrderModal({
           side: activeSide,
           token,
           slippagePct: settings.slippagePct,
-          payNative: buying && (quote.quoteIsNative || quote.quoteIsWeth),
+          payNative: buying && buyPaysNative(quote),
         });
         setTxHash(hash);
         setFilled(
@@ -479,7 +486,7 @@ export function OrderModal({
       if (quoteExpired) {
         q = await pullFreshQuote();
       }
-      const payNative = buying && (q.quoteIsNative || q.quoteIsWeth);
+      const payNative = buying && buyPaysNative(q);
       const spend = approvalSpendToken({
         side: activeSide,
         payNative,
@@ -729,7 +736,9 @@ export function OrderModal({
                 ? "—"
                 : buying
                   ? paysNative
-                    ? `${ethUnits.toFixed(4)} ETH`
+                    ? ethBal.data == null && ethBal.isLoading
+                      ? "—"
+                      : `${ethUnits.toFixed(4)} ETH`
                     : spendToken && spendToken !== QUOTE_USDG
                       ? `${units(spendUnits)} · ${money(spendUsd)}`
                       : money(usdgUsd)
@@ -742,18 +751,10 @@ export function OrderModal({
           {valid && quote ? (
             <TicketBreakdown
               quote={quote}
-              feeUsd={fee.usd}
+              feeUsd={feeRow?.taken ? fee.usd : 0}
               slippagePct={settings.slippagePct}
               quoteLeftSec={quoteLeftSec}
             />
-          ) : valid ? (
-            <div className="mt-2.5 flex items-center justify-between gap-3 px-1 text-[12px] font-semibold">
-              <span className="text-faint">
-                Fee
-                <span className="ml-1 font-medium opacity-80">{FEE_BPS / 100}%</span>
-              </span>
-              <span className="tnum font-bold text-muted">{money(fee.usd)}</span>
-            </div>
           ) : null}
 
           {quotePending && valid && !quote ? (
@@ -855,15 +856,24 @@ function TicketBreakdown({
   slippagePct: number;
   quoteLeftSec: number;
 }) {
-  const minOut = amountOutMinimum(BigInt(quote.netOut), slippagePct);
-  const feeRaw = quote.feeAmount ? formatUnits(BigInt(quote.feeAmount), quote.quoteDecimals) : null;
+  const fee = platformFeeLabel(quote);
+  const netOut = ticketNetOut(quote);
+  const minOut = amountOutMinimum(netOut, slippagePct);
+  const feeRaw =
+    fee.taken && quote.feeAmount && BigInt(quote.feeAmount) > 0n
+      ? formatUnits(BigInt(quote.feeAmount), quote.quoteDecimals)
+      : null;
   const minHuman = formatUnits(minOut, quote.outDecimals);
   return (
     <div className="mt-2.5 space-y-1 px-1 text-[12px] font-semibold">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-faint">HODL fee {quote.feeBps / 100}%</span>
+        <span className="text-faint">{fee.title}</span>
         <span className="tnum font-bold text-muted">
-          {feeRaw ? `${units(Number(feeRaw))} · ${money(feeUsd)}` : money(feeUsd)}
+          {fee.taken && feeRaw
+            ? `${units(Number(feeRaw))} ${feeAmountSymbol(quote)}${feeUsd > 0 ? ` · ${money(feeUsd)}` : ""}`
+            : fee.taken
+              ? money(feeUsd)
+              : (fee.note ?? "—")}
         </span>
       </div>
       <div className="flex items-center justify-between gap-3">
