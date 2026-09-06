@@ -53,11 +53,13 @@ export function approvalSymbol(opts: {
   side: TradeSide;
   tokenSymbol: string;
   quoteToken: string;
+  quoteSymbol?: string;
 }): string {
   if (opts.side === "sell") return opts.tokenSymbol || "token";
   const quote = opts.quoteToken.toLowerCase();
   if (quote === QUOTE_USDG) return "USDG";
   if (quote === QUOTE_WETH) return "WETH";
+  if (opts.quoteSymbol && opts.quoteSymbol !== "tokens") return opts.quoteSymbol;
   return "token";
 }
 

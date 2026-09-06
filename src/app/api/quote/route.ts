@@ -7,6 +7,7 @@ import {quotePriceUsd} from "@/lib/server/quotePrice";
 import {erc20Abi, rpc} from "@/lib/server/live/chain";
 import {poolFor} from "@/lib/server/live/market";
 import {ethUsd} from "@/lib/server/live/onchainPrice";
+import {RWA_BY_ADDRESS} from "@/lib/server/live/robinhood";
 import {resolveVenue} from "@/lib/server/live/venueResolve";
 
 export const dynamic = "force-dynamic";
@@ -70,9 +71,16 @@ export async function GET(req: Request) {
     return json({error: "token required"}, 400);
   }
 
-  const pool = await poolFor("token", token);
+  const rwa = RWA_BY_ADDRESS.get(token);
+  const pool = rwa
+    ? await poolFor("rwa", rwa.ticker)
+    : await poolFor("token", token);
   const v4PoolId =
     pool?.pool && /^0x[0-9a-f]{64}$/.test(pool.pool) ? pool.pool : null;
+  const v3PoolHint =
+    pool?.pool && /^0x[0-9a-f]{40}$/.test(pool.pool) ? pool.pool : null;
+  const extraQuotes =
+    pool?.quote && /^0x[0-9a-f]{40}$/.test(pool.quote) ? [pool.quote] : [];
 
   const amountUsd = Number(url.searchParams.get("amountUsd") ?? "");
   const rawAmountIn = url.searchParams.get("amountIn") ?? "";
@@ -84,6 +92,8 @@ export async function GET(req: Request) {
     side,
     amountIn,
     v4PoolId,
+    extraQuotes,
+    v3Pool: v3PoolHint,
   });
   if (!sized) return json({venue: null});
 
@@ -98,7 +108,14 @@ export async function GET(req: Request) {
     const resized = await buyAmountIn(amountUsd, sized.quoteToken);
     if (resized != null && resized > 0n) {
       amountIn = resized;
-      const retry = await resolveVenue({token, side, amountIn, v4PoolId});
+      const retry = await resolveVenue({
+        token,
+        side,
+        amountIn,
+        v4PoolId,
+        extraQuotes,
+        v3Pool: v3PoolHint,
+      });
       if (retry) sized = retry;
     }
   }
@@ -107,6 +124,11 @@ export async function GET(req: Request) {
   const copy = venueTicketCopy(sized);
   const quoteIsNative = sized.quoteToken === QUOTE_ETH;
   const quoteIsWeth = sized.quoteToken === QUOTE_WETH;
+  const quoteSymbol = quoteIsNative || quoteIsWeth
+    ? "ETH"
+    : sized.quoteToken === QUOTE_USDG
+      ? "USDG"
+      : (RWA_BY_ADDRESS.get(sized.quoteToken)?.ticker ?? "tokens");
   let quoteDecimals = 18;
   try {
     quoteDecimals = quoteTokenDecimals(sized.quoteToken);
@@ -136,6 +158,7 @@ export async function GET(req: Request) {
     zeroForOne: sized.zeroForOne ?? false,
     quoteIsNative,
     quoteIsWeth,
+    quoteSymbol,
     poolKey: sized.poolKey ?? null,
     v3Fee: sized.v3Fee ?? null,
     v3Pool: sized.v3Pool ?? null,

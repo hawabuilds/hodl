@@ -181,6 +181,50 @@ export async function resolveV4PoolKeys(opts: {
   return fromLongAirlock(token, client);
 }
 
+const VANILLA_V4 = [
+  {fee: 100, tickSpacing: 1},
+  {fee: 500, tickSpacing: 10},
+  {fee: 3000, tickSpacing: 60},
+  {fee: 10000, tickSpacing: 200},
+] as const;
+
+/**
+ * Hookless V4 keys for tokenized stocks (not Pons/Long). Only keys that
+ * match `wantedPoolId` are returned so we do not quote a grid of empty pools.
+ */
+export function vanillaV4Candidates(
+  token: `0x${string}`,
+  quotes: readonly `0x${string}`[],
+  wantedPoolId?: string | null,
+): V4PoolHit[] {
+  const wanted = wantedPoolId?.toLowerCase();
+  if (!wanted || !/^0x[0-9a-f]{64}$/.test(wanted)) return [];
+  const tokenLow = token.toLowerCase() as `0x${string}`;
+  const hits: V4PoolHit[] = [];
+  const seen = new Set<string>();
+  const quoteList = [
+    ...new Set(quotes.flatMap((quote) => ethQuoteAlternates(quote.toLowerCase() as `0x${string}`))),
+  ];
+  for (const quote of quoteList) {
+    if (quote === tokenLow) continue;
+    for (const spec of VANILLA_V4) {
+      const key = sortedKey(tokenLow, quote, spec.fee, spec.tickSpacing, ZERO);
+      const poolId = v4PoolId(key);
+      if (poolId.toLowerCase() !== wanted || seen.has(poolId)) continue;
+      seen.add(poolId);
+      hits.push({
+        key,
+        poolId,
+        quote,
+        tokenIsCurrency0: key.currency0 === tokenLow,
+        creatorTaxBps: 0,
+        source: `vanilla v4 fee=${spec.fee} tick=${spec.tickSpacing}`,
+      });
+    }
+  }
+  return hits;
+}
+
 function hitsFromPonsLaunch(
   token: `0x${string}`,
   pairToken: `0x${string}`,

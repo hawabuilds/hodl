@@ -13,7 +13,12 @@ const ZERO = "0x0000000000000000000000000000000000000000";
 const factoryAbi = parseAbi([
   "function getPool(address,address,uint24) view returns (address)",
 ]);
-const poolAbi = parseAbi(["function liquidity() view returns (uint128)"]);
+const poolAbi = parseAbi([
+  "function token0() view returns (address)",
+  "function token1() view returns (address)",
+  "function fee() view returns (uint24)",
+  "function liquidity() view returns (uint128)",
+]);
 const multicallAbi = parseAbi([
   "struct Call3 { address target; bool allowFailure; bytes callData; }",
   "struct Result { bool success; bytes returnData; }",
@@ -64,11 +69,11 @@ export function pickBestPool(hits: V3PoolHit[]): BestV3Pool | null {
   };
 }
 
-function getPoolCalls(tokens: string[]) {
+function getPoolCalls(tokens: string[], quotes: readonly `0x${string}`[] = V3_QUOTES) {
   const calls: {target: `0x${string}`; allowFailure: true; callData: `0x${string}`}[] = [];
   const keys: {token: string; quote: `0x${string}`; fee: number}[] = [];
   for (const token of tokens) {
-    for (const quote of V3_QUOTES) {
+    for (const quote of quotes) {
       for (const fee of UNISWAP_V3_FEE_TIERS) {
         keys.push({token: token.toLowerCase(), quote, fee});
         calls.push({
@@ -107,6 +112,7 @@ async function aggregate(
 export async function discoverV3Pools(
   tokens: string[],
   client: PublicClient = rpc(),
+  quotes: readonly `0x${string}`[] = V3_QUOTES,
 ): Promise<Map<string, V3PoolHit[]>> {
   const wanted = [...new Set(tokens.map((token) => token.toLowerCase()))].filter(
     (token) => /^0x[0-9a-f]{40}$/.test(token),
@@ -115,7 +121,10 @@ export async function discoverV3Pools(
   for (const token of wanted) out.set(token, []);
   if (wanted.length === 0) return out;
 
-  const {calls, keys} = getPoolCalls(wanted);
+  const quoteList = [...new Set(quotes.map((quote) => quote.toLowerCase() as `0x${string}`))].filter(
+    (quote) => /^0x[0-9a-f]{40}$/.test(quote),
+  );
+  const {calls, keys} = getPoolCalls(wanted, quoteList);
   const found = await aggregate(client, calls);
 
   const pending: {token: string; quote: `0x${string}`; fee: number; pool: `0x${string}`}[] = [];
@@ -157,4 +166,28 @@ export async function resolveBestV3Pool(
 ): Promise<BestV3Pool | null> {
   const hits = (await discoverV3Pools([token], client)).get(token.toLowerCase()) ?? [];
   return pickBestPool(hits);
+}
+
+/** Read a known V3 pool (DexScreener pair address) so stock/stock venues quote. */
+export async function readV3Pool(
+  pool: `0x${string}`,
+  client: PublicClient = rpc(),
+): Promise<{token0: `0x${string}`; token1: `0x${string}`; fee: number; liquidity: bigint} | null> {
+  if (!/^0x[0-9a-f]{40}$/.test(pool)) return null;
+  try {
+    const [token0, token1, fee, liquidity] = await Promise.all([
+      client.readContract({address: pool, abi: poolAbi, functionName: "token0"}),
+      client.readContract({address: pool, abi: poolAbi, functionName: "token1"}),
+      client.readContract({address: pool, abi: poolAbi, functionName: "fee"}),
+      client.readContract({address: pool, abi: poolAbi, functionName: "liquidity"}),
+    ]);
+    return {
+      token0: String(token0).toLowerCase() as `0x${string}`,
+      token1: String(token1).toLowerCase() as `0x${string}`,
+      fee: Number(fee),
+      liquidity: BigInt(liquidity),
+    };
+  } catch {
+    return null;
+  }
 }

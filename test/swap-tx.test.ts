@@ -109,8 +109,8 @@ describe("swap tx encoding", () => {
 });
 
 describe("trade policy", () => {
-  it("blocks RWA, demo, missing wallet, and a missing venue", () => {
-    assert.match(
+  it("does not ticket-block an RWA when a Uniswap venue exists", () => {
+    assert.equal(
       ticketBlockReason({
         kind: "rwa",
         authenticated: true,
@@ -118,9 +118,35 @@ describe("trade policy", () => {
         wallet: "0x1",
         venue: "v4",
         quotePending: false,
-      }) ?? "",
-      /tokenized stocks/i,
+      }),
+      null,
     );
+    assert.equal(
+      ticketBlockReason({
+        kind: "rwa",
+        authenticated: true,
+        demo: false,
+        wallet: "0x1",
+        venue: undefined,
+        quotePending: false,
+      }),
+      null,
+      "undefined venue means not quoted yet, not a missing pool",
+    );
+    assert.match(
+      ticketBlockReason({
+        kind: "rwa",
+        authenticated: true,
+        demo: false,
+        wallet: "0x1",
+        venue: null,
+        quotePending: false,
+      }) ?? "",
+      /no uniswap pool/i,
+    );
+  });
+
+  it("blocks demo, missing wallet, and a missing venue", () => {
     assert.match(
       ticketBlockReason({
         kind: "token",

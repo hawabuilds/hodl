@@ -1,3 +1,4 @@
+import {QUOTE_USDG, QUOTE_WETH} from "./contracts";
 import type {V4PoolKey} from "./v4Encoding";
 import type {VenueId} from "./venueQuote";
 
@@ -28,6 +29,8 @@ export interface SwapQuote {
   zeroForOne: boolean;
   quoteIsNative: boolean;
   quoteIsWeth: boolean;
+  /** ETH, USDG, or the stock ticker — never a guessed ETH label. */
+  quoteSymbol: string;
   poolKey: V4PoolKey | null;
   v3Fee: number | null;
   v3Pool: `0x${string}` | null;
@@ -36,6 +39,15 @@ export interface SwapQuote {
 export type QuoteResult =
   | {ok: true; quote: SwapQuote}
   | {ok: false; venue: null; error?: string};
+
+function namedQuoteSymbol(row: Record<string, unknown>, quoteToken: string): string {
+  const named = typeof row.quoteSymbol === "string" ? row.quoteSymbol.trim() : "";
+  if (named) return named;
+  if (Boolean(row.quoteIsNative) || Boolean(row.quoteIsWeth)) return "ETH";
+  if (quoteToken === QUOTE_USDG) return "USDG";
+  if (quoteToken === QUOTE_WETH) return "ETH";
+  return "tokens";
+}
 
 function asPoolKey(value: unknown): V4PoolKey | null {
   if (!value || typeof value !== "object") return null;
@@ -107,6 +119,7 @@ export function parseSwapQuote(body: unknown): QuoteResult {
       zeroForOne: Boolean(row.zeroForOne),
       quoteIsNative: Boolean(row.quoteIsNative),
       quoteIsWeth: Boolean(row.quoteIsWeth),
+      quoteSymbol: namedQuoteSymbol(row, quoteToken),
       poolKey,
       v3Fee: Number.isFinite(v3Fee) ? v3Fee : null,
       v3Pool: typeof row.v3Pool === "string" ? (row.v3Pool as `0x${string}`) : null,

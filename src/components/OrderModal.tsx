@@ -33,14 +33,19 @@ import {
   writeTradeSettings,
   type TradeSettings,
 } from "@/lib/localStore";
-import {amountOutMinimum} from "@/lib/tradePolicy";
+import {amountOutMinimum, ticketBlockReason} from "@/lib/tradePolicy";
+import {
+  quoteOutSymbol,
+  sellAmountInRaw,
+  sellMaxEntered,
+  tradeTokenAddress,
+} from "@/lib/tradeTicket";
 import {humanToRaw} from "@/lib/quoteAmounts";
 import {cn} from "@/lib/cn";
 import {formatPriceUsd, isPriced} from "@/lib/priceState";
 import {money, units} from "@/lib/format";
 import {fetchSwapQuote, type SwapQuote} from "@/lib/swapQuote";
 import {erc20Abi} from "@/lib/swapTx";
-import {ticketBlockReason} from "@/lib/tradePolicy";
 import type {Asset} from "@/lib/types";
 import {Modal} from "./ui/Modal";
 import {SettingsIcon} from "./ui/Icons";
@@ -86,12 +91,10 @@ export function OrderModal({
   const [quoteMiss, setQuoteMiss] = useState(false);
   const [quoteAt, setQuoteAt] = useState(0);
   const [now, setNow] = useState(() => Date.now());
+  const [sellAll, setSellAll] = useState(false);
 
   const symbol = asset?.kind === "rwa" ? asset.ticker : (asset?.symbol ?? "");
-  const token =
-    asset?.kind === "token" && /^0x[0-9a-fA-F]{40}$/.test(asset.address)
-      ? (asset.address.toLowerCase() as `0x${string}`)
-      : null;
+  const token = tradeTokenAddress(asset);
   const eth = settings.currency === "ETH";
   const live =
     isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote);
@@ -131,6 +134,13 @@ export function OrderModal({
     chainId: RH_MAINNET_ID,
     query: {enabled: Boolean(wallet && token)},
   });
+  const tokenDecimalsQ = useReadContract({
+    address: token ?? QUOTE_USDG,
+    abi: erc20Abi,
+    functionName: "decimals",
+    chainId: RH_MAINNET_ID,
+    query: {enabled: Boolean(token)},
+  });
   const payNativePreview = Boolean(
     activeSide === "buy" && (quote?.quoteIsNative || quote?.quoteIsWeth),
   );
@@ -168,6 +178,7 @@ export function OrderModal({
     setQuote(null);
     setQuoteMiss(false);
     setQuoteAt(0);
+    setSellAll(false);
     hodl.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset on asset/side only
   }, [side, asset?.id]);
@@ -189,7 +200,7 @@ export function OrderModal({
   const valid = Number.isFinite(amountUsd) && amountUsd > 0;
 
   const buying = activeSide === "buy";
-  const tokenDecimals = quote?.tokenDecimals ?? 18;
+  const tokenDecimals = Number(tokenDecimalsQ.data ?? quote?.tokenDecimals ?? 18);
   const quoteDecimals = quote?.quoteDecimals ?? 18;
   const ethUnits = ethBal.data ? Number(formatUnits(ethBal.data.value, 18)) : 0;
   const usdgUsd = usdgBal.data != null ? Number(formatUnits(usdgBal.data, 6)) : 0;
@@ -215,7 +226,7 @@ export function OrderModal({
     ? paysNative
       ? ethUnits
       : spendUsd
-    : heldUnits;
+    : sellMaxEntered({heldUsd, currencyEth: eth, ethUsd});
 
   const fee = useMemo(() => feeFor(amountUsd), [amountUsd]);
   const undersized = valid ? tooSmall(amountUsd) : null;
@@ -224,9 +235,11 @@ export function OrderModal({
     if (quote) {
       return Number(formatUnits(BigInt(quote.netOut), quote.outDecimals));
     }
-    if (!asset || !valid || !isPriced(asset.priceUsd)) return 0;
-    return (amountUsd - fee.usd) / asset.priceUsd;
-  }, [asset, amountUsd, valid, fee.usd, quote]);
+    if (buying && asset && valid && isPriced(asset.priceUsd)) {
+      return (amountUsd - fee.usd) / asset.priceUsd;
+    }
+    return 0;
+  }, [asset, amountUsd, valid, fee.usd, quote, buying]);
 
   const quoteAgeMs = quoteAt > 0 ? now - quoteAt : 0;
   const quoteLeftSec = quote
@@ -241,11 +254,20 @@ export function OrderModal({
     if (buying && (quote?.quoteIsNative || quote?.quoteIsWeth) && eth) {
       return humanToRaw(entered, 18);
     }
-    if (!buying && asset && isPriced(asset.priceUsd)) {
-      return humanToRaw(amountUsd / asset.priceUsd, tokenDecimals);
+    if (!buying) {
+      if (sellAll && tokenBal.data != null && tokenBal.data > 0n) {
+        return tokenBal.data;
+      }
+      return sellAmountInRaw({
+        amountUsd,
+        heldUsd,
+        heldRaw: tokenBal.data ?? 0n,
+        priceUsd: asset && isPriced(asset.priceUsd) ? asset.priceUsd : null,
+        decimals: tokenDecimals,
+      });
     }
     return undefined;
-  }, [valid, buying, eth, entered, asset, amountUsd, tokenDecimals, quote]);
+  }, [valid, buying, eth, entered, asset, amountUsd, tokenDecimals, quote, sellAll, tokenBal.data, heldUsd]);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 250);
@@ -253,7 +275,7 @@ export function OrderModal({
   }, []);
 
   useEffect(() => {
-    if (!token || !valid || asset?.kind !== "token") {
+    if (!token || !valid) {
       setQuote(null);
       setQuoteMiss(false);
       setQuotePending(false);
@@ -309,7 +331,7 @@ export function OrderModal({
       window.clearTimeout(start);
       window.clearInterval(refresh);
     };
-  }, [token, valid, activeSide, amountUsd, quoteAmountIn, asset?.kind, ticket.address]);
+  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address]);
 
   const blocked = ticketBlockReason({
     kind: asset?.kind ?? "token",
@@ -325,6 +347,7 @@ export function OrderModal({
         side: activeSide,
         tokenSymbol: symbol,
         quoteToken: quote.quoteToken,
+        quoteSymbol: quote.quoteSymbol,
       })
     : "USDG";
   const amountInRaw = quote ? BigInt(quote.amountIn) : 0n;
@@ -436,7 +459,7 @@ export function OrderModal({
         });
         setTxHash(hash);
         setFilled(
-          `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : quote.quoteIsWeth || quote.quoteIsNative ? "ETH" : "USDG"}`,
+          `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : quoteOutSymbol(quote)}`,
         );
         setAmount("");
         return;
@@ -474,7 +497,7 @@ export function OrderModal({
       });
       setTxHash(hash);
       setFilled(
-        `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : q.quoteIsWeth || q.quoteIsNative ? "ETH" : "USDG"}`,
+        `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : quoteOutSymbol(q)}`,
       );
       setAmount("");
       await allowanceQ.refetch();
@@ -503,7 +526,6 @@ export function OrderModal({
     if (live && hodl.phase === "confirmed") return "Confirmed";
     if (ticket.submitting) return pendingSignatureCopy(walletKind, "swap");
     if (!ticket.authenticated) return "Sign in to trade";
-    if (blocked && asset?.kind === "rwa") return "Not on this ticket";
     if (quotePending) return "Finding route…";
     if (quoteMiss || (blocked && quote == null)) return "No pool";
     if (!live && quoteExpired) return "Quote expired";
@@ -563,6 +585,7 @@ export function OrderModal({
                   onClick={() => {
                     setActiveSide(option);
                     setAmount("");
+                    setSellAll(false);
                     setError(null);
                     setFilled(null);
                     setTxHash(null);
@@ -630,6 +653,7 @@ export function OrderModal({
                       ? `${parts[0]}.${parts.slice(1).join("").slice(0, places)}`
                       : parts[0],
                   );
+                  setSellAll(false);
                   setError(null);
                   setFilled(null);
                   setTxHash(null);
@@ -642,9 +666,11 @@ export function OrderModal({
             </div>
 
             <div className="tnum mt-1 text-[12px] font-semibold text-faint">
-              {valid && isPriced(asset.priceUsd)
-                ? `≈ ${units(estimatedOut)} ${buying ? symbol : quote?.quoteIsWeth || quote?.quoteIsNative ? "ETH" : "USDG"}${eth ? ` · ${money(amountUsd)}` : ""}`
-                : `${formatPriceUsd(asset.priceUsd)} per ${symbol}`}
+              {valid && quote
+                ? `≈ ${units(estimatedOut)} ${buying ? symbol : quoteOutSymbol(quote)}${eth ? ` · ${money(amountUsd)}` : ""}`
+                : valid && buying && isPriced(asset.priceUsd)
+                  ? `≈ ${units(estimatedOut)} ${symbol}${eth ? ` · ${money(amountUsd)}` : ""}`
+                  : `${formatPriceUsd(asset.priceUsd)} per ${symbol}`}
             </div>
           </div>
 
@@ -663,13 +689,19 @@ export function OrderModal({
                     key={step}
                     label={`${step}%`}
                     disabled={maxEntered <= 0}
-                    onClick={() => setEntered((maxEntered * step) / 100)}
+                    onClick={() => {
+                      setSellAll(false);
+                      setEntered((maxEntered * step) / 100);
+                    }}
                   />
                 ))}
             <QuickButton
               label={buying ? "Max" : "100%"}
               disabled={maxEntered <= 0}
-              onClick={() => setEntered(maxEntered)}
+              onClick={() => {
+                if (!buying) setSellAll(true);
+                setEntered(maxEntered);
+              }}
             />
           </div>
 

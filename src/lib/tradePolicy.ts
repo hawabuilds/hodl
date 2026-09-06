@@ -17,9 +17,6 @@ export function ticketBlockReason(input: {
   venue: VenueId | null | undefined;
   quotePending: boolean;
 }): string | null {
-  if (input.kind === "rwa") {
-    return "This ticket swaps launchpad tokens on Uniswap. Tokenized stocks are not routed here.";
-  }
   if (input.demo) {
     return "Demo mode has no signing wallet. Sign in with Privy to trade.";
   }
