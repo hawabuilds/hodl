@@ -375,6 +375,8 @@ function encodeHopInput(opts: {
   takeToRouter: boolean;
   /** true = SETTLE_ALL / msg.value. false = tokens already on the router. */
   payerIsUser?: boolean;
+  /** Prior hop left this currency on the router — settle balance, not a quote. */
+  fromRouterBalance?: boolean;
 }): `0x${string}` {
   if (opts.hop.venue === "v4") {
     if (!opts.hop.poolKey) {
@@ -387,7 +389,12 @@ function encodeHopInput(opts: {
       amountOutMinimum: opts.takeToRouter ? 0n : opts.amountOutMinimum,
       // Default false: Permit2 or WRAP_ETH already put tokens on UR.
       // Native ETH first hop passes true so SETTLE_ALL takes msg.value.
-      payerIsUser: opts.payerIsUser === true ? undefined : false,
+      payerIsUser: opts.fromRouterBalance
+        ? false
+        : opts.payerIsUser === true
+          ? undefined
+          : false,
+      fromRouterBalance: opts.fromRouterBalance,
       takeToRouter: opts.takeToRouter,
     }).inputs[0];
   }
@@ -425,13 +432,16 @@ export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
     const hop = hops[i];
     const last = i === hops.length - 1;
     const takeToRouter = !last || unwrap;
+    const fromRouterBalance = i > 0 && hop.venue === "v4";
     const amountIn =
       i === 0
         ? swap.amountIn
         : hop.venue === "v3"
           ? UR_CONTRACT_BALANCE
-          : BigInt(hop.amountIn ?? "0");
-    if (i > 0 && hop.venue === "v4" && amountIn <= 0n) {
+          : fromRouterBalance
+            ? 0n
+            : BigInt(hop.amountIn ?? "0");
+    if (i > 0 && hop.venue === "v4" && !fromRouterBalance && amountIn <= 0n) {
       throw new Error(CANT_EXIT_TO_ETH);
     }
     commands.push(hop.venue === "v4" ? UR_COMMAND_V4_SWAP : UR_COMMAND_V3_SWAP_EXACT_IN);
@@ -441,6 +451,7 @@ export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
         amountIn,
         amountOutMinimum: last && !unwrap ? swap.amountOutMinimum : 0n,
         takeToRouter,
+        fromRouterBalance,
       }),
     );
   }
@@ -485,13 +496,16 @@ export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
   for (let i = 0; i < hops.length; i++) {
     const hop = hops[i];
     const last = i === hops.length - 1;
+    const fromRouterBalance = i > 0 && hop.venue === "v4";
     const amountIn =
       i === 0
         ? swap.amountIn
         : hop.venue === "v3"
           ? UR_CONTRACT_BALANCE
-          : BigInt(hop.amountIn ?? "0");
-    if (i > 0 && hop.venue === "v4" && amountIn <= 0n) {
+          : fromRouterBalance
+            ? 0n
+            : BigInt(hop.amountIn ?? "0");
+    if (i > 0 && hop.venue === "v4" && !fromRouterBalance && amountIn <= 0n) {
       throw new Error(CANT_ENTER_FROM_ETH);
     }
     commands.push(hop.venue === "v4" ? UR_COMMAND_V4_SWAP : UR_COMMAND_V3_SWAP_EXACT_IN);
@@ -502,6 +516,7 @@ export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
         amountOutMinimum: last ? swap.amountOutMinimum : 0n,
         takeToRouter: !last,
         payerIsUser: i === 0 && nativeFirst,
+        fromRouterBalance,
       }),
     );
   }

@@ -17,6 +17,11 @@ export const V4_ACTION_SETTLE_ALL = 0x0c;
 export const V4_ACTION_TAKE = 0x0e;
 export const V4_ACTION_TAKE_ALL = 0x0f;
 
+/** Uniswap `ActionConstants.CONTRACT_BALANCE` — SETTLE the router's ERC-20. */
+export const V4_CONTRACT_BALANCE = 1n << 255n;
+/** Uniswap `ActionConstants.OPEN_DELTA` — SWAP whatever SETTLE just credited. */
+export const V4_OPEN_DELTA = 0n;
+
 /** Universal Router maps this recipient to `address(this)`. */
 export const UR_ADDRESS_THIS = "0x0000000000000000000000000000000000000002" as const;
 /** Universal Router maps this recipient to `msg.sender`. */
@@ -60,6 +65,12 @@ export interface V4ExactInSingle {
   hookData?: `0x${string}`;
   /** false = tokens already on the router (Long tokens block Permit2). */
   payerIsUser?: boolean;
+  /**
+   * Prior hop already left `currencyIn` on the router. Settle that
+   * balance first and swap the open delta — never a quoted hop size.
+   * A quoted second hop is what reverted stock-paired buys.
+   */
+  fromRouterBalance?: boolean;
   /** Keep the output on the router for a later hop or WETH unwrap. */
   takeToRouter?: boolean;
 }
@@ -92,6 +103,10 @@ export function encodeV4SwapExactInSingle(swap: V4ExactInSingle): {
     ? swap.poolKey.currency1
     : swap.poolKey.currency0;
 
+  const settleFromRouter = swap.payerIsUser === false || swap.fromRouterBalance === true;
+  const swapAmountIn = swap.fromRouterBalance ? V4_OPEN_DELTA : swap.amountIn;
+  const settleAmount = swap.fromRouterBalance ? V4_CONTRACT_BALANCE : swap.amountIn;
+
   const swapParams = encodeAbiParameters(
     [
       {
@@ -110,7 +125,7 @@ export function encodeV4SwapExactInSingle(swap: V4ExactInSingle): {
       {
         poolKey: swap.poolKey,
         zeroForOne: swap.zeroForOne,
-        amountIn: swap.amountIn,
+        amountIn: swapAmountIn,
         amountOutMinimum: swap.amountOutMinimum,
         minHopPriceX36: swap.minHopPriceX36 ?? 0n,
         hookData: swap.hookData ?? "0x",
@@ -118,22 +133,23 @@ export function encodeV4SwapExactInSingle(swap: V4ExactInSingle): {
     ],
   );
 
-  const settleFromRouter = swap.payerIsUser === false;
   const takeAction = swap.takeToRouter ? V4_ACTION_TAKE : V4_ACTION_TAKE_ALL;
   const actions = packActions(
-    settleFromRouter
-      ? [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE, takeAction]
-      : [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE_ALL, takeAction],
+    swap.fromRouterBalance
+      ? [V4_ACTION_SETTLE, V4_ACTION_SWAP_EXACT_IN_SINGLE, takeAction]
+      : settleFromRouter
+        ? [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE, takeAction]
+        : [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE_ALL, takeAction],
   );
 
   const settle = settleFromRouter
     ? encodeAbiParameters(
         [{type: "address"}, {type: "uint256"}, {type: "bool"}],
-        [currencyIn, swap.amountIn, false],
+        [currencyIn, settleAmount, false],
       )
     : encodeAbiParameters(
         [{type: "address"}, {type: "uint256"}],
-        [currencyIn, swap.amountIn],
+        [currencyIn, settleAmount],
       );
   const take = swap.takeToRouter
     ? encodeAbiParameters(
@@ -145,9 +161,12 @@ export function encodeV4SwapExactInSingle(swap: V4ExactInSingle): {
         [currencyOut, swap.amountOutMinimum],
       );
 
+  const params = swap.fromRouterBalance
+    ? [settle, swapParams, take]
+    : [swapParams, settle, take];
   const input = encodeAbiParameters(
     [{type: "bytes"}, {type: "bytes[]"}],
-    [actions, [swapParams, settle, take]],
+    [actions, params],
   );
 
   return {

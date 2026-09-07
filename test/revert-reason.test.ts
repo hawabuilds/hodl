@@ -1,5 +1,6 @@
 import {describe, it} from "node:test";
 import assert from "node:assert/strict";
+import {encodeErrorResult, parseAbi} from "viem";
 import {explainHodlError} from "../src/hooks/useHodlSwap";
 import {explainSwapError} from "../src/hooks/useSwap";
 import {
@@ -30,6 +31,16 @@ describe("revert reason", () => {
     assert.match(explainHodlError(error), /Permit2/i);
     assert.doesNotMatch(explainHodlError(error), /quote expired/i);
     assert.doesNotMatch(explainSwapError(error), /pool rejected/i);
+  });
+
+  it("names Hodl Cap instead of a bare Swap reverted selector", () => {
+    const cap = encodeErrorResult({
+      abi: parseAbi(["error Cap()"]),
+      errorName: "Cap",
+    });
+    assert.equal(decodeRevertHex(cap)?.name, "Cap");
+    assert.match(formatRevertForUser({data: cap}) ?? "", /notional cap/i);
+    assert.doesNotMatch(formatRevertForUser({data: cap}) ?? "", /Swap reverted/i);
   });
 
   it("keeps a generic on-chain revert as the pool copy", () => {

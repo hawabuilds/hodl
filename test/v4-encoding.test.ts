@@ -86,6 +86,25 @@ describe("v4 encoding", () => {
     assert.equal(encoded.actions, "0x060b0e");
   });
 
+  it("settles the router balance before swapping a follow-on hop", () => {
+    const encoded = encodeV4SwapExactInSingle({
+      poolKey: KEY,
+      zeroForOne: true,
+      amountIn: 1000n,
+      amountOutMinimum: 1n,
+      fromRouterBalance: true,
+    });
+    assert.equal(
+      encoded.actions,
+      packActions([
+        V4_ACTION_SETTLE,
+        V4_ACTION_SWAP_EXACT_IN_SINGLE,
+        V4_ACTION_TAKE_ALL,
+      ]),
+    );
+    assert.equal(encoded.actions, "0x0b060f");
+  });
+
   it("keeps the output on the router for a later hop", () => {
     const encoded = encodeV4SwapExactInSingle({
       poolKey: KEY,

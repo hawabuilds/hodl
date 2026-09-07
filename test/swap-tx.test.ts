@@ -45,11 +45,15 @@ function executeCommands(data: `0x${string}`): string {
   return String(decoded.args[0]);
 }
 
-function v4ActionsFromExecute(data: `0x${string}`): string {
+function v4ActionsFromExecute(data: `0x${string}`, which = 0): string {
   const decoded = decodeFunctionData({abi: urAbi, data});
   const commands = String(decoded.args[0]).slice(2);
   const bytes: string[] = commands.match(/.{2}/g) ?? [];
-  const index = bytes.indexOf(UR_COMMAND_V4_SWAP.toString(16).padStart(2, "0"));
+  const needle = UR_COMMAND_V4_SWAP.toString(16).padStart(2, "0");
+  const hits = bytes
+    .map((byte, i) => (byte === needle ? i : -1))
+    .filter((i) => i >= 0);
+  const index = hits[which] ?? hits[0];
   const input = decoded.args[1][index] as `0x${string}`;
   const [actions] = decodeAbiParameters(
     [{type: "bytes"}, {type: "bytes[]"}],
@@ -360,6 +364,14 @@ describe("swap tx encoding", () => {
     assert.equal(isTransferToSwapRouter(tx), false);
     assert.doesNotThrow(() => assertSwapNotErc20Transfer(tx));
     assert.notEqual(tx.data.slice(0, 10), ERC20_TRANSFER_SELECTOR);
+    assert.equal(
+      v4ActionsFromExecute(tx.data, 1),
+      packActions([
+        V4_ACTION_SETTLE,
+        V4_ACTION_SWAP_EXACT_IN_SINGLE,
+        V4_ACTION_TAKE_ALL,
+      ]),
+    );
   });
 
   it("encodes HodlRouter buy() with value, not an ERC-20 transfer", () => {

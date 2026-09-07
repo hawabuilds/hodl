@@ -20,6 +20,17 @@ const REVERT_ERRORS = parseAbi([
   "error NotEnoughLiquidity()",
   "error PriceLimitAlreadyExceeded(uint160 sqrtPriceCurrentX96, uint160 sqrtPriceLimitX96)",
   "error PriceLimitOutOfBounds(uint160 sqrtPriceLimitX96)",
+  "error Dust()",
+  "error Cap()",
+  "error PausedError()",
+  "error BadHook()",
+  "error BadPool()",
+  "error BadFeeTier()",
+  "error BadPair()",
+  "error NothingSupplied()",
+  "error InsufficientOut()",
+  "error Leftover()",
+  "error DeadlineExpired()",
 ]);
 
 export type TradeFailure = Error & {txHash?: `0x${string}`};
@@ -111,8 +122,23 @@ export function formatRevertForUser(error: unknown): string | null {
   if (/TooLittleReceived|InsufficientOutputAmount|InsufficientOut|V4TooLittleReceived/i.test(blob)) {
     return "Price moved past your slippage. Try a smaller size or more slippage.";
   }
-  if (/TransactionDeadlinePassed/i.test(blob)) {
+  if (/TransactionDeadlinePassed|DeadlineExpired/i.test(blob)) {
     return "The quote expired. Wait for a refresh and try again.";
+  }
+  if (/\bDust\b/i.test(blob)) {
+    return "Trade is below the $1 minimum.";
+  }
+  if (/\bCap\b|maxNotional/i.test(blob)) {
+    return "This size is above the current notional cap.";
+  }
+  if (/PausedError|\bPaused\b/i.test(blob)) {
+    return "Trading is paused.";
+  }
+  if (/BadHook|BadPool|BadFeeTier|BadPair/i.test(blob)) {
+    return "No liquidity on this route.";
+  }
+  if (/\bLeftover\b|NothingSupplied/i.test(blob)) {
+    return "The swap path could not settle. Try again.";
   }
   if (/\bSTF\b|TransferFromFailed|FromAddressIsNotOwner/i.test(blob)) {
     return "Token transfer failed. Approve the token, then try again.";
