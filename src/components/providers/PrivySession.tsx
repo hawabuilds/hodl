@@ -3,9 +3,9 @@
 import {useCallback, useEffect, useMemo, useRef, type ReactNode} from "react";
 import {PrivyProvider, usePrivy, useWallets} from "@privy-io/react-auth";
 import {useTheme} from "@/hooks/useTheme";
-import {robinhoodMainnet} from "@/config/chain";
+import {RH_MAINNET_ID, robinhoodMainnet} from "@/config/chain";
 import {PRIVY_APP_ID} from "@/lib/env";
-import {SessionContext, type AppUser, type Session} from "@/lib/session";
+import {SessionContext, type AppUser, type EmbeddedSendTx, type Session} from "@/lib/session";
 
 export function PrivySessionProvider({children}: {children: ReactNode}) {
   const {theme} = useTheme();
@@ -19,6 +19,9 @@ export function PrivySessionProvider({children}: {children: ReactNode}) {
         loginMethods: ["twitter"],
         embeddedWallets: {
           ethereum: {createOnLogin: "users-without-wallets"},
+          // 4663 is not in Privy's fiat catalog. Fiat-primary leaves
+          // "Estimated fee" on a skeleton forever; native ETH always computes.
+          priceDisplay: {primary: "native-token", secondary: null},
         },
         // Without these an embedded wallet defaults to Ethereum mainnet, and
         // every transaction would be signed for the wrong chain.
@@ -37,8 +40,16 @@ export function PrivySessionProvider({children}: {children: ReactNode}) {
 }
 
 function PrivyBridge({children}: {children: ReactNode}) {
-  const {ready, authenticated, user, login, logout, exportWallet, getAccessToken} =
-    usePrivy();
+  const {
+    ready,
+    authenticated,
+    user,
+    login,
+    logout,
+    exportWallet,
+    getAccessToken,
+    sendTransaction,
+  } = usePrivy();
   const {wallets} = useWallets();
   const syncedRef = useRef<string | null>(null);
 
@@ -98,6 +109,38 @@ function PrivyBridge({children}: {children: ReactNode}) {
     }
   }, [privyWallet]);
 
+  const sendEmbeddedTransaction = useCallback(
+    async (tx: EmbeddedSendTx): Promise<`0x${string}`> => {
+      if (privyWallet && typeof privyWallet.switchChain === "function") {
+        try {
+          await privyWallet.switchChain(tx.chainId || RH_MAINNET_ID);
+        } catch {
+          // Still send — defaultChain is Robinhood 4663.
+        }
+      }
+      const result = await sendTransaction(
+        {
+          to: tx.to,
+          data: tx.data,
+          value: tx.value,
+          chainId: tx.chainId,
+          gasLimit: tx.gasLimit,
+          ...(tx.maxFeePerGas && tx.maxPriorityFeePerGas != null
+            ? {
+                maxFeePerGas: tx.maxFeePerGas,
+                maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
+              }
+            : tx.gasPrice
+              ? {gasPrice: tx.gasPrice}
+              : {}),
+        },
+        {uiOptions: {showWalletUIs: true}},
+      );
+      return result.hash;
+    },
+    [privyWallet, sendTransaction],
+  );
+
   const exportEmbeddedWallet = useCallback(async () => {
     await exportWallet();
   }, [exportWallet]);
@@ -119,6 +162,7 @@ function PrivyBridge({children}: {children: ReactNode}) {
       logout: () => void logout(),
       mode: "privy",
       getEmbeddedProvider,
+      sendEmbeddedTransaction,
       exportEmbeddedWallet,
       getAccessToken: fetchAccessToken,
     }),
@@ -129,6 +173,7 @@ function PrivyBridge({children}: {children: ReactNode}) {
       login,
       logout,
       getEmbeddedProvider,
+      sendEmbeddedTransaction,
       exportEmbeddedWallet,
       fetchAccessToken,
     ],

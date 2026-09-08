@@ -256,6 +256,13 @@ export const UNIVERSAL_ROUTER =
   "0x8876789976decbfcbbbe364623c63652db8c0904" as const;
 
 /**
+ * Hodl FeeCollector on 4663. Holds the 50 bps platform skim so UR
+ * stock-paired trades pay the same fee as HodlRouter single hops.
+ */
+export const FEE_COLLECTOR =
+  "0x1090d265749c1199919a754a8c2dd00150d1f0f9" as const;
+
+/**
  * Pons Uniswap V4 hook. launches(poolId) is the fee record; poolManager()
  * returns UNISWAP_V4_POOL_MANAGER.
  */

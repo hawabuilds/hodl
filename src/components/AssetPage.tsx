@@ -2,7 +2,7 @@
 
 import {useMemo, useState, useEffect} from "react";
 import {changePctForPoints, mergeTradesIntoChart} from "@/lib/chartLive";
-import {firstPrintContext} from "@/lib/chartLwc";
+import {firstPrintContext, hoveredCandleChangePct} from "@/lib/chartLwc";
 import {TIMEFRAME_MS, chartWindowMs} from "@/lib/chartPlot";
 import {readChartStyle, writeChartStyle} from "@/lib/localStore";
 import {formatLiquidityUsd, formatMarketCapAt, formatPriceUsd} from "@/lib/priceState";
@@ -171,18 +171,16 @@ export function AssetPage({
   const tokenArt = asset.kind === "token" ? applyCachedLogo(asset) : null;
 
   // While scrubbing, the header reports the point under the finger; otherwise
-  // it reports the live price. The change follows the same rule, measured from
-  // the start of the visible window.
+  // it reports the live price. A hovered candle's % is that bar's open→close,
+  // not the cumulative move from the start of the visible window.
   const latestTrade = trades.trades[0];
   const shownPrice =
     scrubbed?.price ??
     livePrice ??
     (kind === "rwa" ? asset.priceUsd : (latestTrade?.priceUsd ?? asset.priceUsd));
-  const openPrice = livePoints[0]?.price ?? asset.priceUsd;
-  const shownChange =
-    scrubbed && openPrice != null && openPrice > 0
-      ? ((scrubbed.price - openPrice) / openPrice) * 100
-      : liveChange;
+  const shownChange = scrubbed
+    ? (hoveredCandleChangePct(livePoints, scrubbed) ?? liveChange)
+    : liveChange;
 
   // One calculation, one price. Both live in shared modules precisely so the
   // feed row for this asset and the panel further down this page cannot end up

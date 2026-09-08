@@ -148,7 +148,10 @@ export function mergeTradesIntoChart(
   return out;
 }
 
-/** Window change from the first visible point to the latest (live) close. */
+/**
+ * Window change from the first visible close to the latest (live) close.
+ * Hovered-bar % is `hoveredCandleChangePct` — this is the unscrubbed header only.
+ */
 export function changePctForPoints(points: ChartPoint[]): number | null {
   if (points.length < 2) return null;
   const first = points[0].price;

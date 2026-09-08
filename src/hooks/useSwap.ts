@@ -27,7 +27,7 @@ import {
 } from "@/lib/swapTx";
 import {assertSpendCovered, walletKindFrom, type WalletKind} from "@/lib/approvalFlow";
 import {formatRevertForUser, waitForTradeReceipt} from "@/lib/revertReason";
-import {estimatePreparedGas, readTxFeeFields, rpcTxRequest} from "@/lib/txGas";
+import {estimatePreparedGas, privyUnsignedTx, readTxFeeFields, rpcTxRequest} from "@/lib/txGas";
 import {useUser} from "./useUser";
 import {useWallet} from "./useWallet";
 
@@ -98,35 +98,36 @@ export function useSwap() {
       ]);
       if (imported) {
         await wallet.ensureCorrectChain();
+        const base = {
+          to: tx.to,
+          data: tx.data,
+          value: tx.value,
+          gas,
+          chainId: RH_MAINNET_ID,
+        } as const;
         const hash = await sendTransactionAsync(
           fees.maxFeePerGas && fees.maxPriorityFeePerGas != null
             ? {
-                to: tx.to,
-                data: tx.data,
-                value: tx.value,
-                gas,
+                ...base,
                 maxFeePerGas: fees.maxFeePerGas,
                 maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-                chainId: RH_MAINNET_ID,
               }
             : fees.gasPrice
-              ? {
-                  to: tx.to,
-                  data: tx.data,
-                  value: tx.value,
-                  gas,
-                  gasPrice: fees.gasPrice,
-                  chainId: RH_MAINNET_ID,
-                }
-              : {
-                  to: tx.to,
-                  data: tx.data,
-                  value: tx.value,
-                  gas,
-                  chainId: RH_MAINNET_ID,
-                },
+              ? {...base, gasPrice: fees.gasPrice}
+              : base,
         );
         return asHash(hash);
+      }
+
+      const privyTx = privyUnsignedTx({
+        to: tx.to,
+        data: tx.data,
+        value: tx.value,
+        gas,
+        fees,
+      });
+      if (session.sendEmbeddedTransaction) {
+        return asHash(await session.sendEmbeddedTransaction(privyTx));
       }
 
       const provider = await session.getEmbeddedProvider();

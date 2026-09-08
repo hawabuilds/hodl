@@ -8,6 +8,7 @@ import {HoldingsList, HoldingsSkeleton} from "@/components/HoldingsList";
 import {PillRail} from "@/components/PillRail";
 import {PriceChart} from "@/components/PriceChart";
 import {SettingsMenu} from "@/components/SettingsMenu";
+import {ShareProfileButton} from "@/components/ShareProfileButton";
 import {SocialRow} from "@/components/SocialRow";
 import {Avatar} from "@/components/ui/Avatar";
 import {PencilIcon} from "@/components/ui/Icons";
@@ -82,7 +83,12 @@ export default function ProfilePage() {
             </div>
           </div>
         </div>
-        <SettingsMenu />
+        <div className="flex shrink-0 items-center">
+          {me.handle ? (
+            <ShareProfileButton handle={me.handle} title={me.displayName} />
+          ) : null}
+          <SettingsMenu />
+        </div>
       </div>
 
       {me.bio ? (

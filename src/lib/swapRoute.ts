@@ -68,14 +68,40 @@ export function entryHopTooThin(
  * Doppler → stock → WETH can print a slightly higher number and then fail
  * to settle; a live AI/WETH pool should win ties like that.
  */
-export function pickBestEthExit<T extends {ethOut: bigint; hop2?: unknown}>(
+export function pickBestEthExit<T extends {ethOut: bigint; hop2?: unknown; exitHops?: unknown[]}>(
   ranked: T[],
 ): T | null {
   if (ranked.length === 0) return null;
   const best = ranked[0];
-  const direct = ranked.find((row) => !row.hop2);
+  const direct = ranked.find((row) => {
+    if (row.exitHops) return row.exitHops.length === 0;
+    return !row.hop2;
+  });
   if (direct && direct !== best && direct.ethOut * 100n >= best.ethOut * 97n) {
     return direct;
   }
   return best;
+}
+
+/**
+ * Uniswap-style venue pick: the official Quoter's highest amountOut wins.
+ * An empty V4 5% book that returns dust cannot beat a liquid V3/USDG path.
+ */
+export function pickBestQuotedHop<T extends {amountOut: bigint}>(
+  candidates: T[],
+): T | null {
+  let best: T | null = null;
+  for (const row of candidates) {
+    if (row.amountOut <= 0n) continue;
+    if (!best || row.amountOut > best.amountOut) best = row;
+  }
+  return best;
+}
+
+/** Hops Uniswap quoted for ETH ↔ pair. One hop, or WETH → USDG → pair. */
+export function ethPairHops<T extends {hop: SwapHop; hops?: SwapHop[]}>(
+  entry: T,
+): SwapHop[] {
+  if (entry.hops && entry.hops.length > 0) return entry.hops;
+  return [entry.hop];
 }

@@ -128,15 +128,28 @@ export function ticketTakesHodlFee(
   return hodlCanExecuteQuote(quote);
 }
 
+/** Hodl single-hop or UR stock-paired — both skim 50 bps. */
+export function ticketTakesPlatformFee(
+  quote: Parameters<typeof hodlCanExecuteQuote>[0] & {
+    feeBps?: number | null;
+    feeAmount?: string | null;
+  },
+): boolean {
+  if (ticketTakesHodlFee(quote)) return true;
+  if (Number(quote?.feeBps) > 0) return true;
+  if (quote?.feeAmount && BigInt(quote.feeAmount) > 0n) return true;
+  return (quote?.hops?.length ?? 0) > 1;
+}
+
 export function platformFeeLabel(
-  quote: Parameters<typeof hodlCanExecuteQuote>[0],
+  quote: Parameters<typeof ticketTakesPlatformFee>[0],
 ): {
   title: string;
   note: string | null;
   taken: boolean;
   bps: number;
 } {
-  const taken = ticketTakesHodlFee(quote);
+  const taken = ticketTakesPlatformFee(quote);
   const bps = taken ? PLATFORM_FEE_BPS : 0;
   return {
     title: `Platform fee ${bps / 100}%`,
@@ -146,9 +159,9 @@ export function platformFeeLabel(
   };
 }
 
-/** What the user actually receives after any Hodl skim. UR uses the gross out. */
-export function ticketNetOut(quote: Pick<SwapQuote, "amountOut" | "netOut" | "hops" | "quoteToken" | "pairToken" | "quoteIsNative" | "quoteIsWeth">): bigint {
-  if (!ticketTakesHodlFee(quote)) return BigInt(quote.amountOut);
+/** What the user actually receives after the 50 bps skim. */
+export function ticketNetOut(quote: Pick<SwapQuote, "amountOut" | "netOut" | "hops" | "quoteToken" | "pairToken" | "quoteIsNative" | "quoteIsWeth" | "feeBps" | "feeAmount">): bigint {
+  if (!ticketTakesPlatformFee(quote)) return BigInt(quote.amountOut);
   return BigInt(quote.netOut || quote.amountOut);
 }
 

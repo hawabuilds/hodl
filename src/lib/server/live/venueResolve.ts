@@ -1,8 +1,7 @@
 import type {PublicClient} from "viem";
 import {amountOutFromQuoter, feeOnAmount, inputAfterBuyFee, pickBestVenue, PLATFORM_FEE_BPS, type VenueCandidate, type VenueDecision} from "@/lib/venueQuote";
 import {QUOTE_ETH, QUOTE_USDG, QUOTE_WETH} from "@/lib/contracts";
-import {hodlCanExecuteQuote} from "@/lib/liveTrade";
-import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, entryHopTooThin, isEthish, isHodlQuoteToken, pickBestEthExit, type SwapHop} from "@/lib/swapRoute";
+import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, entryHopTooThin, ethPairHops, isEthish, isHodlQuoteToken, pickBestEthExit, type SwapHop} from "@/lib/swapRoute";
 import {rpc} from "./chain";
 import {quoteEthToPair, quotePairToEth, quoteV3ExactIn} from "./ethExit";
 import {discoverV3Pools, pickBestPool, readV3Pool, V3_QUOTES} from "./v3Pools";
@@ -202,6 +201,7 @@ export async function resolveSellToEth(req: QuoteRequest): Promise<SellToEthResu
     first: VenueCandidate;
     ethOut: bigint;
     hop2?: SwapHop;
+    exitHops?: SwapHop[];
     quoteToken: `0x${string}`;
   };
   const ranked: Ranked[] = [];
@@ -217,10 +217,12 @@ export async function resolveSellToEth(req: QuoteRequest): Promise<SellToEthResu
       client: req.client,
     });
     if (!exit) continue;
+    const exitHops = ethPairHops(exit);
     ranked.push({
       first,
       ethOut: exit.amountOut,
-      hop2: exit.hop,
+      hop2: exitHops[0],
+      exitHops,
       quoteToken: exit.quoteToken,
     });
   }
@@ -233,15 +235,8 @@ export async function resolveSellToEth(req: QuoteRequest): Promise<SellToEthResu
   const decided = pickBestVenue([win.first], undefined, true, req.amountIn);
   if (!decided) return {ok: false, reason: "no_pool"};
   const hops: SwapHop[] = [hopFromCandidate(win.first, token, "sell")];
-  if (win.hop2) hops.push(win.hop2);
-  const hodl = hodlCanExecuteQuote({
-    quoteIsNative: win.quoteToken.toLowerCase() === QUOTE_ETH,
-    quoteIsWeth: win.quoteToken.toLowerCase() === QUOTE_WETH,
-    quoteToken: win.quoteToken,
-    pairToken: win.first.quoteToken,
-    hops,
-  });
-  const feeAmount = hodl ? feeOnAmount(win.ethOut) : 0n;
+  hops.push(...(win.exitHops ?? (win.hop2 ? [win.hop2] : [])));
+  const feeAmount = feeOnAmount(win.ethOut);
   return {
     ok: true,
     decision: {
@@ -249,7 +244,7 @@ export async function resolveSellToEth(req: QuoteRequest): Promise<SellToEthResu
       amountOut: win.ethOut,
       netOut: win.ethOut - feeAmount,
       feeAmount,
-      platformFeeBps: hodl ? PLATFORM_FEE_BPS : 0,
+      platformFeeBps: PLATFORM_FEE_BPS,
       quoteToken: win.quoteToken,
     },
     hops,
@@ -271,11 +266,14 @@ export type BuyFromEthResult =
 
 /**
  * Buy quotes in ETH. Stock-paired tokens hop WETH/ETH → pair → token.
- * Universal Router does not skim a platform fee on that path.
+ * Skims the same 50 bps HodlRouter takes, then Uniswap quotes the rest.
  */
 export async function resolveBuyFromEth(req: QuoteRequest): Promise<BuyFromEthResult> {
   const token = req.token.toLowerCase() as `0x${string}`;
   if (req.amountIn <= 0n) return {ok: false, reason: "no_pool"};
+  const feeAmount = feeOnAmount(req.amountIn);
+  const swapIn = inputAfterBuyFee(req.amountIn);
+  if (swapIn <= 0n) return {ok: false, reason: "no_pool"};
 
   const probe = await gatherVenueCandidates({
     ...req,
@@ -302,8 +300,7 @@ export async function resolveBuyFromEth(req: QuoteRequest): Promise<BuyFromEthRe
 
   type Ranked = {
     tokenOut: bigint;
-    hop1: SwapHop;
-    hop2: SwapHop;
+    hops: SwapHop[];
     pairToken: `0x${string}`;
     quoteToken: `0x${string}`;
     second: VenueCandidate;
@@ -312,7 +309,7 @@ export async function resolveBuyFromEth(req: QuoteRequest): Promise<BuyFromEthRe
   for (const pair of pairs) {
     const entry = await quoteEthToPair({
       pairToken: pair,
-      amountIn: req.amountIn,
+      amountIn: swapIn,
       client: req.client,
     });
     if (!entry || entry.amountOut <= 0n) continue;
@@ -324,7 +321,7 @@ export async function resolveBuyFromEth(req: QuoteRequest): Promise<BuyFromEthRe
       amountIn: entry.amountOut,
       client: req.client,
     });
-    if (!entryBack || entryHopTooThin(req.amountIn, entryBack.amountOut)) continue;
+    if (!entryBack || entryHopTooThin(swapIn, entryBack.amountOut)) continue;
     const second = await gatherVenueCandidates({
       ...req,
       side: "buy",
@@ -340,8 +337,7 @@ export async function resolveBuyFromEth(req: QuoteRequest): Promise<BuyFromEthRe
     hop2.amountIn = entry.amountOut.toString();
     ranked.push({
       tokenOut: best2.amountOut,
-      hop1: entry.hop,
-      hop2,
+      hops: [...ethPairHops(entry), hop2],
       pairToken: pair,
       quoteToken: entry.quoteToken,
       second: best2,
@@ -352,7 +348,7 @@ export async function resolveBuyFromEth(req: QuoteRequest): Promise<BuyFromEthRe
   }
   ranked.sort((a, b) => (a.tokenOut === b.tokenOut ? 0 : a.tokenOut > b.tokenOut ? -1 : 1));
   const win = ranked[0];
-  const decided = pickBestVenue([win.second], 0, false, req.amountIn);
+  const decided = pickBestVenue([win.second], PLATFORM_FEE_BPS, false, req.amountIn);
   if (!decided) return {ok: false, reason: "no_pool"};
   return {
     ok: true,
@@ -360,11 +356,11 @@ export async function resolveBuyFromEth(req: QuoteRequest): Promise<BuyFromEthRe
       ...decided,
       amountOut: win.tokenOut,
       netOut: win.tokenOut,
-      feeAmount: 0n,
-      platformFeeBps: 0,
+      feeAmount,
+      platformFeeBps: PLATFORM_FEE_BPS,
       quoteToken: win.quoteToken,
     },
-    hops: [win.hop1, win.hop2],
+    hops: win.hops,
     pairToken: win.pairToken,
     quoteToken: win.quoteToken,
   };

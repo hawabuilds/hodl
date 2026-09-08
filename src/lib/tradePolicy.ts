@@ -141,7 +141,8 @@ export function intermediateOutIsDust(ethIn: bigint, pairOut: bigint): boolean {
 }
 
 export function quotedPairOut(hops: SwapHop[] | undefined): bigint {
-  const raw = hops?.[1]?.amountIn;
+  if (!hops || hops.length < 2) return 0n;
+  const raw = hops[hops.length - 1]?.amountIn;
   if (raw == null || raw === "") return 0n;
   try {
     const value = BigInt(raw);

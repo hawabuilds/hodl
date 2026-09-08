@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {
   LWC_ATTRIBUTION_LOGO,
   LWC_RIGHT_OFFSET_BARS,
+  candleChangePct,
   candleFromPoint,
   clipChartToOrigin,
   firstPrintContext,
+  hoveredCandleChangePct,
   isHistoryPrepend,
   isLiveEdgeUpdate,
   isLwcWhitespace,
@@ -163,6 +165,28 @@ describe("candle toggle data", () => {
     assert.equal(candles[1].low, 10);
     assert.equal(candles[2].open, 11);
     assert.equal(candles[2].close, 10.5);
+  });
+
+  it("shows this bar's open→close, not the cumulative move from the first print", () => {
+    // Three +1% candles. From 100 the series is up ~3%; the third bar is still ~1%.
+    const points = [
+      pt(0, 101, {open: 100}),
+      pt(60_000, 102.01, {open: 101}),
+      pt(120_000, 103.0301, {open: 102.01}),
+    ];
+    assert.equal(hoveredCandleChangePct(points, points[0]), 1);
+    assert.equal(hoveredCandleChangePct(points, points[1]), 1);
+    assert.equal(hoveredCandleChangePct(points, points[2]), 1);
+    assert.equal(candleChangePct(points[2]), 1);
+    const fromFirstOpen = Number((((103.0301 - 100) / 100) * 100).toFixed(2));
+    assert.equal(fromFirstOpen, 3.03);
+    assert.notEqual(hoveredCandleChangePct(points, points[2]), fromFirstOpen);
+  });
+
+  it("uses the prior close as open on a close-only series", () => {
+    const points = [pt(0, 100), pt(60_000, 101), pt(120_000, 102.01)];
+    assert.equal(hoveredCandleChangePct(points, points[2]), 1);
+    assert.equal(hoveredCandleChangePct(points, points[0]), 0);
   });
 
   it("keeps gecko OHLC on the close series the line already used", () => {

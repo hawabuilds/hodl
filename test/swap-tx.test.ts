@@ -11,6 +11,7 @@ import {
   V4_ACTION_TAKE_ALL,
 } from "../src/lib/v4Encoding";
 import {
+  FEE_COLLECTOR,
   LONG_DOPPLER_HOOK,
   QUOTE_WETH,
   UNIVERSAL_ROUTER,
@@ -44,7 +45,9 @@ import {
   isTransferToSwapRouter,
   packCommands,
   prepareExactInSwap,
+  UR_COMMAND_PAY_PORTION,
   UR_COMMAND_PERMIT2_TRANSFER_FROM,
+  UR_COMMAND_SWEEP,
   UR_COMMAND_UNWRAP_WETH,
   UR_COMMAND_V3_SWAP_EXACT_IN,
   UR_COMMAND_WRAP_ETH,
@@ -279,7 +282,12 @@ describe("swap tx encoding", () => {
     assert.equal(v4Sell.data.slice(0, 10), "0x3593564c");
     assert.equal(
       executeCommands(v4Sell.data),
-      packCommands([UR_COMMAND_PERMIT2_TRANSFER_FROM, UR_COMMAND_V4_SWAP, UR_COMMAND_UNWRAP_WETH]),
+      packCommands([
+        UR_COMMAND_PERMIT2_TRANSFER_FROM,
+        UR_COMMAND_V4_SWAP,
+        UR_COMMAND_PAY_PORTION,
+        UR_COMMAND_UNWRAP_WETH,
+      ]),
     );
     assert.equal(isErc20TransferCalldata(v4Sell.data), false);
     assert.equal(isTransferToSwapRouter(v4Sell), false);
@@ -312,6 +320,7 @@ describe("swap tx encoding", () => {
       packCommands([
         UR_COMMAND_PERMIT2_TRANSFER_FROM,
         UR_COMMAND_V3_SWAP_EXACT_IN,
+        UR_COMMAND_PAY_PORTION,
         UR_COMMAND_UNWRAP_WETH,
       ]),
     );
@@ -388,6 +397,7 @@ describe("swap tx encoding", () => {
         UR_COMMAND_PERMIT2_TRANSFER_FROM,
         UR_COMMAND_V4_SWAP,
         UR_COMMAND_V3_SWAP_EXACT_IN,
+        UR_COMMAND_PAY_PORTION,
         UR_COMMAND_UNWRAP_WETH,
       ]),
     );
@@ -475,8 +485,14 @@ describe("swap tx encoding", () => {
     assert.equal(tx.data.slice(0, 10), "0x3593564c");
     assert.equal(
       executeCommands(tx.data),
-      packCommands([UR_COMMAND_WRAP_ETH, UR_COMMAND_V4_SWAP, UR_COMMAND_V4_SWAP]),
+      packCommands([
+        UR_COMMAND_WRAP_ETH,
+        UR_COMMAND_V4_SWAP,
+        UR_COMMAND_V4_SWAP,
+        UR_COMMAND_SWEEP,
+      ]),
     );
+    assert.ok(tx.data.toLowerCase().includes(FEE_COLLECTOR.slice(2)));
     assert.equal(isErc20TransferCalldata(tx.data), false);
     assert.equal(isTransferToSwapRouter(tx), false);
     assert.doesNotThrow(() => assertSwapNotErc20Transfer(tx));

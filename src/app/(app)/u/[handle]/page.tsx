@@ -5,6 +5,7 @@ import {useRouter} from "next/navigation";
 import {ConnectionsSheet} from "@/components/ConnectionsSheet";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {HoldingsList} from "@/components/HoldingsList";
+import {ShareProfileButton} from "@/components/ShareProfileButton";
 import {SocialRow} from "@/components/SocialRow";
 import {Avatar} from "@/components/ui/Avatar";
 import {ChevronLeftIcon} from "@/components/ui/Icons";
@@ -86,19 +87,25 @@ export default function PublicProfilePage({
             @{profile.handle}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => follows.toggle(profile.handle)}
-          aria-pressed={following}
-          className={cn(
-            "shrink-0 rounded-pill px-4 py-2.5 text-[12.5px] font-bold transition-colors",
-            following
-              ? "border border-hairline bg-card text-muted hover:border-[var(--border-hover-strong)]"
-              : "bg-btn-dark text-btn-dark-fg",
-          )}
-        >
-          {following ? "Following" : "Follow"}
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          <ShareProfileButton
+            handle={profile.handle}
+            title={profile.displayName}
+          />
+          <button
+            type="button"
+            onClick={() => follows.toggle(profile.handle)}
+            aria-pressed={following}
+            className={cn(
+              "shrink-0 rounded-pill px-4 py-2.5 text-[12.5px] font-bold transition-colors",
+              following
+                ? "border border-hairline bg-card text-muted hover:border-[var(--border-hover-strong)]"
+                : "bg-btn-dark text-btn-dark-fg",
+            )}
+          >
+            {following ? "Following" : "Follow"}
+          </button>
+        </div>
       </div>
 
       <p className="mt-3 text-[13.5px] leading-[1.5] text-muted">{profile.bio}</p>

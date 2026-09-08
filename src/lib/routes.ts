@@ -1,3 +1,4 @@
+import {appOrigin} from "../config/appUrl";
 import {normalizeAddress} from "./address";
 import type {Asset, AssetKind, Timeframe} from "./types";
 
@@ -25,4 +26,9 @@ export function assetHref(asset: Asset, timeframe?: Timeframe | null): string {
 
 export function profilePath(handle: string): string {
   return `/u/${handle.replace(/^@/, "")}`;
+}
+
+/** Absolute public profile URL for share / copy. */
+export function profileShareUrl(handle: string): string {
+  return `${appOrigin()}${profilePath(handle)}`;
 }

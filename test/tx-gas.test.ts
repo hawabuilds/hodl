@@ -2,11 +2,15 @@ import {describe, it} from "node:test";
 import assert from "node:assert/strict";
 import {APPROVE_GAS_UNITS, SWAP_GAS_UNITS, encodeHodlApprove} from "../src/lib/approvalFlow";
 import {encodeHodlSell} from "../src/lib/hodlRouter";
+import {RH_MAINNET_ID} from "../src/config/chain";
 import {
   INTRINSIC_TX_GAS,
   assertContractGas,
+  attachTxFeeFields,
   estimatePreparedGas,
   fallbackGasForTx,
+  hasTxFeeFields,
+  privyUnsignedTx,
   readTxFeeFields,
   resolveTxGasLimit,
   rpcTxRequest,
@@ -95,6 +99,8 @@ describe("tx gas limits", () => {
     });
     assert.equal(req.value, "0x0");
     assert.equal(req.gas, `0x${SWAP_GAS_UNITS.toString(16)}`);
+    assert.equal(req.gasLimit, req.gas);
+    assert.equal(req.chainId, `0x${RH_MAINNET_ID.toString(16)}`);
     assert.notEqual(req.gas, "0x0");
     assert.notEqual(req.gas, "0x5208");
     assert.equal(req.gasPrice, "0xf4240");
@@ -112,5 +118,41 @@ describe("tx gas limits", () => {
     assert.equal(fees.maxFeePerGas, 2_000n);
     assert.equal(fees.maxPriorityFeePerGas, 100n);
     assert.equal(fees.gasPrice, undefined);
+  });
+
+  it("maps gas + fees onto the Privy unsigned request Privy needs for Estimated fee", () => {
+    const privy = privyUnsignedTx({
+      to: sellTx.to,
+      data: sellTx.data,
+      value: sellTx.value,
+      gas: 200_000n,
+      fees: {gasPrice: 1_000_000n},
+    });
+    assert.equal(privy.chainId, RH_MAINNET_ID);
+    assert.equal(privy.gasLimit, 200_000n);
+    assert.equal(privy.gasPrice, 1_000_000n);
+    assert.equal(privy.maxFeePerGas, undefined);
+    assert.ok(hasTxFeeFields(privy));
+
+    const eip1559 = attachTxFeeFields(
+      {to: sellTx.to},
+      {maxFeePerGas: 3_000n, maxPriorityFeePerGas: 100n},
+    );
+    assert.equal(eip1559.maxFeePerGas, 3_000n);
+    assert.equal(eip1559.maxPriorityFeePerGas, 100n);
+    assert.equal(eip1559.gasPrice, undefined);
+
+    const eipReq = rpcTxRequest({
+      from: WALLET,
+      to: sellTx.to,
+      data: sellTx.data,
+      value: 0n,
+      gas: 200_000n,
+      fees: {maxFeePerGas: 3_000n, maxPriorityFeePerGas: 100n},
+    });
+    assert.equal(eipReq.maxFeePerGas, "0xbb8");
+    assert.equal(eipReq.maxPriorityFeePerGas, "0x64");
+    assert.equal(eipReq.gasPrice, undefined);
+    assert.equal(eipReq.gasLimit, "0x30d40");
   });
 });

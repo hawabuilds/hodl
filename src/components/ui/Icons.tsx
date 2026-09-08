@@ -106,6 +106,15 @@ export function CopyIcon(props: IconProps) {
   );
 }
 
+export function ShareIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3v11M8 7l4-4 4 4" {...stroke} strokeWidth={2} />
+      <path d="M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6" {...stroke} strokeWidth={1.9} />
+    </Icon>
+  );
+}
+
 export function GridIcon(props: IconProps) {
   return (
     <Icon {...props}>

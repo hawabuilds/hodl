@@ -9,12 +9,14 @@ import {
   toHex,
 } from "viem";
 import {
+  FEE_COLLECTOR,
   PERMIT2,
   QUOTE_ETH,
   QUOTE_WETH,
   UNIVERSAL_ROUTER,
   UNISWAP_SWAP_ROUTER_02,
 } from "./contracts";
+import {feeOnAmount, inputAfterBuyFee, PLATFORM_FEE_BPS} from "./venueQuote";
 import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, isEthish, type SwapHop} from "./swapRoute";
 import {
   amountOutMinimum,
@@ -33,6 +35,10 @@ import {
 export const UR_COMMAND_V3_SWAP_EXACT_IN = 0x00;
 /** Universal Router command: pull ERC-20 via Permit2 onto the router. */
 export const UR_COMMAND_PERMIT2_TRANSFER_FROM = 0x02;
+/** Sweep leftover ETH/ERC-20 to a recipient (our 50 bps buy skim). */
+export const UR_COMMAND_SWEEP = 0x04;
+/** Pay a bips portion of a token on the router (our 50 bps sell skim). */
+export const UR_COMMAND_PAY_PORTION = 0x06;
 /** Wrap msg.value into WETH and leave it on the router. */
 export const UR_COMMAND_WRAP_ETH = 0x0b;
 /** Unwrap WETH on the router and send ETH to the recipient. */
@@ -105,6 +111,28 @@ function encodeWrapEth(recipient: `0x${string}`, amount: bigint): `0x${string}` 
   return encodeAbiParameters(
     [{type: "address"}, {type: "uint256"}],
     [recipient, amount],
+  );
+}
+
+function encodeSweep(
+  token: `0x${string}`,
+  recipient: `0x${string}`,
+  amountMin: bigint,
+): `0x${string}` {
+  return encodeAbiParameters(
+    [{type: "address"}, {type: "address"}, {type: "uint256"}],
+    [token, recipient, amountMin],
+  );
+}
+
+function encodePayPortion(
+  token: `0x${string}`,
+  recipient: `0x${string}`,
+  bips: number,
+): `0x${string}` {
+  return encodeAbiParameters(
+    [{type: "address"}, {type: "address"}, {type: "uint256"}],
+    [token, recipient, BigInt(bips)],
   );
 }
 
@@ -440,10 +468,12 @@ export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
     encodePermit2Pull(swap.token, swap.amountIn, UNIVERSAL_ROUTER),
   ];
 
+  const userMin = inputAfterBuyFee(swap.amountOutMinimum, PLATFORM_FEE_BPS);
+
   for (let i = 0; i < hops.length; i++) {
     const hop = hops[i];
     const last = i === hops.length - 1;
-    const takeToRouter = !last || unwrap;
+    const takeToRouter = true;
     const fromRouterBalance = i > 0 && hop.venue === "v4";
     const amountIn =
       i === 0
@@ -461,16 +491,23 @@ export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
       encodeHopInput({
         hop,
         amountIn,
-        amountOutMinimum: last && !unwrap ? swap.amountOutMinimum : 0n,
+        amountOutMinimum: 0n,
         takeToRouter,
         fromRouterBalance,
       }),
     );
   }
 
+  const outToken = unwrap ? QUOTE_WETH : QUOTE_ETH;
+  commands.push(UR_COMMAND_PAY_PORTION);
+  inputs.push(encodePayPortion(outToken, FEE_COLLECTOR, PLATFORM_FEE_BPS));
+
   if (unwrap) {
     commands.push(UR_COMMAND_UNWRAP_WETH);
-    inputs.push(encodeUnwrapWeth(UR_MSG_SENDER, swap.amountOutMinimum));
+    inputs.push(encodeUnwrapWeth(UR_MSG_SENDER, userMin));
+  } else {
+    commands.push(UR_COMMAND_SWEEP);
+    inputs.push(encodeSweep(QUOTE_ETH, UR_MSG_SENDER, userMin));
   }
 
   const tx: PreparedTx = {
@@ -503,12 +540,17 @@ export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
     throw new Error(CANT_ENTER_FROM_ETH);
   }
   const pairMinOut = amountOutMinimum(quotedPairOut(hops), 5);
+  const feeAmount = feeOnAmount(swap.amountIn);
+  const swapIn = inputAfterBuyFee(swap.amountIn);
+  if (swapIn <= 0n) {
+    throw new Error(CANT_ENTER_FROM_ETH);
+  }
 
   const commands: number[] = [];
   const inputs: `0x${string}`[] = [];
   if (wrap) {
     commands.push(UR_COMMAND_WRAP_ETH);
-    inputs.push(encodeWrapEth(UNIVERSAL_ROUTER, swap.amountIn));
+    inputs.push(encodeWrapEth(UNIVERSAL_ROUTER, swapIn));
   }
 
   for (let i = 0; i < hops.length; i++) {
@@ -517,7 +559,7 @@ export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
     const fromRouterBalance = i > 0 && hop.venue === "v4";
     const amountIn =
       i === 0
-        ? swap.amountIn
+        ? swapIn
         : hop.venue === "v3"
           ? UR_CONTRACT_BALANCE
           : fromRouterBalance
@@ -531,12 +573,23 @@ export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
       encodeHopInput({
         hop,
         amountIn,
-        amountOutMinimum: last ? swap.amountOutMinimum : pairMinOut,
+        amountOutMinimum: last
+          ? swap.amountOutMinimum
+          : i === hops.length - 2
+            ? pairMinOut
+            : 0n,
         takeToRouter: !last,
-        payerIsUser: i === 0 && nativeFirst,
+        // Native ETH already sits on UR from msg.value. Settle swapIn only
+        // so the 50 bps leftover can be swept to FeeCollector.
+        payerIsUser: false,
         fromRouterBalance,
       }),
     );
+  }
+
+  if (feeAmount > 0n) {
+    commands.push(UR_COMMAND_SWEEP);
+    inputs.push(encodeSweep(QUOTE_ETH, FEE_COLLECTOR, feeAmount));
   }
 
   const tx: PreparedTx = {

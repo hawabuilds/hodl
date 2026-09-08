@@ -1,4 +1,4 @@
-import {QUOTE_USDG} from "./contracts";
+import {FEE_COLLECTOR, QUOTE_USDG} from "./contracts";
 import {isEthish} from "./swapRoute";
 import type {SwapHop} from "./swapRoute";
 
@@ -12,8 +12,8 @@ export const HODL_ROUTER_ADDRESS = (
 ).toLowerCase() as `0x${string}` | "";
 
 export const FEE_COLLECTOR_ADDRESS = (
-  process.env.NEXT_PUBLIC_FEE_COLLECTOR ?? ""
-).toLowerCase() as `0x${string}` | "";
+  process.env.NEXT_PUBLIC_FEE_COLLECTOR || FEE_COLLECTOR
+).toLowerCase() as `0x${string}`;
 
 export const LIVE_TRADE_FLAG = process.env.NEXT_PUBLIC_LIVE_TRADE === "1";
 

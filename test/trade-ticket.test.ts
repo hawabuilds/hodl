@@ -282,7 +282,7 @@ describe("platform fee label follows the execution path", () => {
     assert.equal(ticketTakesHodlFee(usdgQuote), true);
   });
 
-  it("shows Platform fee 0% on a Universal Router multi-hop, even if feeBps is 50", () => {
+  it("shows Platform fee 0.5% on a Universal Router stock hop, same as Hodl", () => {
     const ur = {
       quoteToken: QUOTE_WETH,
       quoteIsNative: false,
@@ -293,16 +293,17 @@ describe("platform fee label follows the execution path", () => {
         {venue: "v4" as const, tokenIn: spy, tokenOut: token},
       ],
       feeBps: 50,
+      feeAmount: "5",
       amountOut: "1000",
       netOut: "995",
     };
     const label = platformFeeLabel(ur);
     assert.equal(ticketTakesHodlFee(ur), false);
-    assert.equal(label.taken, false);
-    assert.equal(label.bps, 0);
-    assert.equal(label.title, "Platform fee 0%");
-    assert.equal(label.note, "No platform fee on this route");
-    assert.equal(ticketNetOut(ur), 1000n);
+    assert.equal(label.taken, true);
+    assert.equal(label.bps, 50);
+    assert.equal(label.title, "Platform fee 0.5%");
+    assert.equal(label.note, null);
+    assert.equal(ticketNetOut(ur), 995n);
     assert.notEqual(label.title, "HODL fee 0.5%");
   });
 

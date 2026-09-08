@@ -15,6 +15,21 @@ export interface EmbeddedProvider {
   request: (args: {method: string; params?: unknown[]}) => Promise<unknown>;
 }
 
+/**
+ * Unsigned write Privy's confirmation sheet needs to render "Estimated fee".
+ * Built by `privyUnsignedTx` — gasLimit + chainId + gasPrice/EIP-1559 fields.
+ */
+export type EmbeddedSendTx = {
+  to: `0x${string}`;
+  data: `0x${string}`;
+  value: bigint;
+  chainId: number;
+  gasLimit: bigint;
+  gasPrice?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+};
+
 export interface Session {
   ready: boolean;
   authenticated: boolean;
@@ -29,6 +44,11 @@ export interface Session {
    * context to read — can return null instead of throwing.
    */
   getEmbeddedProvider: () => Promise<EmbeddedProvider | null>;
+  /**
+   * Privy's `sendTransaction` so the approval sheet sees gasLimit, chainId,
+   * and fee fields. Null in demo mode.
+   */
+  sendEmbeddedTransaction: ((tx: EmbeddedSendTx) => Promise<`0x${string}`>) | null;
   /**
    * Opens Privy's export flow for the embedded wallet. Null in demo mode,
    * where there is no real wallet to back up.

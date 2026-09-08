@@ -112,6 +112,30 @@ export function toCandleData(points: ChartPoint[]): LwcCandlePoint[] {
   return out;
 }
 
+/**
+ * Percentage this bar printed: (close − open) / open.
+ * Uses the same open as the drawn candle (real open, else prior close).
+ * This is not the move from the first visible print.
+ */
+export function candleChangePct(
+  bar: ChartPoint,
+  prevClose?: number,
+): number | null {
+  const {open, close} = candleFromPoint(bar, prevClose);
+  if (!(open > 0) || !Number.isFinite(close)) return null;
+  return Number((((close - open) / open) * 100).toFixed(2));
+}
+
+/** Hovered bar's own change, matching the candle under the crosshair. */
+export function hoveredCandleChangePct(
+  points: ChartPoint[],
+  hovered: ChartPoint,
+): number | null {
+  const idx = points.findIndex((point) => point.t === hovered.t);
+  const prevClose = idx > 0 ? points[idx - 1].price : undefined;
+  return candleChangePct(hovered, prevClose);
+}
+
 export function isLwcWhitespace(
   item: {time: number; value?: number; close?: number},
 ): boolean {
