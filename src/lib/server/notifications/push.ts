@@ -51,9 +51,15 @@ async function subscriptionsFor(userId: string): Promise<SubRow[]> {
 }
 
 export async function sendWebPush(userId: string, payload: PushPayload): Promise<{sent: number; gone: number}> {
-  if (!pushConfigured()) return {sent: 0, gone: 0};
+  if (!pushConfigured()) {
+    console.info("web-push not configured");
+    return {sent: 0, gone: 0};
+  }
   const subs = await subscriptionsFor(userId);
-  if (!subs.length) return {sent: 0, gone: 0};
+  if (!subs.length) {
+    console.info("web-push no subscriptions");
+    return {sent: 0, gone: 0};
+  }
   const webpush = await import("web-push");
   webpush.setVapidDetails(
     process.env.VAPID_SUBJECT?.trim() || `mailto:ops@${new URL(appOrigin()).hostname}`,
@@ -81,7 +87,10 @@ export async function sendWebPush(userId: string, payload: PushPayload): Promise
           gone += 1;
           await deleteSubscription(sub.endpoint);
         } else {
-          console.error("web-push send failed", status ?? error);
+          const apple = sub.endpoint.includes("web.push.apple.com");
+          const raw = (error as {body?: unknown}).body;
+          const body = typeof raw === "string" ? raw.slice(0, 200) : "";
+          console.error("web-push send failed", {status: status ?? null, apple, body});
         }
       }
     }),

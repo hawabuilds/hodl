@@ -27,13 +27,17 @@ export async function POST(request: Request) {
   if (!result.ok) return badRequest("No account with that handle.");
 
   const following = followingOf(caller.userId);
-  if (wantFollow && result.targetId) {
-    const {notifyFollowed} = await import("@/lib/server/notifications/social");
+  if (result.targetId) {
+    const {clearFollowNotification, notifyFollowed} = await import("@/lib/server/notifications/social");
     await Promise.all([
       following,
-      notifyFollowed(result.targetId, caller.userId).catch((error) =>
-        console.error("follow notify failed", error),
-      ),
+      wantFollow
+        ? notifyFollowed(result.targetId, caller.userId).catch((error) =>
+            console.error("follow notify failed", error),
+          )
+        : clearFollowNotification(result.targetId, caller.userId).catch((error) =>
+            console.error("follow notify clear failed", error),
+          ),
     ]);
     return json({following: await following});
   }

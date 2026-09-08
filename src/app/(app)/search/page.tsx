@@ -3,6 +3,7 @@
 import {useEffect, useMemo, useState} from "react";
 import Link from "next/link";
 import {keepPreviousData, useQuery} from "@tanstack/react-query";
+import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
 import {AssetList} from "@/components/AssetRow";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {Avatar} from "@/components/ui/Avatar";
@@ -91,7 +92,7 @@ export default function SearchPage() {
   const nothing = active && !search.isLoading && assets.length === 0 && people.length === 0;
 
   return (
-    <div>
+    <div className={APP_SCROLL_PAD_TOP}>
       <SearchBar
         value={query}
         onChange={setQuery}

@@ -300,7 +300,12 @@ export interface FeedItem {
   publishedAt: string;
   /** Tickers the item concerns; rendered as chips through to the RWA page. */
   tickers: string[];
-  topic: "rwa" | "robinhood";
+  /**
+   * `rwa` is coverage of a listed tokenized stock. `robinhood` is HOOD / the
+   * brokerage. `market` is general-wire copy that moves markets (indexes, Fed,
+   * oil) without naming a covered ticker — Top stories only, not RWA stocks.
+   */
+  topic: "rwa" | "robinhood" | "market";
   /** Artwork from the publisher, when the story carries one. */
   imageUrl: string | null;
   /** The account's profile picture. Accounts only. */

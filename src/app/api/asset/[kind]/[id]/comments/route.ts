@@ -64,6 +64,8 @@ export async function POST(
       parentId: comment.parentId,
       assetId: asset.id,
       authorId: caller.userId,
+      body: text,
+      ticker: asset.kind === "rwa" ? asset.ticker : asset.symbol,
     }).catch((error) => console.error("reply notify failed", error));
   }
   return json({comment});

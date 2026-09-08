@@ -32,6 +32,18 @@ export type CacheOptions = {
    * For feeds where empty usually means the upstream failed, not "no news".
    */
   cacheEmpty?: boolean;
+  /**
+   * Redis TTL in seconds. Default is 10× the local TTL so a cold instance can
+   * reuse a market sweep. News must pass a much shorter value — 10× of a
+   * ten-minute wire TTL is 100 minutes of last night's tape.
+   */
+  sharedTtlSeconds?: number;
+  /**
+   * How long past expiry a value may still be served while a refresh runs.
+   * After this the caller waits for a rebuild. Without a cap, a failed
+   * refresh leaves the expired snapshot in place indefinitely.
+   */
+  maxStaleMs?: number;
 };
 
 /**
@@ -52,6 +64,24 @@ export function isUsableCachedValue<T>(
 
 function allowsEmpty(options?: CacheOptions): boolean {
   return options?.cacheEmpty !== false;
+}
+
+function sharedTtlSeconds(ttlMs: number, options?: CacheOptions): number {
+  return options?.sharedTtlSeconds ?? Math.ceil((ttlMs * 10) / 1000);
+}
+
+/** True when the entry has been expired longer than the caller will tolerate. */
+export function isPastMaxStale(
+  expires: number,
+  maxStaleMs: number,
+  now: number = Date.now(),
+): boolean {
+  return now - expires > maxStaleMs;
+}
+
+function tooStale(hit: Entry<unknown>, options?: CacheOptions): boolean {
+  if (options?.maxStaleMs == null) return false;
+  return isPastMaxStale(hit.expires, options.maxStaleMs);
 }
 
 export async function cached<T>(
@@ -83,7 +113,11 @@ export async function cached<T>(
    * few seconds of staleness on a feed that refreshes every minute is not
    * worth a page that visibly stalls.
    */
-  if (hit && isUsableCachedValue(hit.value, allowsEmpty(options))) {
+  if (
+    hit &&
+    isUsableCachedValue(hit.value, allowsEmpty(options)) &&
+    !tooStale(hit, options)
+  ) {
     if (!pending) void refresh(key, ttlMs, load, options);
     return hit.value;
   }
@@ -190,7 +224,7 @@ function refresh<T>(
         // copy: its job is to spare the *next* cold instance the rebuild, so it
         // needs to outlive the freshness window rather than match it.
         if (SHARED_CACHE) {
-          void writeShared(key, value, Math.ceil((ttlMs * 10) / 1000));
+          void writeShared(key, value, sharedTtlSeconds(ttlMs, options));
         }
       }
       return value;

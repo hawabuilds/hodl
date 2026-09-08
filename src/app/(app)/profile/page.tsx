@@ -7,6 +7,7 @@ import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {HoldingsList, HoldingsSkeleton} from "@/components/HoldingsList";
 import {PillRail} from "@/components/PillRail";
 import {PriceChart} from "@/components/PriceChart";
+import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
 import {SettingsMenu} from "@/components/SettingsMenu";
 import {ShareProfileButton} from "@/components/ShareProfileButton";
 import {SocialRow} from "@/components/SocialRow";
@@ -65,7 +66,7 @@ export default function ProfilePage() {
   }));
 
   return (
-    <div>
+    <div className={APP_SCROLL_PAD_TOP}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <Avatar name={me.displayName} src={me.pfpUrl} size={52} ring />

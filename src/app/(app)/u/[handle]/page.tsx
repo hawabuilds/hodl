@@ -2,6 +2,7 @@
 
 import {useMemo, useState} from "react";
 import {useRouter} from "next/navigation";
+import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
 import {ConnectionsSheet} from "@/components/ConnectionsSheet";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {HoldingsList} from "@/components/HoldingsList";
@@ -64,7 +65,7 @@ export default function PublicProfilePage({
 
   if (notFound || !profile) {
     return (
-      <div className="pt-2">
+      <div className={APP_SCROLL_PAD_TOP}>
         <BackButton onClick={() => router.back()} />
         <p className="mt-5 text-[14px] text-muted">
           No profile for @{params.handle}.
@@ -74,7 +75,7 @@ export default function PublicProfilePage({
   }
 
   return (
-    <div>
+    <div className={APP_SCROLL_PAD_TOP}>
       <BackButton onClick={() => router.back()} />
 
       <div className="mt-3 flex items-start gap-3">
@@ -186,7 +187,7 @@ function BackButton({onClick}: {onClick: () => void}) {
 
 function ProfileSkeleton() {
   return (
-    <div className="pt-2">
+    <div className={APP_SCROLL_PAD_TOP}>
       <div className="h-9 w-9 animate-pulse rounded-full bg-wash" />
       <div className="mt-3 flex items-center gap-3">
         <div className="h-14 w-14 animate-pulse rounded-full bg-wash" />

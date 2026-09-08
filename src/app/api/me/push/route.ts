@@ -41,7 +41,7 @@ export async function POST(request: Request) {
   if (body.test) {
     const pushed = await sendWebPush(caller.userId, {
       title: "Notifications are on",
-      body: "This is a test from hodl.fan.",
+      body: "This is a test.",
       url: "/home",
     });
     return json({ok: true, prefs: await prefsFor(caller.userId), ...pushed});

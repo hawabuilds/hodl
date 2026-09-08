@@ -2,10 +2,11 @@
 
 import {useCallback, useRef} from "react";
 import {useQueryClient} from "@tanstack/react-query";
+import {NEWS_FEED_QUERY_KEY} from "@/lib/newsWindow";
 import type {FeedItem} from "@/lib/types";
 
 /** The window and topic the News tab lands on. */
-const DEFAULT_WINDOW = "7d";
+const DEFAULT_WINDOW = "24h";
 const DEFAULT_TOPIC = "all";
 
 /**
@@ -40,8 +41,10 @@ export function usePrefetchNews() {
           seeded: boolean;
         };
 
+        if (!Array.isArray(data.items) || data.items.length === 0) return;
+
         queryClient.setQueryData(
-          ["news-feed", DEFAULT_WINDOW, DEFAULT_TOPIC],
+          [NEWS_FEED_QUERY_KEY, DEFAULT_WINDOW, DEFAULT_TOPIC],
           data,
         );
       } catch {

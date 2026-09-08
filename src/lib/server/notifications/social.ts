@@ -1,21 +1,62 @@
+import {followDedupeKey} from "@/lib/notifications/dedupe";
+import {
+  followCopy,
+  handlesFromFollowRows,
+  replyBatchCopy,
+  replyCopy,
+} from "@/lib/notifications/copy";
 import {assetPath, profilePath} from "@/lib/routes";
 import {db, hasDatabase} from "@/lib/server/db";
-import {enqueueNotification} from "./dispatch";
 import {userById} from "@/lib/server/social-live";
+import {getTokenRow} from "@/lib/server/live/universeStore";
+import {enqueueNotification} from "./dispatch";
+
+const BATCH_MS = 20 * 60_000;
 
 export async function notifyFollowed(targetUserId: string, followerUserId: string): Promise<void> {
   if (targetUserId === followerUserId) return;
   const follower = await userById(followerUserId);
   const handle = follower?.handle ?? "someone";
-  await enqueueNotification({
+  let handles = [handle];
+  if (hasDatabase) {
+    const windowStart = new Date(Date.now() - BATCH_MS).toISOString();
+    const {data: recent} = await db()
+      .from("notification_log")
+      .select("body, payload")
+      .eq("user_id", targetUserId)
+      .eq("kind", "follow")
+      .gte("created_at", windowStart)
+      .order("created_at", {ascending: true})
+      .limit(40);
+    handles = handlesFromFollowRows(recent ?? []);
+    if (!handles.some((row) => row.toLowerCase() === handle.toLowerCase())) {
+      handles.push(handle);
+    }
+  }
+  const copy = followCopy(handles);
+  const result = await enqueueNotification({
     userId: targetUserId,
     channel: "social",
     kind: "follow",
-    title: `@${handle} followed you`,
-    body: `@${handle} followed you`,
+    title: copy.title,
+    body: copy.body,
     url: profilePath(handle),
-    dedupeKey: `follow:${targetUserId}:${followerUserId}`,
+    dedupeKey: followDedupeKey(targetUserId, followerUserId),
+    digest: {type: "follow", n: 1},
+    handles: [handle],
   });
+  console.info("follow notify", result);
+}
+
+/** So unfollow + follow is a new event, not skipped by the old pair key. */
+export async function clearFollowNotification(targetUserId: string, followerUserId: string): Promise<void> {
+  if (!hasDatabase) return;
+  await db()
+    .from("notification_log")
+    .delete()
+    .eq("user_id", targetUserId)
+    .eq("kind", "follow")
+    .eq("dedupe_key", followDedupeKey(targetUserId, followerUserId));
 }
 
 export async function notifyCommentReply(input: {
@@ -23,6 +64,8 @@ export async function notifyCommentReply(input: {
   parentId: string;
   assetId: string;
   authorId: string;
+  body?: string;
+  ticker?: string;
 }): Promise<void> {
   if (!hasDatabase) return;
   const {data: parent} = await db()
@@ -36,22 +79,48 @@ export async function notifyCommentReply(input: {
   const handle = author?.handle ?? "someone";
   const url = `${assetPath(kind, input.assetId)}#comment-${input.commentId}`;
 
-  const windowStart = new Date(Date.now() - 20 * 60_000).toISOString();
-  const {count} = await db()
+  let replyText = input.body?.trim() ?? "";
+  if (!replyText) {
+    const {data: comment} = await db()
+      .from("comments")
+      .select("body")
+      .eq("id", input.commentId)
+      .maybeSingle();
+    replyText = String(comment?.body ?? "").trim();
+  }
+
+  let ticker = input.ticker?.trim() ?? "";
+  if (!ticker) {
+    if (kind === "token") {
+      const row = await getTokenRow(input.assetId).catch(() => null);
+      ticker = row?.symbol ?? "TOKEN";
+    } else {
+      ticker = input.assetId;
+    }
+  }
+
+  const windowStart = new Date(Date.now() - BATCH_MS).toISOString();
+  const {data: recent} = await db()
     .from("notification_log")
-    .select("*", {count: "exact", head: true})
+    .select("payload")
     .eq("user_id", parent.user_id)
     .eq("kind", "reply")
-    .eq("url", url.split("#")[0] ?? url)
-    .gte("created_at", windowStart);
-  const n = (count ?? 0) + 1;
+    .gte("created_at", windowStart)
+    .limit(40);
+  const sameThread = (recent ?? []).filter((row) => {
+    const payload = row.payload as {d?: {parentId?: string}} | null;
+    return payload?.d?.parentId === input.parentId;
+  });
+  const n = sameThread.length + 1;
+  const copy = n > 1 ? replyBatchCopy(n, ticker) : replyCopy(handle, replyText);
   await enqueueNotification({
     userId: parent.user_id,
     channel: "social",
     kind: "reply",
-    title: n > 1 ? `${n} people replied to your comment` : `@${handle} replied to your comment`,
-    body: n > 1 ? `${n} people replied to your comment` : `@${handle} replied`,
+    title: copy.title,
+    body: copy.body,
     url,
-    dedupeKey: n > 1 ? `reply-batch:${parent.user_id}:${input.parentId}:${Math.floor(Date.now() / 1_200_000)}` : `reply:${input.commentId}`,
+    dedupeKey: `reply:${input.commentId}`,
+    digest: {type: "reply", ticker, n: 1, parentId: input.parentId},
   });
 }

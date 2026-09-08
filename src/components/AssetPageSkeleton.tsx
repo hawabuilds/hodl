@@ -1,6 +1,8 @@
+import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
+
 export function AssetSkeleton() {
   return (
-    <div className="pt-2">
+    <div className={APP_SCROLL_PAD_TOP}>
       <div className="h-9 w-9 animate-pulse rounded-full bg-wash" />
       <div className="mt-3 flex items-center gap-3">
         <div className="h-11 w-11 animate-pulse rounded-full bg-wash" />

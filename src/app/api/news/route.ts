@@ -1,5 +1,6 @@
 import {unstable_cache} from "next/cache";
 import type {NextRequest} from "next/server";
+import {NEWS_BUILD_FRESH_MS, NEWS_WINDOW_MS} from "@/lib/newsWindow";
 import {json, publicJson} from "@/lib/server/http";
 import {fetchFeed} from "@/lib/server/sources";
 import {NEWS_TOPICS, NEWS_WINDOWS, type NewsTopic, type NewsWindow} from "@/lib/types";
@@ -7,7 +8,7 @@ import {NEWS_TOPICS, NEWS_WINDOWS, type NewsTopic, type NewsWindow} from "@/lib/
 export const dynamic = "force-dynamic";
 
 /**
- * The feed, built once and shared.
+ * The feed, built once per minute-bucket and shared.
  *
  * Building it fetches the wire, the X accounts and up to ninety article pages
  * for their artwork — several seconds on a cold instance, and every instance
@@ -17,46 +18,56 @@ export const dynamic = "force-dynamic";
  *
  * Windows and topics are filters over the same list, so they share one entry
  * rather than each warming their own.
+ *
+ * The minute bucket is part of the key: Vercel's Data Cache can keep serving
+ * an old `revalidate` entry when the rebuild throws or times out, which is
+ * how Tonight sat on a 19:03 snapshot while Finnhub already had 20:23 wire.
  */
-const feed = unstable_cache(
-  async () => {
-    const result = await fetchFeed({window: "all", topic: "all"});
-    // X-only is not a cacheable win — Finnhub missed and posts filled the
-    // array. Throwing skips the Data Cache so the next request retries.
-    if (!result.data.some((item) => item.kind === "article")) {
-      throw new Error("news wire empty");
+function cachedFeed(bucket: string) {
+  return unstable_cache(
+    async () => {
+      const result = await fetchFeed({window: "all", topic: "all"});
+      // X-only is not a cacheable win — Finnhub missed and posts filled the
+      // array. Throwing skips the Data Cache so the next request retries.
+      if (!result.data.some((item) => item.kind === "article")) {
+        throw new Error("news wire empty");
+      }
+      return {...result, builtAt: Date.now()};
+    },
+    ["news-feed-v10", bucket],
+    {revalidate: 60},
+  );
+}
+
+async function loadFeed(): Promise<{
+  data: Awaited<ReturnType<typeof fetchFeed>>["data"];
+  seeded: boolean;
+  builtAt: number;
+}> {
+  const bucket = String(Math.floor(Date.now() / 60_000));
+  try {
+    const result = await cachedFeed(bucket)();
+    if (Date.now() - result.builtAt > NEWS_BUILD_FRESH_MS) {
+      const live = await fetchFeed({window: "all", topic: "all"});
+      return {...live, builtAt: Date.now()};
     }
     return result;
-  },
-  // Bumped whenever sort/source logic changes: Vercel's Data Cache outlives
-  // a deploy, so an old key would keep serving the previous feed.
-  ["news-feed-v6"],
-  {revalidate: 300},
-);
-
-const WINDOW_MS: Record<NewsWindow, number> = {
-  "24h": 24 * 3_600_000,
-  "7d": 7 * 24 * 3_600_000,
-  "30d": 30 * 24 * 3_600_000,
-  all: 365 * 24 * 3_600_000,
-};
+  } catch {
+    const live = await fetchFeed({window: "all", topic: "all"});
+    return {...live, builtAt: Date.now()};
+  }
+}
 
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const window =
-    (NEWS_WINDOWS.find((w) => w === params.get("window")) as NewsWindow) ?? "7d";
+    (NEWS_WINDOWS.find((w) => w === params.get("window")) as NewsWindow) ?? "24h";
   const topic =
     (NEWS_TOPICS.find((t) => t === params.get("topic")) as NewsTopic) ?? "all";
 
-  let data: Awaited<ReturnType<typeof fetchFeed>>["data"];
-  let seeded: boolean;
-  try {
-    ({data, seeded} = await feed());
-  } catch {
-    ({data, seeded} = await fetchFeed({window: "all", topic: "all"}));
-  }
+  const {data, seeded, builtAt} = await loadFeed();
 
-  const cutoff = Date.now() - WINDOW_MS[window];
+  const cutoff = Date.now() - NEWS_WINDOW_MS[window];
   const items = data
     .filter((item) => {
       if (Date.parse(item.publishedAt) < cutoff) return false;
@@ -66,5 +77,9 @@ export async function GET(request: NextRequest) {
     })
     .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
 
-  return publicJson({items, window, topic, seeded}, {maxAge: 120, swr: 900});
+  // Empty or a stuck Data Cache build must not sit on the CDN.
+  if (items.length === 0 || Date.now() - builtAt > NEWS_BUILD_FRESH_MS) {
+    return json({items, window, topic, seeded});
+  }
+  return publicJson({items, window, topic, seeded}, {maxAge: 45, swr: 60});
 }

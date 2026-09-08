@@ -13,6 +13,7 @@ import {useRouter} from "next/navigation";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {useAsset, useChart, useNews, useTrades} from "@/hooks/useAsset";
 import {cn} from "@/lib/cn";
+import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
 import {clock, percent, shortAddress} from "@/lib/format";
 import {lastHomePath} from "@/lib/homeState";
 import {sectorFor} from "@/lib/sectors";
@@ -159,7 +160,7 @@ export function AssetPage({
   if (!asset) {
     if (isLoading) return <AssetSkeleton />;
     return (
-      <div className="pt-6">
+      <div className={APP_SCROLL_PAD_TOP}>
         <BackButton onClick={() => router.push(lastHomePath())} />
         <p className="mt-5 text-[14px] text-muted">
           {error?.message ?? "That asset is not listed here."}
@@ -194,7 +195,7 @@ export function AssetPage({
   });
 
   return (
-    <div className="pb-[calc(84px+env(safe-area-inset-bottom))]">
+    <div className={cn(APP_SCROLL_PAD_TOP, "pb-[calc(84px+env(safe-area-inset-bottom))]")}>
       <BackButton onClick={() => router.back()} />
 
       {asset.kind === "rwa" ? (

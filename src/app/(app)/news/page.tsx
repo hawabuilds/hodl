@@ -1,14 +1,16 @@
 "use client";
 
-import {useEffect, useState} from "react";
-import {keepPreviousData, useQuery} from "@tanstack/react-query";
+import {useEffect, useMemo, useState} from "react";
+import {useQuery} from "@tanstack/react-query";
 import {AssetLink} from "@/components/AssetLink";
+import {StickyPageHeader} from "@/components/AppShell";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {Avatar} from "@/components/ui/Avatar";
 import {VerifiedTick} from "@/components/ui/Badges";
 import {ArrowUpRightIcon, NewsIcon} from "@/components/ui/Icons";
 import {cn} from "@/lib/cn";
 import {newsTime} from "@/lib/format";
+import {NEWS_FEED_QUERY_KEY, selectTodayStories} from "@/lib/newsWindow";
 import type {FeedItem, NewsTopic, NewsWindow} from "@/lib/types";
 
 const WINDOWS: FilterOption<NewsWindow>[] = [
@@ -22,7 +24,7 @@ const TOPICS: FilterOption<NewsTopic>[] = [
   {value: "all", label: "Top stories"},
   {value: "rwa", label: "RWA stocks"},
   {value: "robinhood", label: "Robinhood"},
-  {value: "posts", label: "Sources"},
+  {value: "posts", label: "Robinhood socials"},
 ];
 
 interface FeedResponse {
@@ -31,13 +33,12 @@ interface FeedResponse {
 }
 
 export default function NewsPage() {
-  const [window, setWindow] = useState<NewsWindow>("7d");
+  const [window, setWindow] = useState<NewsWindow>("24h");
   const [topic, setTopic] = useState<NewsTopic>("all");
 
   const feed = useQuery({
-    queryKey: ["news-feed", window, topic],
+    queryKey: [NEWS_FEED_QUERY_KEY, window, topic],
     staleTime: 60_000,
-    placeholderData: keepPreviousData,
     refetchInterval: 5 * 60_000,
     queryFn: async () => {
       const res = await fetch(`/api/news?window=${window}&topic=${topic}`);
@@ -46,29 +47,35 @@ export default function NewsPage() {
     },
   });
 
-  const items = feed.data?.items ?? [];
+  const items = useMemo(() => {
+    const raw = feed.data?.items ?? [];
+    if (window !== "24h") return raw;
+    return selectTodayStories(raw);
+  }, [feed.data?.items, window]);
   const accounts = items.filter((item) => item.kind === "account");
   const articles = items.filter((item) => item.kind === "article");
   const [lead, ...rest] = articles;
 
   return (
     <div>
-      <Masthead />
+      <StickyPageHeader>
+        <Masthead />
 
-      <div className="mb-4 flex flex-col gap-2.5">
-        <FilterRail
-          label="Filter by topic"
-          options={TOPICS}
-          value={topic}
-          onChange={setTopic}
-        />
-        <FilterRail
-          label="Filter by time"
-          options={WINDOWS}
-          value={window}
-          onChange={setWindow}
-        />
-      </div>
+        <div className="mb-4 flex flex-col gap-2.5">
+          <FilterRail
+            label="Filter by topic"
+            options={TOPICS}
+            value={topic}
+            onChange={setTopic}
+          />
+          <FilterRail
+            label="Filter by time"
+            options={WINDOWS}
+            value={window}
+            onChange={setWindow}
+          />
+        </div>
+      </StickyPageHeader>
 
       {feed.isLoading ? (
         <FeedSkeleton />
@@ -85,10 +92,13 @@ export default function NewsPage() {
           {accounts.length > 0 ? (
             <section className="mt-6">
               <SectionHead
-                title="Sources"
+                title="Robinhood socials"
                 note="Straight from Robinhood"
               />
-              <div className="rail -mx-[22px] flex gap-2.5 overflow-x-auto px-[22px] pb-1">
+              <div
+                className="rail -mx-[22px] flex gap-2.5 overflow-x-auto px-[22px] pb-1"
+                aria-label="Robinhood socials"
+              >
                 {accounts.map((item) => (
                   <SourceCard key={item.id} item={item} />
                 ))}
@@ -120,10 +130,6 @@ export default function NewsPage() {
       {feed.error ? (
         <p className="mt-7 border-t border-hairline pt-4 text-[13px] text-muted">
           Could not load the news feed. Retrying.
-        </p>
-      ) : !feed.isLoading && items.length === 0 ? (
-        <p className="mt-7 border-t border-hairline pt-4 text-[13px] text-muted">
-          No stories in this window.
         </p>
       ) : null}
     </div>
@@ -175,6 +181,8 @@ function SectionHead({title, note}: {title: string; note?: string}) {
 }
 
 function TopicChip({topic}: {topic: FeedItem["topic"]}) {
+  const label =
+    topic === "robinhood" ? "Robinhood" : topic === "market" ? "Markets" : "RWA";
   return (
     <span
       className={cn(
@@ -184,7 +192,7 @@ function TopicChip({topic}: {topic: FeedItem["topic"]}) {
           : "bg-[var(--overlay-wash)] text-muted",
       )}
     >
-      {topic === "robinhood" ? "Robinhood" : "RWA"}
+      {label}
     </span>
   );
 }

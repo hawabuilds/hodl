@@ -10,6 +10,7 @@ import {
   passesFilters,
   type FeedFilterState,
 } from "@/components/FeedFilters";
+import {StickyPageHeader} from "@/components/AppShell";
 import {HomeTabs, type HomeTab} from "@/components/HomeTabs";
 import {StarIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
@@ -234,47 +235,49 @@ function HomeFeed() {
 
   return (
     <div>
-      <div className="mb-4 text-[21px] font-extrabold leading-none tracking-[-0.04em]">
-        {APP_NAME}
-      </div>
+      <StickyPageHeader>
+        <div className="mb-4 text-[21px] font-extrabold leading-none tracking-[-0.04em]">
+          {APP_NAME}
+        </div>
 
-      <HomeTabs value={tab} onChange={setTab} />
+        <HomeTabs value={tab} onChange={setTab} />
 
-      <div className="py-3.5">
-        {tab === "tokens" ? (
-          <FilterRail
-            label="Sort tokens"
-            options={TOKEN_SORTS}
-            value={tokenSort}
-            onChange={setTokenSort}
-            lead={
-              <FeedFilterButton state={filters} onChange={setFilters} />
-            }
-          />
-        ) : tab === "rwas" ? (
-          <div className="flex flex-col gap-2.5">
+        <div className="py-3.5">
+          {tab === "tokens" ? (
             <FilterRail
-              label="Filter by sector"
-              options={sectorOptions}
-              value={sector}
-              onChange={setSector}
+              label="Sort tokens"
+              options={TOKEN_SORTS}
+              value={tokenSort}
+              onChange={setTokenSort}
+              lead={
+                <FeedFilterButton state={filters} onChange={setFilters} />
+              }
             />
+          ) : tab === "rwas" ? (
+            <div className="flex flex-col gap-2.5">
+              <FilterRail
+                label="Filter by sector"
+                options={sectorOptions}
+                value={sector}
+                onChange={setSector}
+              />
+              <FilterRail
+                label="Sort real-world assets"
+                options={RWA_SORTS}
+                value={rwaSort}
+                onChange={setRwaSort}
+              />
+            </div>
+          ) : (
             <FilterRail
-              label="Sort real-world assets"
-              options={RWA_SORTS}
-              value={rwaSort}
-              onChange={setRwaSort}
+              label="Filter watchlist"
+              options={WATCH_FILTERS}
+              value={watchFilter}
+              onChange={setWatchFilter}
             />
-          </div>
-        ) : (
-          <FilterRail
-            label="Filter watchlist"
-            options={WATCH_FILTERS}
-            value={watchFilter}
-            onChange={setWatchFilter}
-          />
-        )}
-      </div>
+          )}
+        </div>
+      </StickyPageHeader>
 
       {showing.length > 0 ? (
         <>

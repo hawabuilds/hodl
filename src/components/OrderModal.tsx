@@ -20,6 +20,8 @@ import {useEthPrice} from "@/hooks/useEthPrice";
 import {useHodlSwap} from "@/hooks/useHodlSwap";
 import {useLocalStore} from "@/hooks/useLocalStore";
 import {useSwap} from "@/hooks/useSwap";
+import {isUserDeclinedTrade, reportTradeNotify} from "@/lib/notifications/reportTrade";
+import {useSession} from "@/lib/session";
 import {
   HODL_ROUTER_ADDRESS,
   hodlCanExecuteQuote,
@@ -93,6 +95,7 @@ export function OrderModal({
   onClose: () => void;
 }) {
   const {ethUsd} = useEthPrice();
+  const session = useSession();
   const swap = useSwap();
   const hodl = useHodlSwap();
   const [settings] = useLocalStore<TradeSettings>(
@@ -581,8 +584,10 @@ export function OrderModal({
 
     setError(null);
     setFilled(null);
+    let swapAttempted = false;
     try {
       if (!live) {
+        swapAttempted = true;
         const hash = await swap.submit({
           quote,
           side: activeSide,
@@ -595,6 +600,20 @@ export function OrderModal({
           `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : quoteOutSymbol(quote)}`,
         );
         setAmount("");
+        void reportTradeNotify(session.getAccessToken, {
+          status: "filled",
+          side: activeSide,
+          kind: asset.kind,
+          assetId: asset.id,
+          ticker: symbol,
+          tokenAmount: buying
+            ? estimatedOut
+            : Number(formatUnits(BigInt(quote.amountIn), quote.tokenDecimals)),
+          quoteAmount: buying
+            ? Number(formatUnits(BigInt(quote.amountIn), quote.quoteDecimals))
+            : estimatedOut,
+          quoteSymbol: quoteOutSymbol(quote),
+        });
         return;
       }
 
@@ -635,6 +654,7 @@ export function OrderModal({
         return;
       }
 
+      swapAttempted = true;
       const hash = await hodl.submit({
         quote: q,
         side: activeSide,
@@ -647,11 +667,35 @@ export function OrderModal({
         `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : quoteOutSymbol(q)}`,
       );
       setAmount("");
+      void reportTradeNotify(session.getAccessToken, {
+        status: "filled",
+        side: activeSide,
+        kind: asset.kind,
+        assetId: asset.id,
+        ticker: symbol,
+        tokenAmount: buying
+          ? Number(formatUnits(ticketNetOut(q), q.outDecimals))
+          : Number(formatUnits(BigInt(q.amountIn), q.tokenDecimals)),
+        quoteAmount: buying
+          ? Number(formatUnits(BigInt(q.amountIn), q.quoteDecimals))
+          : Number(formatUnits(ticketNetOut(q), q.outDecimals)),
+        quoteSymbol: quoteOutSymbol(q),
+      });
       await allowanceQ.refetch();
     } catch (cause) {
       const failedHash = tradeHashFromError(cause);
       if (failedHash) setTxHash(failedHash);
-      setError(live ? hodl.explain(cause) : swap.explain(cause));
+      const reason = live ? hodl.explain(cause) : swap.explain(cause);
+      setError(reason);
+      if (swapAttempted && !failedHash && !isUserDeclinedTrade(reason)) {
+        void reportTradeNotify(session.getAccessToken, {
+          status: "failed",
+          kind: asset.kind,
+          assetId: asset.id,
+          ticker: symbol,
+          reason,
+        });
+      }
     }
   }
 

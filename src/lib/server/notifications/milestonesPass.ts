@@ -1,5 +1,6 @@
 import {assetPath} from "@/lib/routes";
 import {MIN_LIQUIDITY_USD} from "@/config/liquidity";
+import {holdingsMultipleCopy, watchlistMultipleCopy} from "@/lib/notifications/copy";
 import {
   consumeThrough,
   highestMilestone,
@@ -7,6 +8,7 @@ import {
   type Milestone,
 } from "@/lib/notifications/milestones";
 import {db, hasDatabase} from "@/lib/server/db";
+import {getTokenRows} from "@/lib/server/live/universeStore";
 import {enqueueNotification} from "./dispatch";
 import {holdersOf} from "./positions";
 import {prefsFor} from "./prefs";
@@ -64,21 +66,36 @@ async function notifyMultiple(input: {
   assetId: string;
   milestone: Milestone;
   enabled: readonly number[];
+  costUsd?: number;
+  valueUsd?: number;
+  addPrice?: number;
+  currentPrice?: number;
 }): Promise<void> {
   const consume = consumeThrough(input.milestone, input.enabled);
   await markFired(input.userId, input.kind, input.assetId, input.source, consume);
   const copy =
-    input.source === "holdings"
-      ? `${input.symbol} is ${input.milestone}x on your position`
-      : `${input.symbol} is ${input.milestone}x since you watchlisted it`;
+    input.source === "holdings" && input.costUsd != null && input.valueUsd != null
+      ? holdingsMultipleCopy({
+          symbol: input.symbol,
+          milestone: input.milestone,
+          costUsd: input.costUsd,
+          valueUsd: input.valueUsd,
+        })
+      : watchlistMultipleCopy({
+          symbol: input.symbol,
+          milestone: input.milestone,
+          addPrice: input.addPrice ?? 0,
+          currentPrice: input.currentPrice ?? 0,
+        });
   await enqueueNotification({
     userId: input.userId,
     channel: input.source,
     kind: "multiple",
-    title: copy,
-    body: copy,
+    title: copy.title,
+    body: copy.body,
     url: assetPath(input.kind, input.assetId),
     dedupeKey: `${input.source}:${input.kind}:${input.assetId}:${input.milestone}`,
+    digest: {type: "multiple", ticker: input.symbol, n: input.milestone},
   });
 }
 
@@ -100,6 +117,10 @@ export async function runMilestonePass(prints: PricedPrint[]): Promise<{watchlis
   const watchers = await watchersOf("token", addresses);
   const holders = await holdersOf("token", addresses);
   const holdingKeys = new Set(holders.map((row) => `${row.userId}:${row.assetId}`));
+  const tokenRows = await getTokenRows(addresses).catch(() => []);
+  const symbolByAddress = new Map(
+    tokenRows.map((row) => [row.address.toLowerCase(), (row.symbol ?? "").trim()]),
+  );
 
   let watchlist = 0;
   let holdings = 0;
@@ -121,11 +142,13 @@ export async function runMilestonePass(prints: PricedPrint[]): Promise<{watchlis
     await notifyMultiple({
       userId: holder.userId,
       source: "holdings",
-      symbol: holder.symbol ?? "Token",
+      symbol: holder.symbol || symbolByAddress.get(holder.assetId) || "TOKEN",
       kind: "token",
       assetId: holder.assetId,
       milestone: hit,
       enabled: prefs.holdingsMultiples,
+      costUsd: holder.costUsd,
+      valueUsd: holder.valueUsd,
     });
     holdings += 1;
   }
@@ -145,11 +168,13 @@ export async function runMilestonePass(prints: PricedPrint[]): Promise<{watchlis
     await notifyMultiple({
       userId: watcher.userId,
       source: "watchlist",
-      symbol: watcher.assetId.slice(0, 6).toUpperCase(),
+      symbol: symbolByAddress.get(watcher.assetId) || "TOKEN",
       kind: watcher.kind,
       assetId: watcher.assetId,
       milestone: hit,
       enabled: prefs.watchlistMultiples,
+      addPrice: watcher.addPrice,
+      currentPrice: print.last_price,
     });
     watchlist += 1;
   }

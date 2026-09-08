@@ -1,3 +1,4 @@
+import {NEWS_WINDOW_MS} from "@/lib/newsWindow";
 import type {FeedItem, NewsWindow, NewsTopic} from "@/lib/types";
 import {cached, getJson, stale} from "./cache";
 import {RWA_REGISTRY} from "./robinhood";
@@ -17,15 +18,19 @@ import {ogImages} from "./og";
  */
 
 const BASE = "https://finnhub.io/api/v1";
-const TTL_MS = 10 * 60_000;
+/** Local freshness. Ten minutes plus Redis×10 used to pin a 100-minute snapshot. */
+export const WIRE_TTL_MS = 2 * 60_000;
+export const WIRE_SHARED_TTL_SECONDS = 180;
+export const WIRE_MAX_STALE_MS = 3 * 60_000;
+export const WIRE_CACHE_KEY = "fh:wire:v10";
 
-/** Tickers to pull company news for. Cached ten minutes, so 48 stays inside the free tier. */
+/** Tickers to pull company news for. Cached two minutes, so 48 stays inside the free tier. */
 const COVERED = 48;
 
 interface FinnhubArticle {
   id?: number;
   category?: string;
-  datetime?: number;
+  datetime?: number | string;
   headline?: string;
   image?: string;
   related?: string;
@@ -34,18 +39,26 @@ interface FinnhubArticle {
   url?: string;
 }
 
-function iso(seconds: number | undefined): string | null {
-  if (!seconds || !Number.isFinite(seconds)) return null;
-  const date = new Date(seconds * 1000);
+/**
+ * Finnhub's unix stamp. Company-news sends a number; the general wire
+ * sometimes sends the same value as a string, and `Number.isFinite("…")`
+ * is false — every market story then died in `toFeedItem`.
+ */
+export function finnhubDate(value: number | string | undefined): string | null {
+  if (value == null || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const ms = n > 1e12 ? n : n * 1000;
+  const date = new Date(ms);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 function toFeedItem(
   article: FinnhubArticle,
-  topic: "rwa" | "robinhood",
+  topic: FeedItem["topic"],
   tickers: string[],
 ): FeedItem | null {
-  const publishedAt = iso(article.datetime);
+  const publishedAt = finnhubDate(article.datetime);
   if (!publishedAt || !article.headline || !article.url) return null;
 
   return {
@@ -93,19 +106,121 @@ function isAbout(
   // it to the symbol asked for, so it is true of every article and passed the
   // whole unfiltered feed through.
 
-  if (companyName) {
-    // "Advanced Micro Devices" also matches on "Advanced Micro".
-    const head = companyName.split(/[ ,]/).slice(0, 2).join(" ");
-    if (head.length >= 4 && haystack.toLowerCase().includes(head.toLowerCase())) {
-      return true;
+  return mentionsCompanyName(haystack, companyName);
+}
+
+function mentionsCompanyName(
+  haystack: string,
+  companyName: string | null,
+): boolean {
+  if (!companyName) return false;
+  // "Advanced Micro Devices" also matches on "Advanced Micro".
+  const head = companyName.split(/[ ,]/).slice(0, 2).join(" ");
+  return head.length >= 4 && haystack.toLowerCase().includes(head.toLowerCase());
+}
+
+/**
+ * Tickers that are also English words. `\bNOW\b` would otherwise tag every
+ * story that says "now".
+ */
+const COMMON_TICKERS = new Set([
+  "AI",
+  "ALL",
+  "APP",
+  "BE",
+  "CAN",
+  "FIG",
+  "FIX",
+  "FLY",
+  "FOR",
+  "GE",
+  "HAS",
+  "IT",
+  "NET",
+  "NEW",
+  "NOW",
+  "NU",
+  "ON",
+  "OR",
+  "OUT",
+  "PL",
+  "PR",
+  "RUN",
+  "SO",
+  "TE",
+]);
+
+function mentionedCovered(article: FinnhubArticle): string[] {
+  const hay = `${article.headline ?? ""} ${article.summary ?? ""}`;
+  const found: string[] = [];
+  for (const entry of RWA_REGISTRY) {
+    const tickerSafe =
+      entry.ticker.length >= 3 && !COMMON_TICKERS.has(entry.ticker);
+    const tickerHit =
+      tickerSafe &&
+      new RegExp(String.raw`\b${entry.ticker}\b`, "i").test(hay);
+    if (tickerHit || mentionsCompanyName(hay, entry.name)) {
+      found.push(entry.ticker);
+      if (found.length >= 6) break;
     }
   }
-  return false;
+  return found;
+}
+
+/**
+ * Indexes, rates, commodities — the reasons a general wire story belongs on
+ * a stocks app even when it does not name a covered ticker.
+ */
+const MARKET_TERMS = new RegExp(
+  String.raw`\b(?:s&p 500|s&p|spx|nasdaq|dow jones|dow|russell|wall street|stock market|bull market|bear market|big tech|fomc|federal reserve|fed|ecb|cpi|inflation|interest rate|rate hike|rate cut|central bank|treasuries|treasury yield|treasury bond|bond yield|bonds|yields|oil|crude|brent|wti|opec|hormuz|energy|natural gas|gasoline|gas|gold|silver|futures|etfs?|earnings|ipo|stocks?|shares|equities|equity|indexes|indices|index fund|merger|takeover|buyout|commodit(?:y|ies)|forex|bitcoin|crypto|dollar|yen|rupee|rand|trading|markets?|economy|economic|gdp|recession)\b`,
+  "i",
+);
+
+/**
+ * Outlets whose general-wire copy is market tape even when the headline
+ * skips "stocks". Still not RWA unless a covered name is in the piece.
+ */
+const FINANCIAL_OUTLETS =
+  /\b(reuters|bloomberg|cnbc|marketwatch|wsj|wall street journal|financial times|\bft\b|barron'?s|yahoo|investing\.com|thestreet|benzinga|zacks|seeking alpha|dow ?jones|associated press)\b/i;
+
+/**
+ * Geopolitics and elections that must stay off Top stories even from Reuters.
+ * Checked only after market terms, so "oil after Houthi attacks" still lands
+ * in Markets.
+ */
+const PURE_POLITICS =
+  /\b(sanctions|houthis?|yemen|midterm|convention|funeral|election|campaign|senate race|white house|geopolitics|ceasefire|gaza|ukraine|iran(?:-related)?)\b/i;
+
+/**
+ * Where a general-wire article belongs, if it belongs at all.
+ *
+ * Company-news is already ticker-scoped. Finnhub `category=general` is not:
+ * geopolitics, elections and crime sit next to the S&P tape. Only stories that
+ * name a covered stock, Robinhood, or an obvious market term survive — and
+ * market-moving geopolitics stay out of the RWA stocks filter.
+ */
+export function classifyWireCopy(
+  headline: string,
+  summary = "",
+  related = "",
+  source = "",
+): {topic: FeedItem["topic"]; tickers: string[]} | null {
+  const hay = `${headline} ${summary} ${related}`;
+  if (/\b(robinhood|hood)\b/i.test(hay)) {
+    return {topic: "robinhood", tickers: []};
+  }
+  const tickers = mentionedCovered({headline, summary});
+  if (tickers.length > 0) return {topic: "rwa", tickers};
+  if (MARKET_TERMS.test(hay)) return {topic: "market", tickers: []};
+  if (FINANCIAL_OUTLETS.test(source) && !PURE_POLITICS.test(hay)) {
+    return {topic: "market", tickers: []};
+  }
+  return null;
 }
 
 async function companyNews(
   symbol: string,
-  topic: "rwa" | "robinhood",
+  topic: FeedItem["topic"],
   tickers: string[],
   companyName: string | null = null,
 ): Promise<FeedItem[]> {
@@ -124,7 +239,8 @@ async function companyNews(
   return (Array.isArray(body) ? body : [])
     .filter((article) => isAbout(article, symbol, companyName))
     .map((article) => toFeedItem(article, topic, tickers))
-    .filter((item): item is FeedItem => item !== null);
+    .filter((item): item is FeedItem => item !== null)
+    .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
 }
 
 /**
@@ -156,7 +272,9 @@ const OG_LOOKUPS = 90;
  *
  * Company-news is Yahoo-heavy because that is who syndicates most per-symbol
  * stories. The general category is where Reuters, Bloomberg, MarketWatch and
- * CNBC actually show up, so the tab is not one outlet all the way down.
+ * CNBC actually show up, so the tab is not one outlet all the way down — but
+ * Finnhub does not ticker-filter it, so geopolitics has to be classified
+ * (or dropped) rather than stamped RWA.
  */
 async function marketNews(): Promise<FeedItem[]> {
   const params = new URLSearchParams({
@@ -170,20 +288,19 @@ async function marketNews(): Promise<FeedItem[]> {
   );
 
   return (Array.isArray(body) ? body : [])
-    .slice(0, 40)
-    .map((article) => {
-      const hay = `${article.headline ?? ""} ${article.summary ?? ""} ${article.related ?? ""}`;
-      const topic: "rwa" | "robinhood" = /\b(robinhood|hood)\b/i.test(hay)
-        ? "robinhood"
-        : "rwa";
-      const related = (article.related ?? "")
-        .split(",")
-        .map((ticker) => ticker.trim().toUpperCase())
-        .filter(Boolean)
-        .slice(0, 6);
-      return toFeedItem(article, topic, related);
+    .flatMap((article) => {
+      const classified = classifyWireCopy(
+        article.headline ?? "",
+        article.summary ?? "",
+        article.related ?? "",
+        article.source ?? "",
+      );
+      if (!classified) return [];
+      const item = toFeedItem(article, classified.topic, classified.tickers);
+      return item ? [item] : [];
     })
-    .filter((item): item is FeedItem => item !== null);
+    .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+    .slice(0, 40);
 }
 
 function stripOutletLogos(items: FeedItem[]): FeedItem[] {
@@ -222,6 +339,11 @@ async function wireNews(): Promise<FeedItem[][]> {
       logWireMiss("HOOD", error),
     ),
     marketNews().catch((error) => logWireMiss("market", error)),
+    // Index tape so Today still has Markets stories when the general wire
+    // is politics-heavy or the datetime field comes back unusable.
+    companyNews("SPY", "market", [], "S&P 500")
+      .then((items) => items.slice(0, 12))
+      .catch((error) => logWireMiss("SPY", error)),
   ]);
   const rest = await Promise.all(
     RWA_REGISTRY.slice(0, COVERED).map((entry) =>
@@ -260,11 +382,28 @@ export function hasArticles(items: FeedItem[]): boolean {
   return items.some((item) => item.kind === "article");
 }
 
+/** Age of the newest stamp, or Infinity when nothing parses. */
+export function newestAgeMs(
+  items: {publishedAt: string}[],
+  now: number = Date.now(),
+): number {
+  let newest = -Infinity;
+  for (const item of items) {
+    const at = Date.parse(item.publishedAt);
+    if (Number.isFinite(at) && at > newest) newest = at;
+  }
+  return newest === -Infinity ? Infinity : now - newest;
+}
+
 async function loadWire(): Promise<FeedItem[]> {
-  const key = "fh:wire:v6";
+  const key = WIRE_CACHE_KEY;
   let wire: FeedItem[] = [];
   try {
-    wire = await cached(key, TTL_MS, buildWire, {cacheEmpty: false});
+    wire = await cached(key, WIRE_TTL_MS, buildWire, {
+      cacheEmpty: false,
+      sharedTtlSeconds: WIRE_SHARED_TTL_SECONDS,
+      maxStaleMs: WIRE_MAX_STALE_MS,
+    });
   } catch {
     wire = stale<FeedItem[]>(key) ?? [];
   }
@@ -288,13 +427,6 @@ async function buildFeed(): Promise<FeedItem[]> {
   );
 }
 
-const WINDOW_MS: Record<NewsWindow, number> = {
-  "24h": 24 * 3_600_000,
-  "7d": 7 * 24 * 3_600_000,
-  "30d": 30 * 24 * 3_600_000,
-  all: 365 * 24 * 3_600_000,
-};
-
 export async function feed(
   window: NewsWindow,
   topic: NewsTopic,
@@ -304,7 +436,7 @@ export async function feed(
   // an X-only list after Finnhub 429'd, which hid every article for an hour.
   const all = await buildFeed();
 
-  const cutoff = now - WINDOW_MS[window];
+  const cutoff = now - NEWS_WINDOW_MS[window];
 
   return all.filter((item) => {
     if (Date.parse(item.publishedAt) < cutoff) return false;
@@ -325,9 +457,13 @@ export async function newsForTicker(ticker: string): Promise<FeedItem[]> {
   try {
     const loaded = await cached(
       key,
-      TTL_MS,
+      WIRE_TTL_MS,
       () => companyNews(ticker, "rwa", [ticker], name).then((items) => items.slice(0, 8)),
-      {cacheEmpty: false},
+      {
+        cacheEmpty: false,
+        sharedTtlSeconds: WIRE_SHARED_TTL_SECONDS,
+        maxStaleMs: WIRE_MAX_STALE_MS,
+      },
     );
     if (loaded.length > 0) return loaded;
   } catch (error) {

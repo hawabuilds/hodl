@@ -89,24 +89,41 @@ export function shortAddress(address: string, lead = 6): string {
 /**
  * Byline time on the news tab.
  *
- * Today stays relative ("3h ago"). This week used to keep printing "3d ago"
- * like the old flat list; the week view uses the weekday instead.
+ * Same calendar day uses relative time while the story is fresh, then the
+ * clock ("8:51 am") so a morning wire piece is not labelled "8h ago" under
+ * a masthead that already says today. This week uses the weekday once the
+ * day has rolled.
  */
+export function startOfLocalDay(now: number = Date.now()): number {
+  const date = new Date(now);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
 export function newsTime(
   iso: string,
   window: "24h" | "7d" | "30d" | "all",
   now: number = Date.now(),
 ): string {
-  if (window !== "7d") return relativeTime(iso, now);
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return "";
-  const hours = Math.floor((now - date.getTime()) / 3_600_000);
-  if (hours < 24) return relativeTime(iso, now);
-  return date.toLocaleDateString("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-  });
+  if (date.getTime() >= startOfLocalDay(now)) {
+    const hours = (now - date.getTime()) / 3_600_000;
+    if (hours < 3) return relativeTime(iso, now);
+    return date.toLocaleTimeString("en-GB", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  }
+  if (window === "7d") {
+    return date.toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
+  }
+  return relativeTime(iso, now);
 }
 
 /** "3m ago" — used on trades, comments and news. */

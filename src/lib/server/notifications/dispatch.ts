@@ -1,4 +1,6 @@
 import {db, hasDatabase} from "@/lib/server/db";
+import {digestFromItems, type DigestMeta} from "@/lib/notifications/copy";
+import {isFreshDedupe} from "@/lib/notifications/dedupe";
 import {inQuietHours} from "@/lib/notifications/quietHours";
 import {prefsFor, type NotificationPrefs} from "./prefs";
 import {sendWebPush, type PushPayload} from "./push";
@@ -20,6 +22,8 @@ export type NotifyRequest = {
   url: string;
   dedupeKey?: string;
   now?: Date;
+  digest?: DigestMeta;
+  handles?: string[];
 };
 
 function dayStamp(now: Date, timeZone: string): string {
@@ -50,6 +54,7 @@ async function deliveredToday(userId: string, channel: NotifyChannel, day: strin
 
 function allowed(prefs: NotificationPrefs, channel: NotifyChannel, kind: string): boolean {
   if (prefs.muted) return false;
+  if (kind === "trade" || kind === "trade_failed") return true;
   if (channel === "social") {
     if (kind === "follow") return prefs.socialFollow;
     if (kind === "reply") return prefs.socialReply;
@@ -57,6 +62,21 @@ function allowed(prefs: NotificationPrefs, channel: NotifyChannel, kind: string)
   }
   if (channel === "holdings") return prefs.holdingsOn;
   return prefs.watchlistOn;
+}
+
+function storedPayload(req: NotifyRequest): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    title: req.title,
+    body: req.body,
+    url: req.url,
+  };
+  if (req.digest) payload.d = req.digest;
+  if (req.handles?.length) payload.handles = req.handles;
+  return payload;
+}
+
+function wirePayload(title: string, body: string, url: string): PushPayload {
+  return {title, body, url};
 }
 
 export async function enqueueNotification(req: NotifyRequest): Promise<"sent" | "queued" | "skipped"> {
@@ -68,11 +88,17 @@ export async function enqueueNotification(req: NotifyRequest): Promise<"sent" | 
   if (req.dedupeKey) {
     const {data: dup} = await db()
       .from("notification_log")
-      .select("id")
+      .select("id, created_at")
       .eq("user_id", req.userId)
       .eq("dedupe_key", req.dedupeKey)
       .maybeSingle();
-    if (dup) return "skipped";
+    if (dup) {
+      if (isFreshDedupe(String(dup.created_at), now)) {
+        console.info("push", req.kind, "skipped dedupe");
+        return "skipped";
+      }
+      await db().from("notification_log").delete().eq("id", dup.id);
+    }
   }
 
   const quiet = inQuietHours(now, {
@@ -84,7 +110,7 @@ export async function enqueueNotification(req: NotifyRequest): Promise<"sent" | 
   const used = await deliveredToday(req.userId, req.channel, day);
   const overCap = used >= DAILY_CAPS[req.channel];
 
-  const payload: PushPayload = {title: req.title, body: req.body, url: req.url};
+  const payload = storedPayload(req);
   const {data, error} = await db()
     .from("notification_log")
     .insert({
@@ -103,7 +129,7 @@ export async function enqueueNotification(req: NotifyRequest): Promise<"sent" | 
   if (error || !data) return "skipped";
 
   if (quiet || overCap) return "queued";
-  const pushed = await sendWebPush(req.userId, payload);
+  const pushed = await sendWebPush(req.userId, wirePayload(req.title, req.body, req.url));
   console.info("push", req.kind, "sent", pushed.sent, "gone", pushed.gone);
   if (pushed.sent === 0) return "queued";
   await db()
@@ -117,24 +143,18 @@ export async function flushQueuedForUser(userId: string, now = new Date()): Prom
   if (!hasDatabase) return 0;
   const {data} = await db()
     .from("notification_log")
-    .select("id, user_id, channel, title, body, url, payload, created_at")
+    .select("id, user_id, channel, kind, title, body, url, payload, created_at")
     .eq("user_id", userId)
     .is("delivered_at", null)
     .order("created_at", {ascending: true})
     .limit(20);
   if (!data?.length) return 0;
   const ids = data.map((row) => row.id);
-  const pushed = await sendWebPush(userId, {
-    title: data.length === 1 ? data[0]!.title : `${data.length} updates`,
-    body:
-      data.length === 1
-        ? data[0]!.body
-        : data
-            .slice(0, 3)
-            .map((row) => row.body)
-            .join(" · "),
-    url: data[0]?.url || "/home",
-  });
+  const digest =
+    data.length === 1
+      ? {title: data[0]!.title, body: data[0]!.body, url: data[0]!.url || "/home"}
+      : {...digestFromItems(data), url: "/home"};
+  const pushed = await sendWebPush(userId, wirePayload(digest.title, digest.body, digest.url));
   if (pushed.sent === 0) return 0;
   await db()
     .from("notification_log")
@@ -143,12 +163,12 @@ export async function flushQueuedForUser(userId: string, now = new Date()): Prom
   return data.length;
 }
 
-/** Flush quiet-hours / cap overflow as one digest per channel. */
+/** Flush quiet-hours / cap overflow as one digest per user. */
 export async function flushQueuedNotifications(now = new Date()): Promise<number> {
   if (!hasDatabase) return 0;
   const {data} = await db()
     .from("notification_log")
-    .select("id, user_id, channel, title, body, url, payload, created_at")
+    .select("id, user_id, channel, kind, title, body, url, payload, created_at")
     .is("delivered_at", null)
     .order("created_at", {ascending: true})
     .limit(200);
@@ -174,39 +194,20 @@ export async function flushQueuedNotifications(now = new Date()): Promise<number
     ) {
       continue;
     }
-    const channels = new Map<string, typeof rows>();
-    for (const row of rows) {
-      const list = channels.get(row.channel) ?? [];
-      list.push(row);
-      channels.set(row.channel, list);
-    }
-    for (const [channel, items] of channels) {
-      const ids = items.map((row) => row.id);
-      if (items.length === 1) {
-        const item = items[0]!;
-        const pushed = await sendWebPush(userId, {
-          title: item.title,
-          body: item.body,
-          url: item.url || "/home",
-        });
-        if (pushed.sent === 0) continue;
-      } else {
-        const pushed = await sendWebPush(userId, {
-          title: `${items.length} ${channel} updates`,
-          body: items
-            .slice(0, 3)
-            .map((row) => row.body)
-            .join(" · "),
-          url: items[0]?.url || "/home",
-        });
-        if (pushed.sent === 0) continue;
-      }
-      await db()
-        .from("notification_log")
-        .update({delivered_at: now.toISOString()})
-        .in("id", ids);
-      flushed += items.length;
-    }
+    const digest =
+      rows.length === 1
+        ? {title: rows[0]!.title, body: rows[0]!.body, url: rows[0]!.url || "/home"}
+        : {...digestFromItems(rows), url: "/home"};
+    const pushed = await sendWebPush(userId, wirePayload(digest.title, digest.body, digest.url));
+    if (pushed.sent === 0) continue;
+    await db()
+      .from("notification_log")
+      .update({delivered_at: now.toISOString()})
+      .in(
+        "id",
+        rows.map((row) => row.id),
+      );
+    flushed += rows.length;
   }
   return flushed;
 }
