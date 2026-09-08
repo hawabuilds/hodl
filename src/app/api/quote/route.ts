@@ -1,7 +1,14 @@
+import {formatEther, formatUnits} from "viem";
 import {isAddress, normalizeAddress} from "@/lib/address";
 import {QUOTE_ETH, QUOTE_USDG, QUOTE_WETH} from "@/lib/contracts";
 import {humanToRaw, quoteTokenDecimals, usdgRawFromUsd} from "@/lib/quoteAmounts";
 import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, isEthish, isHodlQuoteToken, type SwapHop} from "@/lib/swapRoute";
+import {
+  LIVE_BUY_OVER_CAP,
+  liveBuyOverCap,
+  priceImpactBps,
+  quotedPairOut,
+} from "@/lib/tradePolicy";
 import {lpFeeLabel, venueTicketCopy} from "@/lib/venueQuote";
 import {json} from "@/lib/server/http";
 import {quotePriceUsd} from "@/lib/server/quotePrice";
@@ -170,6 +177,16 @@ export async function GET(req: Request) {
       sized = bought.decision;
       hops = bought.hops;
       pairToken = bought.pairToken;
+      const eth = await ethUsd();
+      const inUsd =
+        Number.isFinite(amountUsd) && amountUsd > 0
+          ? amountUsd
+          : eth && eth > 0
+            ? Number(formatEther(ethAmount)) * eth
+            : null;
+      if (inUsd != null && liveBuyOverCap(inUsd)) {
+        return json({error: LIVE_BUY_OVER_CAP}, 400);
+      }
     }
   }
   if (!sized) return json({venue: null});
@@ -195,6 +212,24 @@ export async function GET(req: Request) {
     quoteDecimals = await tokenDecimals(sized.quoteToken);
   }
   const outDecimals = side === "buy" ? decimals : quoteDecimals;
+
+  let usdOut: number | null = null;
+  let impactBps: number | null = null;
+  if (side === "buy" && hops.length > 1 && pairToken) {
+    const eth = await ethUsd();
+    const inUsd =
+      Number.isFinite(amountUsd) && amountUsd > 0
+        ? amountUsd
+        : eth && eth > 0
+          ? Number(formatEther(amountIn)) * eth
+          : null;
+    const pairUsd = await quotePriceUsd(pairToken);
+    if (pairUsd != null && pairUsd > 0) {
+      const pairDec = await tokenDecimals(pairToken);
+      usdOut = Number(formatUnits(quotedPairOut(hops), pairDec)) * pairUsd;
+      if (inUsd != null) impactBps = priceImpactBps(inUsd, usdOut);
+    }
+  }
 
   return json({
     venue: sized.venue,
@@ -223,5 +258,7 @@ export async function GET(req: Request) {
     v3Pool: sized.v3Pool ?? null,
     pairToken,
     hops,
+    usdOut,
+    priceImpactBps: impactBps,
   });
 }

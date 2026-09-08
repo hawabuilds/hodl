@@ -39,19 +39,24 @@ export function FilterRail<T extends string>({
 }: FilterRailProps<T>) {
   const railRef = useRef<HTMLDivElement>(null);
 
-  // A chip chosen from far down the rail has to stay visible once the list
-  // below it re-renders, otherwise the only cue for what is filtered is
-  // scrolled off the edge of the screen.
+  // Keep the selected chip on this rail. `scrollIntoView` also pans every
+  // ancestor, which shoved the app frame sideways on longer labels.
   useEffect(() => {
     const rail = railRef.current;
     if (!rail) return;
-    const active = rail.querySelector('[aria-pressed="true"]');
+    const active = rail.querySelector<HTMLElement>('[aria-pressed="true"]');
     if (!active) return;
     if (active === rail.firstElementChild) {
       rail.scrollTo({left: 0, behavior: "smooth"});
       return;
     }
-    active.scrollIntoView({behavior: "smooth", block: "nearest", inline: "center"});
+    const railMid = rail.getBoundingClientRect().left + rail.clientWidth / 2;
+    const chipMid = active.getBoundingClientRect().left + active.offsetWidth / 2;
+    const max = Math.max(0, rail.scrollWidth - rail.clientWidth);
+    rail.scrollTo({
+      left: Math.max(0, Math.min(max, rail.scrollLeft + (chipMid - railMid))),
+      behavior: "smooth",
+    });
   }, [value]);
 
   return (
@@ -60,7 +65,7 @@ export function FilterRail<T extends string>({
       role="group"
       aria-label={label}
       className={cn(
-        "rail -mx-[22px] flex items-center gap-2 overflow-x-auto overscroll-x-contain px-[22px]",
+        "rail -mx-[22px] flex min-w-0 items-center gap-2 overflow-x-auto overscroll-x-contain px-[22px]",
         className,
       )}
     >

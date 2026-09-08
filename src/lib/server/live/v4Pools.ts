@@ -181,24 +181,25 @@ export async function resolveV4PoolKeys(opts: {
   return fromLongAirlock(token, client);
 }
 
-const VANILLA_V4 = [
+/**
+ * Hookless V4 fee/tick pairs on this chain.
+ *
+ * 100/500/3000/10000 are the factory defaults. Stock/ETH books also use 5%
+ * (50000) at tick 200 and 500 — SNOW/ETH `0x9ba5b3c1…` is 50000/500.
+ */
+export const VANILLA_V4_SPECS = [
   {fee: 100, tickSpacing: 1},
   {fee: 500, tickSpacing: 10},
   {fee: 3000, tickSpacing: 60},
   {fee: 10000, tickSpacing: 200},
+  {fee: 50000, tickSpacing: 200},
+  {fee: 50000, tickSpacing: 500},
 ] as const;
 
-/**
- * Hookless V4 keys for tokenized stocks (not Pons/Long). Only keys that
- * match `wantedPoolId` are returned so we do not quote a grid of empty pools.
- */
-export function vanillaV4Candidates(
+function vanillaHitsForQuotes(
   token: `0x${string}`,
   quotes: readonly `0x${string}`[],
-  wantedPoolId?: string | null,
 ): V4PoolHit[] {
-  const wanted = wantedPoolId?.toLowerCase();
-  if (!wanted || !/^0x[0-9a-f]{64}$/.test(wanted)) return [];
   const tokenLow = token.toLowerCase() as `0x${string}`;
   const hits: V4PoolHit[] = [];
   const seen = new Set<string>();
@@ -207,10 +208,10 @@ export function vanillaV4Candidates(
   ];
   for (const quote of quoteList) {
     if (quote === tokenLow) continue;
-    for (const spec of VANILLA_V4) {
+    for (const spec of VANILLA_V4_SPECS) {
       const key = sortedKey(tokenLow, quote, spec.fee, spec.tickSpacing, ZERO);
       const poolId = v4PoolId(key);
-      if (poolId.toLowerCase() !== wanted || seen.has(poolId)) continue;
+      if (seen.has(poolId)) continue;
       seen.add(poolId);
       hits.push({
         key,
@@ -223,6 +224,31 @@ export function vanillaV4Candidates(
     }
   }
   return hits;
+}
+
+/**
+ * Every hookless V4 key for these quotes. Used when the pair is a stock and
+ * factory discovery (Pons/Long) returns nothing.
+ */
+export function vanillaV4QuoteCandidates(
+  token: `0x${string}`,
+  quotes: readonly `0x${string}`[],
+): V4PoolHit[] {
+  return vanillaHitsForQuotes(token, quotes);
+}
+
+/**
+ * Hookless V4 keys for tokenized stocks (not Pons/Long). Only keys that
+ * match `wantedPoolId` are returned so we do not quote a grid of empty pools.
+ */
+export function vanillaV4Candidates(
+  token: `0x${string}`,
+  quotes: readonly `0x${string}`[],
+  wantedPoolId?: string | null,
+): V4PoolHit[] {
+  const wanted = wantedPoolId?.toLowerCase();
+  if (!wanted || !/^0x[0-9a-f]{64}$/.test(wanted)) return [];
+  return vanillaHitsForQuotes(token, quotes).filter((hit) => hit.poolId.toLowerCase() === wanted);
 }
 
 function hitsFromPonsLaunch(

@@ -17,8 +17,22 @@ import {
   UNISWAP_SWAP_ROUTER_02,
 } from "../src/lib/contracts";
 import {encodeHodlBuy, encodeHodlSell, hodlRouterAbi} from "../src/lib/hodlRouter";
-import {CANT_EXIT_TO_ETH} from "../src/lib/swapRoute";
-import {amountOutMinimum, ticketBlockReason} from "../src/lib/tradePolicy";
+import {CANT_EXIT_TO_ETH, entryHopTooThin} from "../src/lib/swapRoute";
+import {
+  LIVE_BUY_OVER_CAP,
+  ROUTE_NO_LIQUIDITY,
+  amountOutMinimum,
+  assertSaneUrBuy,
+  intermediateOutIsDust,
+  liveBuyOverCap,
+  outputValueTooLow,
+  priceImpactBps,
+  quoteMissButtonLabel,
+  quoteMissReason,
+  refuseUnsafeBuyQuote,
+  requireBuyMinOut,
+  ticketBlockReason,
+} from "../src/lib/tradePolicy";
 import {parseSwapQuote} from "../src/lib/swapQuote";
 import {
   assertSwapNotErc20Transfer,
@@ -34,6 +48,7 @@ import {
   UR_COMMAND_UNWRAP_WETH,
   UR_COMMAND_V3_SWAP_EXACT_IN,
   UR_COMMAND_WRAP_ETH,
+  encodePermit2Pull,
 } from "../src/lib/swapTx";
 
 const urAbi = parseAbi([
@@ -62,6 +77,60 @@ function v4ActionsFromExecute(data: `0x${string}`, which = 0): string {
   return actions;
 }
 
+function v4SwapField(
+  data: `0x${string}`,
+  which: number,
+  field: "amountIn" | "amountOutMinimum",
+): bigint {
+  const decoded = decodeFunctionData({abi: urAbi, data});
+  const commands = String(decoded.args[0]).slice(2);
+  const bytes: string[] = commands.match(/.{2}/g) ?? [];
+  const needle = UR_COMMAND_V4_SWAP.toString(16).padStart(2, "0");
+  const hits = bytes
+    .map((byte, i) => (byte === needle ? i : -1))
+    .filter((i) => i >= 0);
+  const index = hits[which] ?? hits[0];
+  const input = decoded.args[1][index] as `0x${string}`;
+  const [, params] = decodeAbiParameters(
+    [{type: "bytes"}, {type: "bytes[]"}],
+    input,
+  );
+  for (const param of params) {
+    try {
+      const [swap] = decodeAbiParameters(
+        [
+          {
+            type: "tuple",
+            components: [
+              {
+                name: "poolKey",
+                type: "tuple",
+                components: [
+                  {name: "currency0", type: "address"},
+                  {name: "currency1", type: "address"},
+                  {name: "fee", type: "uint24"},
+                  {name: "tickSpacing", type: "int24"},
+                  {name: "hooks", type: "address"},
+                ],
+              },
+              {name: "zeroForOne", type: "bool"},
+              {name: "amountIn", type: "uint128"},
+              {name: "amountOutMinimum", type: "uint128"},
+              {name: "minHopPriceX36", type: "uint256"},
+              {name: "hookData", type: "bytes"},
+            ],
+          },
+        ],
+        param,
+      );
+      return BigInt(swap[field]);
+    } catch {
+      // next param
+    }
+  }
+  throw new Error("no swap param");
+}
+
 const KEY = {
   currency0: "0x0bd7d308f8e1639fab988df18a8011f41eacad73" as const,
   currency1: "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as const,
@@ -86,6 +155,54 @@ describe("swap tx encoding", () => {
       packCommands([UR_COMMAND_PERMIT2_TRANSFER_FROM, UR_COMMAND_V4_SWAP]),
       "0x0210",
     );
+  });
+
+  it("encodes PERMIT2_TRANSFER_FROM as (token, recipient, amount)", () => {
+    const token = KEY.currency1;
+    const amount = 10n ** 16n;
+    const encoded = encodePermit2Pull(token, amount, UNIVERSAL_ROUTER);
+    const [gotToken, recipient, gotAmount] = decodeAbiParameters(
+      [{type: "address"}, {type: "address"}, {type: "uint160"}],
+      encoded,
+    );
+    assert.equal(gotToken.toLowerCase(), token);
+    assert.equal(recipient.toLowerCase(), UNIVERSAL_ROUTER);
+    assert.equal(gotAmount, amount);
+    const swapped = decodeAbiParameters(
+      [{type: "address"}, {type: "uint160"}, {type: "address"}],
+      encoded,
+    );
+    assert.notEqual(swapped[1], amount);
+    assert.notEqual(swapped[2].toLowerCase(), UNIVERSAL_ROUTER);
+
+    const sell = prepareExactInSwap({
+      venue: "v4",
+      side: "sell",
+      token,
+      quoteToken: QUOTE_WETH,
+      quoteIsWeth: true,
+      poolKey: {
+        currency0: QUOTE_WETH,
+        currency1: token,
+        fee: 100,
+        tickSpacing: 1,
+        hooks: "0x0000000000000000000000000000000000000000",
+      },
+      zeroForOne: false,
+      amountIn: amount,
+      amountOutMinimum: 1n,
+      deadline: 1n,
+      recipient: "0x1111111111111111111111111111111111111111",
+      payNative: false,
+    });
+    const decoded = decodeFunctionData({abi: urAbi, data: sell.data});
+    const [pullToken, pullTo, pullAmount] = decodeAbiParameters(
+      [{type: "address"}, {type: "address"}, {type: "uint160"}],
+      decoded.args[1][0],
+    );
+    assert.equal(pullToken.toLowerCase(), token);
+    assert.equal(pullTo.toLowerCase(), UNIVERSAL_ROUTER);
+    assert.equal(pullAmount, amount);
   });
 
   it("sends value for native ETH and wraps WETH", () => {
@@ -331,7 +448,7 @@ describe("swap tx encoding", () => {
       poolKey: hop2,
       zeroForOne: true,
       amountIn: 10n ** 16n,
-      amountOutMinimum: 1n,
+      amountOutMinimum: 10n ** 16n,
       deadline: 1n,
       recipient: "0x1111111111111111111111111111111111111111",
       payNative: true,
@@ -349,7 +466,7 @@ describe("swap tx encoding", () => {
           tokenOut: token,
           poolKey: hop2,
           zeroForOne: true,
-          amountIn: "1000",
+          amountIn: (4n * 10n ** 17n).toString(),
         },
       ],
     });
@@ -532,6 +649,27 @@ describe("trade policy", () => {
         authenticated: true,
         demo: false,
         wallet: "0x1",
+        venue: null,
+        quotePending: false,
+        quoteError: "Can't buy with ETH",
+      }),
+      "Can't buy with ETH",
+    );
+    assert.equal(quoteMissButtonLabel("Can't buy with ETH"), "Can't buy with ETH");
+    assert.equal(quoteMissButtonLabel("Can't exit to ETH"), "Can't exit to ETH");
+    assert.equal(quoteMissButtonLabel(ROUTE_NO_LIQUIDITY), "No liquidity");
+    assert.equal(quoteMissButtonLabel(LIVE_BUY_OVER_CAP), "Over cap");
+    assert.equal(quoteMissButtonLabel(null), "No pool");
+    assert.equal(quoteMissReason("Can't buy with ETH"), "Can't buy with ETH");
+    assert.equal(quoteMissReason(ROUTE_NO_LIQUIDITY), ROUTE_NO_LIQUIDITY);
+    assert.equal(quoteMissReason(LIVE_BUY_OVER_CAP), LIVE_BUY_OVER_CAP);
+    assert.match(quoteMissReason(null), /no uniswap pool/i);
+    assert.equal(
+      ticketBlockReason({
+        kind: "token",
+        authenticated: true,
+        demo: false,
+        wallet: "0x1",
         venue: "v4",
         quotePending: false,
       }),
@@ -561,6 +699,26 @@ describe("swap quote parse", () => {
   it("rejects a paper-style empty venue", () => {
     const miss = parseSwapQuote({venue: null});
     assert.equal(miss.ok, false);
+  });
+
+  it("keeps hop-implied receive USD and impact on the quote", () => {
+    const parsed = parseSwapQuote({
+      venue: "v4",
+      amountIn: "40000000000000000",
+      amountOut: "1650000000000000000",
+      quoteToken: "0x0000000000000000000000000000000000000000",
+      quoteIsNative: true,
+      poolKey: KEY,
+      zeroForOne: true,
+      usdOut: 0.00065,
+      priceImpactBps: 10000,
+    });
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) {
+      assert.equal(parsed.quote.usdOut, 0.00065);
+      assert.equal(parsed.quote.priceImpactBps, 10000);
+      assert.notEqual(parsed.quote.usdOut, 100);
+    }
   });
 
   it("keeps the sized amountIn the encoder must use", () => {
@@ -649,5 +807,205 @@ describe("swap quote parse", () => {
       assert.equal(parsed.quote.venue, "v4");
       assert.ok(parsed.quote.poolKey);
     }
+  });
+});
+
+describe("ETH → stock entry hop", () => {
+  it("rejects a dust AMZN hop that would keep pennies of $100 ETH", () => {
+    const ethIn = 40207258372147648n;
+    const ethBack = 250000000000n; // ~$0.00065 at $2600/ETH
+    assert.equal(entryHopTooThin(ethIn, ethBack), true);
+    assert.equal(entryHopTooThin(ethIn, 0n), true);
+    assert.equal(entryHopTooThin(ethIn, (ethIn * 50n) / 100n), false);
+    assert.equal(entryHopTooThin(ethIn, (ethIn * 9n) / 100n), true);
+    assert.equal(entryHopTooThin(ethIn, (ethIn * 10n) / 100n), true);
+  });
+});
+
+describe("PRIMED-shaped UR buy must fail closed", () => {
+  const ethIn = 40207258372147648n;
+  const dustAmzn = 2491873877779n;
+  const primedOut = 1483670225993740225n;
+  const amzn = "0x12f190a9f9d7d37a250758b26824b97ce941bf54" as const;
+  const primed = "0x0c142d74e591b4b4ff7ddb9d600a75a3637a8179" as const;
+  const hop1 = {
+    currency0: "0x0000000000000000000000000000000000000000" as const,
+    currency1: amzn,
+    fee: 10000,
+    tickSpacing: 200,
+    hooks: "0x0000000000000000000000000000000000000000" as const,
+  };
+  const hop2 = {
+    currency0: primed,
+    currency1: amzn,
+    fee: 0,
+    tickSpacing: 200,
+    hooks: "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044" as const,
+  };
+  const primedHops = [
+    {
+      venue: "v4" as const,
+      tokenIn: "0x0000000000000000000000000000000000000000" as const,
+      tokenOut: amzn,
+      poolKey: hop1,
+      zeroForOne: true,
+    },
+    {
+      venue: "v4" as const,
+      tokenIn: amzn,
+      tokenOut: primed,
+      poolKey: hop2,
+      zeroForOne: false,
+      amountIn: dustAmzn.toString(),
+    },
+  ];
+
+  it("refuses dust pair out, missing minOut, and $100 → $0.001 value", () => {
+    assert.equal(intermediateOutIsDust(ethIn, dustAmzn), true);
+    assert.equal(intermediateOutIsDust(ethIn, 4n * 10n ** 17n), false);
+    assert.equal(outputValueTooLow(104, 0.00065), true);
+    assert.equal(outputValueTooLow(100, 95), false);
+    assert.equal(liveBuyOverCap(104), true);
+    assert.equal(liveBuyOverCap(100), false);
+    assert.equal(LIVE_BUY_OVER_CAP, "This size is above the current notional cap.");
+    assert.throws(() => requireBuyMinOut(ethIn, 0n), /no liquidity/i);
+    assert.throws(() => requireBuyMinOut(ethIn, 1n), /no liquidity/i);
+    assert.doesNotThrow(() => requireBuyMinOut(ethIn, primedOut));
+    assert.throws(
+      () =>
+        assertSaneUrBuy({
+          amountIn: ethIn,
+          amountOutMinimum: primedOut,
+          hops: primedHops,
+        }),
+      /no liquidity/i,
+    );
+    assert.equal(
+      refuseUnsafeBuyQuote({
+        quote: {
+          amountIn: ethIn.toString(),
+          amountOut: primedOut.toString(),
+          hops: primedHops,
+        },
+        slippagePct: 1,
+        amountUsd: 104,
+      }),
+      LIVE_BUY_OVER_CAP,
+    );
+    assert.equal(
+      refuseUnsafeBuyQuote({
+        quote: {
+          amountIn: ethIn.toString(),
+          amountOut: primedOut.toString(),
+          hops: primedHops,
+        },
+        slippagePct: 1,
+        amountUsd: 100,
+      }),
+      null,
+      "quote-time keeps the ticket so the user sees dust USD + impact",
+    );
+    assert.equal(priceImpactBps(100, 0.00065), 10000);
+    assert.ok(outputValueTooLow(100, 0.00065));
+  });
+
+  it("refuses to encode the PRIMED execute even when last-hop minOut looks real", () => {
+    assert.throws(
+      () =>
+        prepareExactInSwap({
+          venue: "v4",
+          side: "buy",
+          token: primed,
+          quoteToken: "0x0000000000000000000000000000000000000000",
+          quoteIsNative: true,
+          quoteIsWeth: false,
+          poolKey: hop2,
+          zeroForOne: false,
+          amountIn: ethIn,
+          amountOutMinimum: primedOut,
+          deadline: 1n,
+          recipient: "0x1111111111111111111111111111111111111111",
+          payNative: true,
+          hops: primedHops,
+        }),
+      /no liquidity/i,
+    );
+    assert.throws(
+      () =>
+        prepareExactInSwap({
+          venue: "v4",
+          side: "buy",
+          token: primed,
+          quoteToken: "0x0000000000000000000000000000000000000000",
+          quoteIsNative: true,
+          quoteIsWeth: false,
+          poolKey: hop2,
+          zeroForOne: false,
+          amountIn: ethIn,
+          amountOutMinimum: 0n,
+          deadline: 1n,
+          recipient: "0x1111111111111111111111111111111111111111",
+          payNative: true,
+          hops: [
+            primedHops[0],
+            {...primedHops[1], amountIn: (4n * 10n ** 17n).toString()},
+          ],
+        }),
+      /no liquidity/i,
+    );
+  });
+
+  it("still encodes a sane stock-paired buy with a real hop-1 minOut", () => {
+    const spy = "0x117cc2133c37b721f49de2a7a74833232b3b4c0c" as const;
+    const token = "0xf3239df6f081f7c98bc5ba27fb24eea66cd1d69c" as const;
+    const pairOut = 4n * 10n ** 17n;
+    const tx = prepareExactInSwap({
+      venue: "v4",
+      side: "buy",
+      token,
+      quoteToken: QUOTE_WETH,
+      quoteIsNative: false,
+      quoteIsWeth: true,
+      amountIn: 10n ** 16n,
+      amountOutMinimum: 10n ** 16n,
+      deadline: 1n,
+      recipient: "0x1111111111111111111111111111111111111111",
+      payNative: true,
+      hops: [
+        {
+          venue: "v4",
+          tokenIn: QUOTE_WETH,
+          tokenOut: spy,
+          poolKey: {
+            currency0: QUOTE_WETH,
+            currency1: spy,
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: "0x0000000000000000000000000000000000000000",
+          },
+          zeroForOne: true,
+        },
+        {
+          venue: "v4",
+          tokenIn: spy,
+          tokenOut: token,
+          poolKey: {
+            currency0: spy,
+            currency1: token,
+            fee: 0,
+            tickSpacing: 200,
+            hooks: "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044",
+          },
+          zeroForOne: true,
+          amountIn: pairOut.toString(),
+        },
+      ],
+    });
+    assert.equal(tx.to, UNIVERSAL_ROUTER);
+    assert.equal(tx.value, 10n ** 16n);
+    const hop0Min = v4SwapField(tx.data, 0, "amountOutMinimum");
+    assert.ok(hop0Min > 1n);
+    assert.equal(hop0Min, amountOutMinimum(pairOut, 5));
+    assert.equal(ROUTE_NO_LIQUIDITY, "This route has no liquidity.");
   });
 });

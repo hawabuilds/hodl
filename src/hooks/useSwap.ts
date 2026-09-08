@@ -12,6 +12,8 @@ import {
 import {useSession} from "@/lib/session";
 import {
   amountOutMinimum,
+  assertSaneUrBuy,
+  requireBuyMinOut,
   swapDeadlineSec,
 } from "@/lib/tradePolicy";
 import type {SwapQuote} from "@/lib/swapQuote";
@@ -233,7 +235,18 @@ export function useSwap() {
     }): Promise<`0x${string}`> => {
       if (!address) throw new Error("Sign in to trade from your wallet.");
       const amountIn = BigInt(opts.quote.amountIn);
-      const minOut = amountOutMinimum(BigInt(opts.quote.amountOut), opts.slippagePct);
+      const quotedOut = BigInt(opts.quote.amountOut);
+      const minOut =
+        opts.side === "buy"
+          ? requireBuyMinOut(amountIn, amountOutMinimum(quotedOut, opts.slippagePct))
+          : amountOutMinimum(quotedOut, opts.slippagePct);
+      if (opts.side === "buy" && (opts.quote.hops?.length ?? 0) > 1) {
+        assertSaneUrBuy({
+          amountIn,
+          amountOutMinimum: minOut,
+          hops: opts.quote.hops,
+        });
+      }
       const deadline = swapDeadlineSec();
       const tokenIn =
         opts.side === "buy" ? opts.quote.quoteToken : opts.token;

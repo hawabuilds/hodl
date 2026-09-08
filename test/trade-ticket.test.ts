@@ -1,18 +1,32 @@
 import {describe, it} from "node:test";
 import assert from "node:assert/strict";
 import {QUOTE_USDG, QUOTE_WETH} from "../src/lib/contracts";
+import {price} from "../src/lib/format";
 import {
   buyAvailableIsEth,
   buyMaxEntered,
   buyPaysNative,
+  buyReceivePreview,
   platformFeeLabel,
+  buyPreviewUsd,
+  honestReceiveUsd,
   quoteOutSymbol,
+  ticketReceivedSymbol,
   sellAmountInRaw,
   sellMaxEntered,
+  sellPreviewUsd,
   ticketNetOut,
   ticketTakesHodlFee,
   tradeTokenAddress,
 } from "../src/lib/tradeTicket";
+import {
+  IMPACT_BLOCK_BPS,
+  IMPACT_WARN_BPS,
+  PRICE_IMPACT_TOO_HIGH,
+  buyImpactLevel,
+  priceImpactBps,
+  priceImpactLabel,
+} from "../src/lib/tradePolicy";
 import type {RwaAsset, TokenAsset} from "../src/lib/types";
 
 const TOKEN: TokenAsset = {
@@ -82,30 +96,26 @@ describe("trade token address", () => {
   });
 });
 
-describe("sell 100% uses the real balance mark", () => {
-  it("fills USD with balance × price, not token units", () => {
-    assert.equal(sellMaxEntered({heldUsd: 50, currencyEth: false, ethUsd: 2500}), 50);
-    assert.equal(sellMaxEntered({heldUsd: 50, currencyEth: true, ethUsd: 2500}), 0.02);
-    assert.notEqual(sellMaxEntered({heldUsd: 50, currencyEth: false, ethUsd: 2500}), 5000);
+describe("sell field is token units", () => {
+  it("fills Max with held tokens, not dollars or ETH", () => {
+    assert.equal(sellMaxEntered({heldUnits: 5000}), 5000);
+    assert.equal(sellMaxEntered({heldUnits: 0}), 0);
+    assert.notEqual(sellMaxEntered({heldUnits: 5000}), 50);
   });
 
   it("does not invent a sell size when the wallet holds 0", () => {
     assert.equal(
       sellAmountInRaw({
-        amountUsd: 25,
-        heldUsd: 0,
+        amountTokens: 25,
         heldRaw: 0n,
-        priceUsd: 0.01,
         decimals: 18,
       }),
       undefined,
     );
     assert.equal(
       sellAmountInRaw({
-        amountUsd: 180,
-        heldUsd: 0,
+        amountTokens: 1,
         heldRaw: 0n,
-        priceUsd: 180,
         decimals: 6,
       }),
       undefined,
@@ -116,38 +126,35 @@ describe("sell 100% uses the real balance mark", () => {
     const heldRaw = 10n ** 18n;
     assert.equal(
       sellAmountInRaw({
-        amountUsd: 100,
-        heldUsd: 50,
+        amountTokens: 2,
         heldRaw,
-        priceUsd: 0.01,
         decimals: 18,
       }),
       heldRaw,
     );
   });
 
-  it("sends the on-chain balance at 100%", () => {
+  it("sends the on-chain balance at 100% and a typed token amount otherwise", () => {
     const heldRaw = 10n ** 18n;
     assert.equal(
       sellAmountInRaw({
-        amountUsd: 50,
-        heldUsd: 50,
+        amountTokens: 1,
         heldRaw,
-        priceUsd: 0.01,
         decimals: 18,
+        sellAll: true,
       }),
       heldRaw,
     );
     assert.equal(
       sellAmountInRaw({
-        amountUsd: 25,
-        heldUsd: 50,
+        amountTokens: 0.5,
         heldRaw,
-        priceUsd: 0.01,
         decimals: 18,
       }),
       heldRaw / 2n,
     );
+    assert.equal(sellPreviewUsd({amountTokens: 1000, priceUsd: 0.02}), 20);
+    assert.ok(Number.isNaN(sellPreviewUsd({amountTokens: 1000, priceUsd: null})));
   });
 
   it("does not invent ETH output when the route pays USDG", () => {
@@ -187,6 +194,67 @@ describe("sell 100% uses the real balance mark", () => {
       }),
       "ETH",
     );
+  });
+
+  it("labels a native-quote buy as the token, not ETH, and prices the out not the spend", () => {
+    const nativeBuy = {
+      quoteSymbol: "ETH",
+      quoteIsNative: true,
+      quoteIsWeth: false,
+      quoteToken: "0x0000000000000000000000000000000000000000" as const,
+    };
+    assert.equal(quoteOutSymbol(nativeBuy), "ETH");
+    assert.equal(
+      ticketReceivedSymbol({side: "buy", tokenSymbol: "PRIMED", quote: nativeBuy}),
+      "PRIMED",
+    );
+    assert.equal(
+      ticketReceivedSymbol({side: "sell", tokenSymbol: "PRIMED", quote: nativeBuy}),
+      "ETH",
+    );
+    assert.equal(buyPreviewUsd({amountTokens: 1.64, priceUsd: 0.0004}), 0.000656);
+    assert.notEqual(buyPreviewUsd({amountTokens: 1.64, priceUsd: 0.0004}), 100);
+  });
+});
+
+describe("buy receive preview is Uniswap-style, not spend-as-receive", () => {
+  it("shows dust USD and huge impact on a PRIMED-shaped $100 buy", () => {
+    const preview = buyReceivePreview({
+      amountTokens: 1.65,
+      tokenSymbol: "PRIMED",
+      markPriceUsd: 0.000394,
+      spendUsd: 100,
+      quotedUsdOut: 0.00065,
+    });
+    assert.equal(preview.youReceive, "You receive 1.6500 PRIMED");
+    assert.equal(preview.receiveUsd, 0.00065);
+    assert.notEqual(preview.receiveUsd, 100);
+    assert.ok(preview.receiveUsd < 0.01);
+    assert.equal(preview.receiveUsdLabel, `≈ ${price(0.00065)}`);
+    assert.match(preview.receiveUsdLabel, /\$0\.00065/);
+    assert.doesNotMatch(preview.receiveUsdLabel, /\$100/);
+    assert.equal(preview.impactBps, 10000);
+    assert.equal(preview.impactLabel, "Price impact 100.0%");
+    assert.equal(preview.impactLevel, "block");
+    assert.equal(PRICE_IMPACT_TOO_HIGH, "Price impact too high");
+  });
+
+  it("does not treat a high mark as the $100 spend", () => {
+    assert.equal(honestReceiveUsd(80, 0.00065), 0.00065);
+    assert.notEqual(honestReceiveUsd(80, 0.00065), 100);
+    assert.equal(honestReceiveUsd(0.0004, null), 0.0004);
+  });
+
+  it("computes impact and levels from receive USD, not spend", () => {
+    assert.equal(priceImpactBps(100, 100), 0);
+    assert.equal(priceImpactBps(100, 85), 1500);
+    assert.equal(priceImpactBps(100, 0.00065), 10000);
+    assert.notEqual(priceImpactBps(100, 0.00065), 0);
+    assert.equal(buyImpactLevel(500, 100, 95), "ok");
+    assert.equal(buyImpactLevel(IMPACT_WARN_BPS, 100, 85), "warn");
+    assert.equal(buyImpactLevel(IMPACT_BLOCK_BPS, 100, 50), "block");
+    assert.equal(buyImpactLevel(100, 100, 0.00065), "block");
+    assert.equal(priceImpactLabel(9980), "Price impact 99.8%");
   });
 });
 

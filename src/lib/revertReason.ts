@@ -140,7 +140,7 @@ export function formatRevertForUser(error: unknown): string | null {
   if (/\bLeftover\b|NothingSupplied/i.test(blob)) {
     return "The swap path could not settle. Try again.";
   }
-  if (/\bSTF\b|TransferFromFailed|FromAddressIsNotOwner/i.test(blob)) {
+  if (/\bSTF\b|TransferFromFailed|TRANSFER_FROM_FAILED|transfer from failed|FromAddressIsNotOwner/i.test(blob)) {
     return "Token transfer failed. Approve the token, then try again.";
   }
   if (/CurrencyNotSettled|DeltaNotPositive|DeltaNotNegative/i.test(blob)) {

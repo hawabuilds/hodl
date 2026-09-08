@@ -7,9 +7,16 @@ import {
   PONS_V4_FEE,
   PONS_V4_HOOK,
   PONS_V4_TICK_SPACING,
+  QUOTE_USDG,
   QUOTE_WETH,
 } from "../src/lib/contracts";
-import {ethQuoteAlternates, NATIVE_ETH, vanillaV4Candidates} from "../src/lib/server/live/v4Pools";
+import {
+  ethQuoteAlternates,
+  NATIVE_ETH,
+  vanillaV4Candidates,
+  vanillaV4QuoteCandidates,
+  VANILLA_V4_SPECS,
+} from "../src/lib/server/live/v4Pools";
 import {v4PoolId} from "../src/lib/v4Encoding";
 
 describe("V4 PoolKey constraints", () => {
@@ -51,5 +58,50 @@ describe("V4 PoolKey constraints", () => {
       vanillaV4Candidates(token, [QUOTE_WETH], `0x${"ab".repeat(32)}`).length,
       0,
     );
+  });
+
+  it("includes the 5% stock/ETH tiers used on Robinhood V4", () => {
+    assert.deepEqual(
+      VANILLA_V4_SPECS.filter((spec) => spec.fee === 50000),
+      [
+        {fee: 50000, tickSpacing: 200},
+        {fee: 50000, tickSpacing: 500},
+      ],
+    );
+  });
+
+  it("recovers SNOW/ETH 5% and SNOW/USDG 1% hookless keys", () => {
+    const snow = "0xba0cab75495255d0cb58e22b648bfed4ecd1f47e" as const;
+    const zero = "0x0000000000000000000000000000000000000000" as const;
+    const snowEthId = v4PoolId({
+      currency0: NATIVE_ETH,
+      currency1: snow,
+      fee: 50000,
+      tickSpacing: 500,
+      hooks: zero,
+    });
+    const snowEth = vanillaV4Candidates(snow, [NATIVE_ETH], snowEthId);
+    assert.equal(snowEth.length, 1);
+    assert.equal(snowEth[0]?.key.fee, 50000);
+    assert.equal(snowEth[0]?.key.tickSpacing, 500);
+    assert.equal(snowEth[0]?.quote, NATIVE_ETH);
+    assert.equal(snowEth[0]?.poolId, snowEthId);
+
+    const snowUsdgId = v4PoolId({
+      currency0: snow < QUOTE_USDG ? snow : QUOTE_USDG,
+      currency1: snow < QUOTE_USDG ? QUOTE_USDG : snow,
+      fee: 10000,
+      tickSpacing: 200,
+      hooks: zero,
+    });
+    const snowUsdg = vanillaV4Candidates(snow, [QUOTE_USDG], snowUsdgId);
+    assert.equal(snowUsdg.length, 1);
+    assert.equal(snowUsdg[0]?.key.fee, 10000);
+    assert.equal(snowUsdg[0]?.key.tickSpacing, 200);
+
+    const ethHits = vanillaV4QuoteCandidates(snow, [QUOTE_WETH]).filter(
+      (hit) => hit.key.fee === 50000,
+    );
+    assert.ok(ethHits.some((hit) => hit.poolId === snowEthId));
   });
 });

@@ -34,18 +34,29 @@ import {
   writeTradeSettings,
   type TradeSettings,
 } from "@/lib/localStore";
-import {amountOutMinimum, ticketBlockReason} from "@/lib/tradePolicy";
+import {
+  amountOutMinimum,
+  liveBuyOverCap,
+  PRICE_IMPACT_TOO_HIGH,
+  quoteMissButtonLabel,
+  quoteMissReason,
+  refuseUnsafeBuyQuote,
+  ticketBlockReason,
+} from "@/lib/tradePolicy";
 import {
   buyAvailableIsEth,
   buyMaxEntered,
   buyPaysNative,
+  buyReceivePreview,
   feeAmountSymbol,
   platformFeeLabel,
   quoteOutSymbol,
   sellAmountInRaw,
   sellMaxEntered,
+  sellPreviewUsd,
   sellRouteLabel,
   ticketNetOut,
+  ticketReceivedSymbol,
   tradeTokenAddress,
 } from "@/lib/tradeTicket";
 import {humanToRaw} from "@/lib/quoteAmounts";
@@ -203,12 +214,18 @@ export function OrderModal({
     }
   }, [eth, ethUsd, settings]);
 
+  const buying = activeSide === "buy";
   const rate = eth ? (ethUsd ?? 0) : 1;
   const entered = Number.parseFloat(amount);
-  const amountUsd = Number.isFinite(entered) ? entered * rate : Number.NaN;
-  const valid = Number.isFinite(amountUsd) && amountUsd > 0;
-
-  const buying = activeSide === "buy";
+  const amountUsd = buying
+    ? (Number.isFinite(entered) ? entered * rate : Number.NaN)
+    : sellPreviewUsd({
+        amountTokens: entered,
+        priceUsd: asset && isPriced(asset.priceUsd) ? asset.priceUsd : null,
+      });
+  const valid = buying
+    ? Number.isFinite(amountUsd) && amountUsd > 0
+    : Number.isFinite(entered) && entered > 0;
   const tokenDecimals = Number(tokenDecimalsQ.data ?? quote?.tokenDecimals ?? 18);
   const quoteDecimals = quote?.quoteDecimals ?? 18;
   const ethUnits = ethBal.data ? Number(formatUnits(ethBal.data.value, 18)) : 0;
@@ -237,25 +254,40 @@ export function OrderModal({
         currencyEth: eth,
         spendUsd,
       })
-    : sellMaxEntered({heldUsd, currencyEth: eth, ethUsd});
+    : sellMaxEntered({heldUnits});
   const heldRaw = tokenBal.data ?? null;
   const sellBalancePending = Boolean(
     !buying && wallet && token && tokenBal.isLoading && heldRaw == null,
   );
 
   const fee = useMemo(() => feeFor(amountUsd), [amountUsd]);
-  const undersized = valid ? tooSmall(amountUsd) : null;
+  const undersized = valid && Number.isFinite(amountUsd) ? tooSmall(amountUsd) : null;
+  const urBuy = Boolean(buying && quote && (quote.hops?.length ?? 0) > 1);
+  const oversized =
+    valid && Number.isFinite(amountUsd) && urBuy && liveBuyOverCap(amountUsd)
+      ? "This size is above the current notional cap."
+      : null;
   const feeRow = quote ? platformFeeLabel(quote) : null;
 
   const estimatedOut = useMemo(() => {
     if (quote) {
       return Number(formatUnits(ticketNetOut(quote), quote.outDecimals));
     }
-    if (buying && asset && valid && isPriced(asset.priceUsd)) {
-      return amountUsd / asset.priceUsd;
-    }
     return 0;
-  }, [asset, amountUsd, valid, quote, buying]);
+  }, [quote]);
+
+  const receivePreview = useMemo(() => {
+    if (!buying || !valid || !quote) return null;
+    return buyReceivePreview({
+      amountTokens: estimatedOut,
+      tokenSymbol: symbol,
+      markPriceUsd: asset && isPriced(asset.priceUsd) ? asset.priceUsd : null,
+      spendUsd: amountUsd,
+      quotedUsdOut: quote.usdOut ?? null,
+    });
+  }, [buying, valid, quote, estimatedOut, symbol, asset, amountUsd]);
+
+  const impactBlocked = receivePreview?.impactLevel === "block";
 
   const quoteAgeMs = quoteAt > 0 ? now - quoteAt : 0;
   const quoteLeftSec = quote
@@ -271,19 +303,15 @@ export function OrderModal({
       return humanToRaw(entered, 18);
     }
     if (!buying) {
-      if (sellAll && tokenBal.data != null && tokenBal.data > 0n) {
-        return tokenBal.data;
-      }
       return sellAmountInRaw({
-        amountUsd,
-        heldUsd,
+        amountTokens: entered,
         heldRaw: tokenBal.data ?? 0n,
-        priceUsd: asset && isPriced(asset.priceUsd) ? asset.priceUsd : null,
         decimals: tokenDecimals,
+        sellAll: sellAll && tokenBal.data != null && tokenBal.data > 0n,
       });
     }
     return undefined;
-  }, [valid, buying, eth, entered, asset, amountUsd, tokenDecimals, quote, sellAll, tokenBal.data, heldUsd]);
+  }, [valid, buying, eth, entered, tokenDecimals, quote, sellAll, tokenBal.data]);
 
   const sellBlocked = sellBalanceBlockReason({
     side: activeSide,
@@ -334,6 +362,20 @@ export function OrderModal({
           signal: ctrl.signal,
         });
         if (result.ok) {
+          const unsafe = buying
+            ? refuseUnsafeBuyQuote({
+                quote: result.quote,
+                slippagePct: settings.slippagePct,
+                amountUsd: usd,
+              })
+            : null;
+          if (unsafe) {
+            setQuote(null);
+            setQuoteMiss(true);
+            setQuoteError(unsafe);
+            setQuoteAt(0);
+            return;
+          }
           setQuote(result.quote);
           setQuoteMiss(false);
           setQuoteError(null);
@@ -368,7 +410,7 @@ export function OrderModal({
       window.clearTimeout(start);
       window.clearInterval(refresh);
     };
-  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, buying]);
+  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, buying, settings.slippagePct]);
 
   const blocked = ticketBlockReason({
     kind: asset?.kind ?? "token",
@@ -410,7 +452,17 @@ export function OrderModal({
   const walletKind = live ? hodl.walletKind : swap.walletKind;
 
   function setEntered(value: number) {
-    setAmount(eth ? value.toFixed(6) : value.toFixed(2));
+    if (!buying) {
+      const places = Math.min(8, Math.max(0, tokenDecimals));
+      setAmount(
+        value
+          .toFixed(places)
+          .replace(/(\.\d*?)0+$/, "$1")
+          .replace(/\.$/, ""),
+      );
+    } else {
+      setAmount(eth ? value.toFixed(6) : value.toFixed(2));
+    }
     setError(null);
     setFilled(null);
     setTxHash(null);
@@ -443,6 +495,20 @@ export function OrderModal({
       setQuoteError(result.error ?? null);
       setQuoteAt(0);
       throw new Error(result.error || "No Uniswap pool for this token.");
+    }
+    const unsafe = buying
+      ? refuseUnsafeBuyQuote({
+          quote: result.quote,
+          slippagePct: settings.slippagePct,
+          amountUsd,
+        })
+      : null;
+    if (unsafe) {
+      setQuote(null);
+      setQuoteMiss(true);
+      setQuoteError(unsafe);
+      setQuoteAt(0);
+      throw new Error(unsafe);
     }
     setQuote(result.quote);
     setQuoteMiss(false);
@@ -485,17 +551,27 @@ export function OrderModal({
     if (!token || !quote) {
       setError(
         quoteMiss
-          ? (quoteError || "No Uniswap pool for this token.")
+          ? quoteMissReason(quoteError)
           : "Enter an amount.",
       );
       return;
     }
-    if (!isPriced(asset.priceUsd)) {
+    if (buying && !isPriced(asset.priceUsd) && quote.usdOut == null) {
       setError("No price yet for this token.");
       return;
     }
     if (undersized) {
       setError(undersized);
+      return;
+    }
+    if (oversized) {
+      setError(oversized);
+      return;
+    }
+    if (impactBlocked && receivePreview) {
+      setError(
+        `${receivePreview.impactLabel}. You would receive ${receivePreview.receiveUsdLabel} of ${units(estimatedOut)} ${symbol}.`,
+      );
       return;
     }
     if (!live && quoteExpired) {
@@ -584,6 +660,8 @@ export function OrderModal({
     (blocked != null && ticket.authenticated) ||
     (!valid && ticket.authenticated) ||
     undersized !== null ||
+    oversized !== null ||
+    impactBlocked ||
     (!live && quoteExpired) ||
     (live && allowancePending) ||
     (ticket.authenticated && (sellBlocked != null || sellBalancePending)) ||
@@ -603,10 +681,8 @@ export function OrderModal({
     if (sellBalancePending) return "Checking balance…";
     if (sellBlocked) return `${buying ? "Buy" : "Sell"} ${symbol}`;
     if (quotePending) return "Finding route…";
-    if (quoteMiss && quoteError && /can't exit to eth/i.test(quoteError)) {
-      return "Can't exit to ETH";
-    }
-    if (quoteMiss || (blocked && quote == null)) return "No pool";
+    if (impactBlocked) return PRICE_IMPACT_TOO_HIGH;
+    if (quoteMiss || (blocked && quote == null)) return quoteMissButtonLabel(quoteError);
     if (!live && quoteExpired) return "Quote expired";
     if (live && ticket.authenticated && quote) {
       return ticketButtonLabel(ticketAction, {
@@ -683,40 +759,44 @@ export function OrderModal({
           </div>
 
           <label htmlFor="order-amount" className="sr-only">
-            Amount in {eth ? "ETH" : "US dollars"}
+            {buying ? `Amount in ${eth ? "ETH" : "US dollars"}` : `Amount in ${symbol}`}
           </label>
           <div className="rounded-panel border border-hairline bg-card px-4 py-3.5 transition-colors focus-within:border-[var(--border-hover-strong)]">
             <div className="mb-1 flex items-center justify-between gap-2">
               <span className="text-[10px] font-bold uppercase tracking-[0.09em] text-faint">
                 Amount
               </span>
-              <div className="flex gap-0.5 rounded-[8px] bg-wash p-[2px]">
-                {(["USD", "ETH"] as const).map((option) => {
-                  const active = option === settings.currency;
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      aria-pressed={active}
-                      disabled={option === "ETH" && ethUsd === null}
-                      onClick={() => switchCurrency(option)}
-                      className={cn(
-                        "rounded-[6px] px-2 py-1 text-[10.5px] font-extrabold transition-colors",
-                        active ? "bg-card text-ink" : "text-faint",
-                        option === "ETH" && ethUsd === null && "opacity-40",
-                      )}
-                    >
-                      {option}
-                    </button>
-                  );
-                })}
-              </div>
+              {buying ? (
+                <div className="flex gap-0.5 rounded-[8px] bg-wash p-[2px]">
+                  {(["USD", "ETH"] as const).map((option) => {
+                    const active = option === settings.currency;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        aria-pressed={active}
+                        disabled={option === "ETH" && ethUsd === null}
+                        onClick={() => switchCurrency(option)}
+                        className={cn(
+                          "rounded-[6px] px-2 py-1 text-[10.5px] font-extrabold transition-colors",
+                          active ? "bg-card text-ink" : "text-faint",
+                          option === "ETH" && ethUsd === null && "opacity-40",
+                        )}
+                      >
+                        {option}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <span className="text-[10.5px] font-extrabold text-faint">{symbol}</span>
+              )}
             </div>
 
             <div className="flex items-baseline gap-1.5">
-              {eth ? null : (
+              {buying && !eth ? (
                 <span className="text-[24px] font-extrabold text-faint">$</span>
-              )}
+              ) : null}
               <input
                 id="order-amount"
                 inputMode="decimal"
@@ -726,7 +806,7 @@ export function OrderModal({
                 onChange={(event) => {
                   const next = event.target.value.replace(/[^0-9.]/g, "");
                   const parts = next.split(".");
-                  const places = eth ? 6 : 2;
+                  const places = buying ? (eth ? 6 : 2) : Math.min(8, Math.max(0, tokenDecimals));
                   let nextAmount =
                     parts.length > 1
                       ? `${parts[0]}.${parts.slice(1).join("").slice(0, places)}`
@@ -734,9 +814,11 @@ export function OrderModal({
                   if (!buying && maxEntered > 0) {
                     const typed = Number.parseFloat(nextAmount);
                     if (Number.isFinite(typed) && typed > maxEntered) {
-                      nextAmount = eth
-                        ? maxEntered.toFixed(6)
-                        : maxEntered.toFixed(2);
+                      const capPlaces = Math.min(8, Math.max(0, tokenDecimals));
+                      nextAmount = maxEntered
+                        .toFixed(capPlaces)
+                        .replace(/(\.\d*?)0+$/, "$1")
+                        .replace(/\.$/, "");
                     }
                   }
                   setAmount(nextAmount);
@@ -747,18 +829,38 @@ export function OrderModal({
                 }}
                 className="tnum w-full min-w-0 border-none bg-transparent text-[30px] font-extrabold tracking-[-0.03em] text-ink outline-none placeholder:text-faint focus:outline-none focus-visible:outline-none"
               />
-              {eth ? (
+              {!buying ? (
+                <span className="text-[15px] font-extrabold text-faint">{symbol}</span>
+              ) : eth ? (
                 <span className="text-[15px] font-extrabold text-faint">ETH</span>
               ) : null}
             </div>
 
             <div className="tnum mt-1 text-[12px] font-semibold text-faint">
-              {valid && quote
-                ? `≈ ${units(estimatedOut)} ${buying ? symbol : quoteOutSymbol(quote)}${eth ? ` · ${money(amountUsd)}` : ""}`
-                : valid && buying && isPriced(asset.priceUsd)
-                  ? `≈ ${units(estimatedOut)} ${symbol}${eth ? ` · ${money(amountUsd)}` : ""}`
-                  : `${formatPriceUsd(asset.priceUsd)} per ${symbol}`}
+              {valid && quote && buying && receivePreview
+                ? receivePreview.youReceive
+                : valid && quote
+                  ? `≈ ${units(estimatedOut)} ${ticketReceivedSymbol({
+                      side: activeSide,
+                      tokenSymbol: symbol,
+                      quote,
+                    })}${
+                      !buying && Number.isFinite(amountUsd) ? ` · ${money(amountUsd)}` : ""
+                    }`
+                  : valid && !buying && Number.isFinite(amountUsd)
+                    ? `≈ ${money(amountUsd)}`
+                    : `${formatPriceUsd(asset.priceUsd)} per ${symbol}`}
             </div>
+            {valid && quote && buying && receivePreview ? (
+              <div
+                className={cn(
+                  "tnum mt-0.5 text-[12px] font-semibold",
+                  receivePreview.impactLevel === "ok" ? "text-faint" : "text-red",
+                )}
+              >
+                {receivePreview.receiveUsdLabel}
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-2.5 flex gap-2">
@@ -816,10 +918,22 @@ export function OrderModal({
           {valid && quote ? (
             <TicketBreakdown
               quote={quote}
+              side={activeSide}
+              tokenSymbol={symbol}
               feeUsd={feeRow?.taken ? fee.usd : 0}
               slippagePct={settings.slippagePct}
               quoteLeftSec={quoteLeftSec}
+              impactLabel={receivePreview?.impactLabel ?? "—"}
+              impactLevel={receivePreview?.impactLevel ?? "ok"}
             />
+          ) : null}
+
+          {buying && receivePreview && receivePreview.impactLevel !== "ok" ? (
+            <p role="alert" className="mt-3 text-[12.5px] font-semibold text-red">
+              {receivePreview.impactLevel === "block"
+                ? `${receivePreview.impactLabel}. You would receive ${receivePreview.receiveUsdLabel} of ${units(estimatedOut)} ${symbol}. Confirm is disabled.`
+                : `${receivePreview.impactLabel}.`}
+            </p>
           ) : null}
 
           {quotePending && valid && !quote ? (
@@ -847,9 +961,9 @@ export function OrderModal({
             </p>
           ) : null}
 
-          {error || sellBlocked || (blocked && ticket.authenticated && !quotePending) ? (
+          {error || undersized || oversized || sellBlocked || (blocked && ticket.authenticated && !quotePending) ? (
             <p role="alert" className="mt-3 text-[12.5px] font-semibold text-red">
-              {error ?? sellBlocked ?? blocked}
+              {error ?? undersized ?? oversized ?? sellBlocked ?? blocked}
               {error && txHash && !filled ? (
                 <>
                   {" · "}
@@ -912,14 +1026,22 @@ export function OrderModal({
 
 function TicketBreakdown({
   quote,
+  side,
+  tokenSymbol,
   feeUsd,
   slippagePct,
   quoteLeftSec,
+  impactLabel,
+  impactLevel,
 }: {
   quote: SwapQuote;
+  side: "buy" | "sell";
+  tokenSymbol: string;
   feeUsd: number;
   slippagePct: number;
   quoteLeftSec: number;
+  impactLabel: string;
+  impactLevel: "ok" | "warn" | "block";
 }) {
   const fee = platformFeeLabel(quote);
   const netOut = ticketNetOut(quote);
@@ -951,12 +1073,20 @@ function TicketBreakdown({
       </div>
       <div className="flex items-center justify-between gap-3">
         <span className="text-faint">Price impact</span>
-        <span className="font-bold text-muted">—</span>
+        <span
+          className={cn(
+            "tnum font-bold",
+            impactLevel === "ok" ? "text-muted" : "text-red",
+          )}
+        >
+          {impactLabel === "—" ? "—" : impactLabel.replace(/^Price impact\s+/, "")}
+        </span>
       </div>
       <div className="flex items-center justify-between gap-3">
         <span className="text-faint">Minimum received</span>
         <span className="tnum font-bold text-muted">
-          {units(Number(minHuman))} {quoteOutSymbol(quote)}
+          {units(Number(minHuman))}{" "}
+          {ticketReceivedSymbol({side, tokenSymbol, quote})}
         </span>
       </div>
       <div className="flex items-center justify-between gap-3">

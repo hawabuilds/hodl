@@ -25,6 +25,13 @@ describe("revert reason", () => {
     assert.equal(isContractRevert(new Error("fetch failed")), false);
   });
 
+  it("maps TRANSFER_FROM_FAILED string from the failed BIDEN sell", () => {
+    const data =
+      "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000145452414e534645525f46524f4d5f4641494c4544000000000000000000000000";
+    assert.equal(decodeRevertHex(data)?.text, "TRANSFER_FROM_FAILED");
+    assert.match(formatRevertForUser({data}) ?? "", /approve the token/i);
+  });
+
   it("does not hide AllowanceExpired as a generic pool reject or quote expiry", () => {
     const error = Object.assign(new Error("execution reverted"), {data: ALLOWANCE_EXPIRED});
     assert.match(explainSwapError(error), /Permit2/i);

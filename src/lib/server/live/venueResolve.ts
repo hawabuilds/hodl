@@ -2,7 +2,7 @@ import type {PublicClient} from "viem";
 import {amountOutFromQuoter, feeOnAmount, inputAfterBuyFee, pickBestVenue, PLATFORM_FEE_BPS, type VenueCandidate, type VenueDecision} from "@/lib/venueQuote";
 import {QUOTE_ETH, QUOTE_USDG, QUOTE_WETH} from "@/lib/contracts";
 import {hodlCanExecuteQuote} from "@/lib/liveTrade";
-import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, isEthish, isHodlQuoteToken, pickBestEthExit, type SwapHop} from "@/lib/swapRoute";
+import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, entryHopTooThin, isEthish, isHodlQuoteToken, pickBestEthExit, type SwapHop} from "@/lib/swapRoute";
 import {rpc} from "./chain";
 import {quoteEthToPair, quotePairToEth, quoteV3ExactIn} from "./ethExit";
 import {discoverV3Pools, pickBestPool, readV3Pool, V3_QUOTES} from "./v3Pools";
@@ -316,6 +316,15 @@ export async function resolveBuyFromEth(req: QuoteRequest): Promise<BuyFromEthRe
       client: req.client,
     });
     if (!entry || entry.amountOut <= 0n) continue;
+    // A dust ETH/stock book still quotes a positive amountOut (the last
+    // share crumbs). Round-trip those crumbs; if they are not worth the
+    // ETH, this hop donates the input to the pool manager.
+    const entryBack = await quotePairToEth({
+      pairToken: pair,
+      amountIn: entry.amountOut,
+      client: req.client,
+    });
+    if (!entryBack || entryHopTooThin(req.amountIn, entryBack.amountOut)) continue;
     const second = await gatherVenueCandidates({
       ...req,
       side: "buy",

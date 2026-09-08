@@ -38,6 +38,9 @@ export interface SwapQuote {
   /** Immediate pool pair (SPCX, USDG, IBM…). Final `quoteToken` is ETH/WETH on sells. */
   pairToken: `0x${string}` | null;
   hops: SwapHop[];
+  /** Mark / hop-implied USD of the received tokens. Never the typed spend. */
+  usdOut?: number | null;
+  priceImpactBps?: number | null;
 }
 
 export type QuoteResult =
@@ -172,8 +175,15 @@ export function parseSwapQuote(body: unknown): QuoteResult {
       v3Pool: typeof row.v3Pool === "string" ? (row.v3Pool as `0x${string}`) : null,
       pairToken,
       hops,
+      usdOut: optionalFinite(row.usdOut),
+      priceImpactBps: optionalFinite(row.priceImpactBps),
     },
   };
+}
+
+function optionalFinite(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 export async function fetchSwapQuote(opts: {

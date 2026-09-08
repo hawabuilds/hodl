@@ -17,6 +17,11 @@ import {
 } from "./contracts";
 import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, isEthish, type SwapHop} from "./swapRoute";
 import {
+  amountOutMinimum,
+  assertSaneUrBuy,
+  quotedPairOut,
+} from "./tradePolicy";
+import {
   encodeV4SwapExactInSingle,
   UR_ADDRESS_THIS,
   UR_COMMAND_V4_SWAP,
@@ -78,14 +83,21 @@ export function encodeUrExecute(
   });
 }
 
-function encodePermit2Pull(
+/**
+ * UR `PERMIT2_TRANSFER_FROM` (0x02) is `abi.decode(inputs, (address, address, uint160))`
+ * — token, recipient, amount. `(token, amount, recipient)` swaps the last two
+ * words: amount is read as the recipient and the recipient address as a huge
+ * uint160, so Permit2 tries to pull far more than the wallet holds and
+ * reverts TRANSFER_FROM_FAILED.
+ */
+export function encodePermit2Pull(
   token: `0x${string}`,
   amount: bigint,
   recipient: `0x${string}`,
 ): `0x${string}` {
   return encodeAbiParameters(
-    [{type: "address"}, {type: "uint160"}, {type: "address"}],
-    [token, amount, recipient],
+    [{type: "address"}, {type: "address"}, {type: "uint160"}],
+    [token, recipient, amount],
   );
 }
 
@@ -386,7 +398,7 @@ function encodeHopInput(opts: {
       poolKey: opts.hop.poolKey,
       zeroForOne: Boolean(opts.hop.zeroForOne),
       amountIn: opts.amountIn,
-      amountOutMinimum: opts.takeToRouter ? 0n : opts.amountOutMinimum,
+      amountOutMinimum: opts.amountOutMinimum,
       // Default false: Permit2 or WRAP_ETH already put tokens on UR.
       // Native ETH first hop passes true so SETTLE_ALL takes msg.value.
       payerIsUser: opts.fromRouterBalance
@@ -404,7 +416,7 @@ function encodeHopInput(opts: {
   return encodeV3ExactIn({
     recipient: opts.takeToRouter ? UR_ADDRESS_THIS : UR_MSG_SENDER,
     amountIn: opts.amountIn,
-    amountOutMinimum: opts.takeToRouter ? 0n : opts.amountOutMinimum,
+    amountOutMinimum: opts.amountOutMinimum,
     tokenIn: opts.hop.tokenIn,
     tokenOut: opts.hop.tokenOut,
     fee: opts.hop.v3Fee,
@@ -479,12 +491,18 @@ export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
   if (hops.length < 2) {
     throw new Error(CANT_ENTER_FROM_ETH);
   }
+  assertSaneUrBuy({
+    amountIn: swap.amountIn,
+    amountOutMinimum: swap.amountOutMinimum,
+    hops,
+  });
   const firstIn = hops[0].tokenIn.toLowerCase();
   const wrap = firstIn === QUOTE_WETH;
   const nativeFirst = firstIn === QUOTE_ETH;
   if (!wrap && !nativeFirst) {
     throw new Error(CANT_ENTER_FROM_ETH);
   }
+  const pairMinOut = amountOutMinimum(quotedPairOut(hops), 5);
 
   const commands: number[] = [];
   const inputs: `0x${string}`[] = [];
@@ -513,7 +531,7 @@ export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
       encodeHopInput({
         hop,
         amountIn,
-        amountOutMinimum: last ? swap.amountOutMinimum : 0n,
+        amountOutMinimum: last ? swap.amountOutMinimum : pairMinOut,
         takeToRouter: !last,
         payerIsUser: i === 0 && nativeFirst,
         fromRouterBalance,
@@ -542,6 +560,11 @@ export function prepareExactInSwap(swap: ExactInSwapBuild): PreparedTx {
     return buildSellToEth(swap);
   }
   if (swap.hops && swap.hops.length > 1) {
+    assertSaneUrBuy({
+      amountIn: swap.amountIn,
+      amountOutMinimum: swap.amountOutMinimum,
+      hops: swap.hops,
+    });
     return buildBuyFromEth(swap);
   }
 

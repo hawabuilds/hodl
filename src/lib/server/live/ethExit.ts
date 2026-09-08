@@ -3,7 +3,7 @@ import {QUOTE_WETH, UNISWAP_QUOTER_V2} from "@/lib/contracts";
 import {isEthish, type SwapHop} from "@/lib/swapRoute";
 import {rpc} from "./chain";
 import {discoverV3Pools, pickBestPool} from "./v3Pools";
-import {quoteV4ExactIn, resolveV4PoolKeys} from "./v4Pools";
+import {quoteV4ExactIn, resolveV4PoolKeys, vanillaV4QuoteCandidates} from "./v4Pools";
 
 const quoterV2Abi = parseAbi([
   "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)",
@@ -33,6 +33,63 @@ export interface EthExitHop {
   amountOut: bigint;
   hop: SwapHop;
   quoteToken: `0x${string}`;
+}
+
+function betterHop(best: EthExitHop | null, next: EthExitHop): EthExitHop {
+  if (!best || next.amountOut > best.amountOut) return next;
+  return best;
+}
+
+/**
+ * Hookless stock/ETH V4 books (5% SNOW/ETH, …). Factory resolve only sees
+ * Pons/Long launches, so a Robinhood stock used as a pair would otherwise
+ * look like it has no ETH hop.
+ */
+async function quoteVanillaEthV4(opts: {
+  pair: `0x${string}`;
+  amountIn: bigint;
+  client: PublicClient;
+  /** pair → ETH/WETH when true; ETH/WETH → pair when false. */
+  pairIn: boolean;
+}): Promise<EthExitHop | null> {
+  const hits = vanillaV4QuoteCandidates(opts.pair, [QUOTE_WETH]).filter((hit) =>
+    isEthish(hit.quote),
+  );
+  if (hits.length === 0) return null;
+
+  const quoted = await Promise.all(
+    hits.map(async (hit) => {
+      const tokenIn = opts.pairIn ? opts.pair : hit.quote;
+      const tokenOut = opts.pairIn ? hit.quote : opts.pair;
+      const zeroForOne = hit.key.currency0.toLowerCase() === tokenIn.toLowerCase();
+      const result = await quoteV4ExactIn({
+        key: hit.key,
+        zeroForOne,
+        amountIn: opts.amountIn,
+        client: opts.client,
+      });
+      if (!result.ok || result.amountOut <= 0n) return null;
+      const hop: EthExitHop = {
+        amountOut: result.amountOut,
+        quoteToken: hit.quote,
+        hop: {
+          venue: "v4",
+          tokenIn,
+          tokenOut,
+          poolKey: hit.key,
+          zeroForOne,
+          amountIn: opts.amountIn.toString(),
+        },
+      };
+      return hop;
+    }),
+  );
+
+  let best: EthExitHop | null = null;
+  for (const row of quoted) {
+    if (row) best = betterHop(best, row);
+  }
+  return best;
 }
 
 /**
@@ -94,6 +151,14 @@ export async function quotePairToEth(opts: {
       },
     };
   }
+
+  const vanilla = await quoteVanillaEthV4({
+    pair,
+    amountIn: opts.amountIn,
+    client,
+    pairIn: true,
+  });
+  if (vanilla) best = betterHop(best, vanilla);
 
   return best;
 }
@@ -158,6 +223,14 @@ export async function quoteEthToPair(opts: {
       },
     };
   }
+
+  const vanilla = await quoteVanillaEthV4({
+    pair,
+    amountIn: opts.amountIn,
+    client,
+    pairIn: false,
+  });
+  if (vanilla) best = betterHop(best, vanilla);
 
   return best;
 }

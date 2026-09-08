@@ -1,9 +1,16 @@
 import {QUOTE_USDG} from "./contracts";
 import {hodlCanExecuteQuote} from "./liveTrade";
+import {price, units} from "./format";
 import {humanToRaw} from "./quoteAmounts";
 import type {SwapQuote} from "./swapQuote";
 import type {Asset} from "./types";
 import {isEthish} from "./swapRoute";
+import {
+  buyImpactLevel,
+  priceImpactBps,
+  priceImpactLabel,
+  type BuyImpactLevel,
+} from "./tradePolicy";
 import {PLATFORM_FEE_BPS} from "./venueQuote";
 
 /**
@@ -33,6 +40,75 @@ export function quoteOutSymbol(
   if (quote.quoteToken.toLowerCase() === QUOTE_USDG) return "USDG";
   if (quote.quoteSymbol && quote.quoteSymbol !== "tokens") return quote.quoteSymbol;
   return quote.quoteSymbol || "tokens";
+}
+
+/** Units the ticket actually delivers. Buys pay ETH and receive the asset. */
+export function ticketReceivedSymbol(opts: {
+  side: "buy" | "sell";
+  tokenSymbol: string;
+  quote: Pick<SwapQuote, "quoteSymbol" | "quoteIsNative" | "quoteIsWeth" | "quoteToken">;
+}): string {
+  if (opts.side === "buy") return opts.tokenSymbol || "tokens";
+  return quoteOutSymbol(opts.quote);
+}
+
+/** Mark USD of quoted token out. Never the typed spend — that hid the PRIMED loss. */
+export function buyPreviewUsd(opts: {
+  amountTokens: number;
+  priceUsd: number | null | undefined;
+}): number {
+  return sellPreviewUsd(opts);
+}
+
+/**
+ * Prefer hop-implied USD when the API quoted it. If a mark also exists, use
+ * the lower figure so a stale high mark cannot relabel dust as a $100 fill.
+ */
+export function honestReceiveUsd(
+  markUsd: number,
+  quotedUsdOut?: number | null,
+): number {
+  const quoted =
+    quotedUsdOut != null && Number.isFinite(quotedUsdOut) && quotedUsdOut >= 0
+      ? quotedUsdOut
+      : null;
+  if (quoted != null && Number.isFinite(markUsd) && markUsd > 0) {
+    return Math.min(markUsd, quoted);
+  }
+  if (quoted != null) return quoted;
+  return markUsd;
+}
+
+/** Buy ticket copy: token out, receive USD, impact. Spend USD is never the receive. */
+export function buyReceivePreview(opts: {
+  amountTokens: number;
+  tokenSymbol: string;
+  markPriceUsd: number | null | undefined;
+  spendUsd: number;
+  quotedUsdOut?: number | null;
+}): {
+  youReceive: string;
+  receiveUsd: number;
+  receiveUsdLabel: string;
+  impactBps: number | null;
+  impactLabel: string;
+  impactLevel: BuyImpactLevel;
+} {
+  const markUsd = buyPreviewUsd({
+    amountTokens: opts.amountTokens,
+    priceUsd: opts.markPriceUsd,
+  });
+  const receiveUsd = honestReceiveUsd(markUsd, opts.quotedUsdOut);
+  const impactBps = priceImpactBps(opts.spendUsd, receiveUsd);
+  const symbol = opts.tokenSymbol || "tokens";
+  return {
+    youReceive: `You receive ${units(opts.amountTokens)} ${symbol}`,
+    receiveUsd,
+    receiveUsdLabel: Number.isFinite(receiveUsd) ? `≈ ${price(receiveUsd)}` : "≈ —",
+    impactBps,
+    impactLabel: priceImpactLabel(impactBps),
+    impactLevel: buyImpactLevel(impactBps, opts.spendUsd, receiveUsd),
+  };
 }
 
 export function sellRouteLabel(
@@ -115,44 +191,38 @@ export function feeAmountSymbol(
   return quote.quoteSymbol || "tokens";
 }
 
-/**
- * Sell quick-size field is USD or ETH notional, not token units.
- * Putting `heldUnits` in that field is what made 100% show fake dollars/ETH.
- */
-export function sellMaxEntered(opts: {
-  heldUsd: number;
-  currencyEth: boolean;
-  ethUsd: number | null;
-}): number {
-  if (!Number.isFinite(opts.heldUsd) || opts.heldUsd <= 0) return 0;
-  if (!opts.currencyEth) return opts.heldUsd;
-  if (opts.ethUsd == null || opts.ethUsd <= 0) return 0;
-  return opts.heldUsd / opts.ethUsd;
+/** Sell field is token units of the asset, not a dollar/ETH notional. */
+export function sellMaxEntered(opts: {heldUnits: number}): number {
+  if (!Number.isFinite(opts.heldUnits) || opts.heldUnits <= 0) return 0;
+  return opts.heldUnits;
 }
 
 /**
- * Raw tokens to sell. 100% (or a rounding overshoot) uses the on-chain
- * balance; smaller notionals take that same balance pro-rata so we never
- * convert USD → tokens through a mark and request more than the wallet has.
+ * Raw tokens to sell from a typed token amount. 100% uses the on-chain
+ * balance so float rounding cannot request more than the wallet holds.
  */
 export function sellAmountInRaw(opts: {
-  amountUsd: number;
-  heldUsd: number;
+  amountTokens: number;
   heldRaw: bigint;
-  priceUsd: number | null;
   decimals: number;
+  sellAll?: boolean;
 }): bigint | undefined {
   if (opts.heldRaw <= 0n) return undefined;
-  if (opts.heldUsd > 0 && Number.isFinite(opts.amountUsd) && opts.amountUsd > 0) {
-    if (opts.amountUsd >= opts.heldUsd * 0.999) return opts.heldRaw;
-    const bps = BigInt(Math.max(1, Math.round((opts.amountUsd / opts.heldUsd) * 10_000)));
-    const raw = (opts.heldRaw * bps) / 10_000n;
-    if (raw <= 0n) return undefined;
-    return raw > opts.heldRaw ? opts.heldRaw : raw;
+  if (opts.sellAll) return opts.heldRaw;
+  if (!Number.isFinite(opts.amountTokens) || opts.amountTokens <= 0) return undefined;
+  const raw = humanToRaw(opts.amountTokens, opts.decimals);
+  if (raw <= 0n) return undefined;
+  return raw > opts.heldRaw ? opts.heldRaw : raw;
+}
+
+/** Estimated USD for a typed token sell — preview only, never the submit size. */
+export function sellPreviewUsd(opts: {
+  amountTokens: number;
+  priceUsd: number | null | undefined;
+}): number {
+  if (!Number.isFinite(opts.amountTokens) || opts.amountTokens <= 0) return Number.NaN;
+  if (opts.priceUsd == null || !Number.isFinite(opts.priceUsd) || opts.priceUsd <= 0) {
+    return Number.NaN;
   }
-  if (opts.priceUsd != null && opts.priceUsd > 0 && Number.isFinite(opts.amountUsd) && opts.amountUsd > 0) {
-    const raw = humanToRaw(opts.amountUsd / opts.priceUsd, opts.decimals);
-    return raw > opts.heldRaw ? opts.heldRaw : raw > 0n ? raw : undefined;
-  }
-  return undefined;
+  return opts.amountTokens * opts.priceUsd;
 }

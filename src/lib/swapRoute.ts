@@ -8,6 +8,13 @@ export const CANT_EXIT_TO_ETH = "Can't exit to ETH";
 /** Ticket copy when a stock-paired buy has no ETH → pair hop. */
 export const CANT_ENTER_FROM_ETH = "Can't buy with ETH";
 
+/**
+ * ETH → stock must return pair tokens worth at least this fraction of the
+ * ETH spent. 50% still allows a thin book; it rejects a dust pool that
+ * swallows the input (PRIMED: $100 ETH → $0.0006 AMZN).
+ */
+export const MIN_ETH_ENTRY_RETAIN_BPS = 5000;
+
 export interface SwapHop {
   venue: VenueId;
   tokenIn: `0x${string}`;
@@ -39,6 +46,21 @@ export function sellExitsToEth(
   quoteToken: string,
 ): boolean {
   return isEthish(hopTokenOut(hops, quoteToken));
+}
+
+/**
+ * True when the ETH → pair hop kept so little value that the rest of the
+ * ETH was donated to the book. Round-trip the pair tokens through the
+ * best ETH exit; do not trust a positive quoter amountOut alone.
+ */
+export function entryHopTooThin(
+  ethIn: bigint,
+  ethBack: bigint,
+  minRetainBps: number = MIN_ETH_ENTRY_RETAIN_BPS,
+): boolean {
+  if (ethIn <= 0n || ethBack <= 0n) return true;
+  const bps = BigInt(Math.max(0, Math.min(10_000, Math.round(minRetainBps))));
+  return ethBack * 10_000n < ethIn * bps;
 }
 
 /**
