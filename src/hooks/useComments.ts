@@ -11,6 +11,7 @@ import type {
 } from "@/lib/types";
 import {useLocalStore} from "./useLocalStore";
 import {useUser} from "./useUser";
+import {requestPushIntent} from "@/components/PushPrompt";
 
 /**
  * Groups a flat, oldest-first list into one-level threads.
@@ -84,6 +85,7 @@ export function useComments(kind: AssetKind, assetId: string) {
     ({body, parentId}: {body: string; parentId: string | null}) => {
       const trimmed = body.trim();
       if (!trimmed || !authenticated) return;
+      requestPushIntent("comment");
       if (remote.data?.localOnly === false) {
         void session.getAccessToken().then(async (token) => {
           if (!token) return;

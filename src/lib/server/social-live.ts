@@ -211,11 +211,11 @@ export async function setFollow(
   followerId: string,
   followingHandle: string,
   following: boolean,
-): Promise<boolean> {
-  if (!hasDatabase) return false;
+): Promise<{ok: boolean; targetId?: string}> {
+  if (!hasDatabase) return {ok: false};
 
   const needle = handleIlike(followingHandle);
-  if (!needle) return false;
+  if (!needle) return {ok: false};
 
   const {data: target} = await db()
     .from("users")
@@ -223,7 +223,7 @@ export async function setFollow(
     .ilike("handle", needle)
     .maybeSingle();
 
-  if (!target?.id) return false;
+  if (!target?.id) return {ok: false};
 
   await ensureUser(followerId);
 
@@ -231,16 +231,16 @@ export async function setFollow(
     const {error} = await db()
       .from("follows")
       .upsert({follower_id: followerId, following_id: target.id});
-    if (error) return false;
+    if (error) return {ok: false};
   } else {
     const {error} = await db()
       .from("follows")
       .delete()
       .eq("follower_id", followerId)
       .eq("following_id", target.id);
-    if (error) return false;
+    if (error) return {ok: false};
   }
-  return true;
+  return {ok: true, targetId: target.id};
 }
 
 /** Handles the caller follows. */

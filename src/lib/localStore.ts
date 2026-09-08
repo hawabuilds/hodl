@@ -58,6 +58,11 @@ export function isWatched(kind: AssetKind, id: string): boolean {
   return readWatchlist().includes(watchKey(kind, id));
 }
 
+export function writeWatchlist(keys: WatchKey[]): void {
+  write("watchlist", keys);
+  announce();
+}
+
 export function toggleWatch(kind: AssetKind, id: string): boolean {
   const key = watchKey(kind, id);
   const current = readWatchlist();

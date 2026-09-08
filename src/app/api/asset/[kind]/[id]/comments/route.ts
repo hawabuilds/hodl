@@ -57,5 +57,14 @@ export async function POST(
   });
 
   if (!comment) return badRequest("That comment could not be saved.");
+  if (comment.parentId) {
+    const {notifyCommentReply} = await import("@/lib/server/notifications/social");
+    await notifyCommentReply({
+      commentId: comment.id,
+      parentId: comment.parentId,
+      assetId: asset.id,
+      authorId: caller.userId,
+    }).catch((error) => console.error("reply notify failed", error));
+  }
   return json({comment});
 }

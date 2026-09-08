@@ -5,6 +5,7 @@ import {keepPreviousData, useQuery} from "@tanstack/react-query";
 import type {ChartPoint, Holding, PortfolioRange} from "@/lib/types";
 import {readKnownHoldings, writeKnownHoldings} from "@/lib/localStore";
 import {useEthPrice} from "./useEthPrice";
+import {useSession} from "@/lib/session";
 import {useUser} from "./useUser";
 import {useWallet} from "./useWallet";
 
@@ -27,6 +28,7 @@ const PORTFOLIO_TTL_MS = 15_000;
 
 export function usePortfolio(range: PortfolioRange = "1D") {
   const user = useUser();
+  const session = useSession();
   const imported = useWallet();
   const wallets = useMemo(() => {
     const out: string[] = [];
@@ -73,7 +75,11 @@ export function usePortfolio(range: PortfolioRange = "1D") {
     queryFn: async () => {
       const params = new URLSearchParams({wallets: walletKey});
       if (known.length > 0) params.set("known", known.join(","));
-      const res = await fetch(`/api/portfolio?${params}`, {cache: "no-store"});
+      const token = await session.getAccessToken();
+      const res = await fetch(`/api/portfolio?${params}`, {
+        cache: "no-store",
+        headers: token ? {authorization: `Bearer ${token}`} : undefined,
+      });
       if (!res.ok) throw new Error("Could not read your wallet.");
       return (await res.json()) as PortfolioResponse;
     },

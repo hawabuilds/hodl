@@ -35,12 +35,24 @@ export async function GET(request: Request) {
     if (crossed && !REQUIRE_MEASURED_MCAP_ON_NEW) {
       console.warn("pricing coverage crossed 90% — New filter still off", coverage);
     }
+    let notify = {watchlist: 0, holdings: 0, flushed: 0};
+    try {
+      const {runMilestonePass} = await import("@/lib/server/notifications/milestonesPass");
+      const {flushQueuedNotifications} = await import("@/lib/server/notifications/dispatch");
+      notify = {
+        ...(await runMilestonePass(pass.rows ?? [])),
+        flushed: await flushQueuedNotifications(),
+      };
+    } catch (error) {
+      console.error("notification pass failed", error);
+    }
     return json({
       ...pass,
       coverage,
       requireMeasuredMcapOnNew: REQUIRE_MEASURED_MCAP_ON_NEW,
       gate: NEW_MCAP_COVERAGE_GATE,
       crossed,
+      notify,
       ms: Date.now() - started,
     });
   } catch (error) {

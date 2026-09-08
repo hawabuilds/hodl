@@ -9,7 +9,18 @@ const nextConfig = {
     remotePatterns: [{protocol: "https", hostname: "pbs.twimg.com"}],
   },
   experimental: {
-    serverComponentsExternalPackages: ["sharp", "pg"],
+    serverComponentsExternalPackages: ["sharp", "pg", "web-push"],
+  },
+  async headers() {
+    return [
+      {
+        source: "/sw.js",
+        headers: [
+          {key: "Service-Worker-Allowed", value: "/"},
+          {key: "Cache-Control", value: "no-cache"},
+        ],
+      },
+    ];
   },
   webpack: (config) => {
     // Privy, WalletConnect and wagmi's connector barrel reference integrations

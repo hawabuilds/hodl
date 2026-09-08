@@ -4,6 +4,7 @@ import {useEffect, useRef, useState} from "react";
 import {cn} from "@/lib/cn";
 import {SettingsIcon} from "./ui/Icons";
 import {WalletControls} from "./WalletControls";
+import {NotificationSettings} from "./NotificationSettings";
 
 /**
  * Account settings, anchored to the gear that opens them.
@@ -14,6 +15,7 @@ import {WalletControls} from "./WalletControls";
 export function SettingsMenu() {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -66,6 +68,17 @@ export function SettingsMenu() {
         )}
       >
         <WalletControls onNavigate={() => setOpen(false)} />
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setOpen(false);
+            setNotifyOpen(true);
+          }}
+          className="mt-0.5 flex w-full items-center rounded-[12px] px-2.5 py-2 text-left text-[13.5px] font-bold text-ink hover:bg-[var(--overlay-wash)]"
+        >
+          Notifications
+        </button>
         <p className="mt-1 px-2.5 pb-1.5 text-[10px] font-medium leading-snug text-faint">
           Charts by{" "}
           <a
@@ -78,6 +91,7 @@ export function SettingsMenu() {
           </a>
         </p>
       </div>
+      <NotificationSettings open={notifyOpen} onClose={() => setNotifyOpen(false)} />
     </div>
   );
 }

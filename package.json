@@ -23,7 +23,8 @@
     "hide:fake-longs": "node --import ./test/resolver.mjs --env-file=.env.local scripts/hide-fake-longs.ts",
     "backfill:prices": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-prices.ts",
     "worker": "node --import ./test/resolver.mjs src/worker/index.ts",
-    "cron:railway": "node --import ./test/resolver.mjs scripts/railway-cron.ts"
+    "cron:railway": "node --import ./test/resolver.mjs scripts/railway-cron.ts",
+    "vapid": "node --import ./test/resolver.mjs scripts/vapid-keys.ts"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -42,13 +43,15 @@
     "react-dom": "^18",
     "sharp": "^0.35.4",
     "viem": "^2.55.17",
-    "wagmi": "^3.7.6"
+    "wagmi": "^3.7.6",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/pg": "^8.23.1",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/web-push": "^3.6.4",
     "autoprefixer": "^10",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",

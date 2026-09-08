@@ -7,6 +7,7 @@ import type {Profile} from "@/lib/types";
 import {useSession} from "@/lib/session";
 import {useLocalStore} from "./useLocalStore";
 import {useUser} from "./useUser";
+import {requestPushIntent} from "@/components/PushPrompt";
 
 interface ProfileResponse {
   profile: Profile;
@@ -96,11 +97,15 @@ export function useFollows() {
   const toggle = useCallback(
     (handle: string) => {
       if (!user.authenticated || session.mode !== "privy") {
+        const key = handle.replace(/^@/, "").toLowerCase();
+        const next = !localFollowing.map((h) => h.toLowerCase()).includes(key);
         toggleFollow(handle);
+        if (next) requestPushIntent("follow");
         return;
       }
       const key = handle.replace(/^@/, "").toLowerCase();
       const next = !following.includes(key);
+      if (next) requestPushIntent("follow");
       void (async () => {
         const token = await session.getAccessToken();
         if (!token) return;

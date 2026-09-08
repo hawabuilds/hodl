@@ -11,11 +11,13 @@ export function WatchStar({
   id,
   className,
   size = 18,
+  addPrice = null,
 }: {
   kind: AssetKind;
   id: string;
   className?: string;
   size?: number;
+  addPrice?: number | null;
 }) {
   const {has, toggle} = useWatchlist();
   const watched = has(kind, id);
@@ -29,7 +31,7 @@ export function WatchStar({
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        toggle(kind, id);
+        toggle(kind, id, addPrice);
       }}
       className={cn(
         "grid h-8 w-8 shrink-0 place-items-center rounded-full transition-colors",

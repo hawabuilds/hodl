@@ -1,5 +1,7 @@
 import type {NextRequest} from "next/server";
 import {badRequest, json} from "@/lib/server/http";
+import {callerId} from "@/lib/server/auth";
+import {db, hasDatabase} from "@/lib/server/db";
 import {holdingsFor, nativeOnly} from "@/lib/server/live/holdings";
 import {maybeWritePortfolioSnapshot} from "@/lib/server/live/portfolioSnapshots";
 import {fetchEthPrice} from "@/lib/server/sources";
@@ -45,6 +47,35 @@ export async function GET(request: NextRequest) {
       ethUsd,
       degraded: book.degraded,
     });
+  }
+
+  const userId = await callerId(request);
+  if (userId && !book.degraded) {
+    const {snapshotPositions} = await import("@/lib/server/notifications/positions");
+    const {resetHoldingsMilestones} = await import("@/lib/server/notifications/milestonesPass");
+    void (async () => {
+      const previous = hasDatabase
+        ? await db()
+            .from("user_positions")
+            .select("kind, asset_id")
+            .eq("user_id", userId)
+            .gt("amount", 0)
+        : {data: [] as {kind: string; asset_id: string}[]};
+      const before = new Set(
+        (previous.data ?? []).map((row) => `${row.kind}:${String(row.asset_id).toLowerCase()}`),
+      );
+      await snapshotPositions(userId, book.holdings);
+      for (const key of before) {
+        const [kind, assetId] = key.split(":");
+        if (!kind || !assetId) continue;
+        const still = book.holdings.some(
+          (row) => row.kind === kind && row.assetId.toLowerCase() === assetId,
+        );
+        if (!still && (kind === "token" || kind === "rwa")) {
+          await resetHoldingsMilestones(userId, kind, assetId);
+        }
+      }
+    })().catch((error) => console.error("position snapshot failed", error));
   }
 
   return json(book);

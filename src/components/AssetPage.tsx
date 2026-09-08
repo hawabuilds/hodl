@@ -207,7 +207,7 @@ export function AssetPage({
             </span>
             <VerifiedTick size={14} />
             <TypeBadge type={asset.stockType} />
-            <WatchStar kind={asset.kind} id={asset.id} className="-my-1 ml-auto" />
+            <WatchStar kind={asset.kind} id={asset.id} addPrice={asset.priceUsd} className="-my-1 ml-auto" />
           </div>
           <h1 className="mt-1 text-[24px] font-extrabold leading-tight tracking-[-0.035em]">
             {asset.name}
@@ -230,7 +230,7 @@ export function AssetPage({
               <h1 className="truncate text-[20px] font-extrabold tracking-[-0.03em]">
                 {symbol}
               </h1>
-              <WatchStar kind={asset.kind} id={asset.id} />
+              <WatchStar kind={asset.kind} id={asset.id} addPrice={asset.priceUsd} />
             </div>
             <div className="-mt-0.5 truncate text-[13px] font-semibold text-faint">
               {asset.name}

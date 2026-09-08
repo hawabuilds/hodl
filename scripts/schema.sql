@@ -8,8 +8,8 @@
 -- enabled with no policies so the anon key cannot read or write them.
 --
 -- People search stays empty until a login writes a users row via
--- POST /api/me/profile. Watchlist, orders and the simulated book stay in
--- the browser — they have no tables.
+-- POST /api/me/profile. Orders stay client-side. Watchlist lives in
+-- `watchlist` (see schema-notifications.sql) after login.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 

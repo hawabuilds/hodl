@@ -6,6 +6,7 @@ import {hasCachedMe} from "@/lib/localStore";
 import {isPrivyOAuthReturn} from "@/lib/session";
 import {useUser} from "@/hooks/useUser";
 import {TabBar} from "./TabBar";
+import {PushPrompt} from "./PushPrompt";
 
 export function AppShell({children}: {children: ReactNode}) {
   const router = useRouter();
@@ -26,11 +27,12 @@ export function AppShell({children}: {children: ReactNode}) {
 
   return (
     <div className="flex h-full flex-col bg-premium">
-      <div className="scroll-quiet min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-[22px] pt-[26px] pb-[calc(96px+env(safe-area-inset-bottom))]">
+      <div className="scroll-quiet min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-[22px] pt-[calc(26px+env(safe-area-inset-top,0px))] pb-[calc(96px+env(safe-area-inset-bottom))]">
         {children}
       </div>
 
       <TabBar />
+      <PushPrompt />
     </div>
   );
 }
