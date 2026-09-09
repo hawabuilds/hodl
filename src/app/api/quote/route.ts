@@ -215,7 +215,7 @@ export async function GET(req: Request) {
 
   let usdOut: number | null = null;
   let impactBps: number | null = null;
-  if (side === "buy" && hops.length > 1 && pairToken) {
+  if (side === "buy") {
     const eth = await ethUsd();
     const inUsd =
       Number.isFinite(amountUsd) && amountUsd > 0
@@ -223,11 +223,47 @@ export async function GET(req: Request) {
         : eth && eth > 0
           ? Number(formatEther(amountIn)) * eth
           : null;
-    const pairUsd = await quotePriceUsd(pairToken);
-    if (pairUsd != null && pairUsd > 0) {
-      const pairDec = await tokenDecimals(pairToken);
-      usdOut = Number(formatUnits(quotedPairOut(hops), pairDec)) * pairUsd;
-      if (inUsd != null) impactBps = priceImpactBps(inUsd, usdOut);
+
+    if (hops.length > 1 && pairToken) {
+      const pairUsd = await quotePriceUsd(pairToken);
+      if (pairUsd != null && pairUsd > 0) {
+        const pairDec = await tokenDecimals(pairToken);
+        usdOut = Number(formatUnits(quotedPairOut(hops), pairDec)) * pairUsd;
+      }
+    } else if (hops.length <= 1) {
+      // Single-hop buys (direct WETH/USDG/V4 pool). Value the quoted tokens by
+      // round-tripping them through the same venue — not the page mark, which can
+      // lag a fresh pool and falsely show 100% impact with a non-zero token out.
+      const netOut = BigInt(sized.netOut);
+      if (netOut > 0n) {
+        const sold = await resolveVenue({
+          token,
+          side: "sell",
+          amountIn: netOut,
+          v4PoolId,
+          extraQuotes,
+          v3Pool: v3PoolHint,
+          applyBuyFee: false,
+        });
+        if (sold && sold.netOut > 0n) {
+          if (isEthish(sized.quoteToken)) {
+            if (eth != null && eth > 0) {
+              usdOut = Number(formatEther(sold.netOut)) * eth;
+            }
+          } else if (sized.quoteToken === QUOTE_USDG) {
+            usdOut = Number(formatUnits(sold.netOut, 6));
+          } else {
+            const quoteUsd = await quotePriceUsd(sized.quoteToken);
+            if (quoteUsd != null && quoteUsd > 0) {
+              const quoteDec = await tokenDecimals(sized.quoteToken);
+              usdOut = Number(formatUnits(sold.netOut, quoteDec)) * quoteUsd;
+            }
+          }
+        }
+      }
+    }
+    if (inUsd != null && usdOut != null) {
+      impactBps = priceImpactBps(inUsd, usdOut);
     }
   }
 
