@@ -6,6 +6,7 @@
  */
 import {createPublicClient, http} from "viem";
 import {robinhoodMainnet} from "../src/config/chain";
+import {createReadTransport} from "../src/lib/server/live/rpcProviders";
 import {
   LONG_AIRLOCK_FACTORY,
   LONG_DOPPLER_HOOK,
@@ -45,7 +46,7 @@ const named: Record<string, `0x${string}`> = {
 async function main() {
   const client = createPublicClient({
     chain: robinhoodMainnet,
-    transport: http(process.env.ALCHEMY_RPC_URL),
+    transport: createReadTransport(),
   });
   const chainId = await client.getChainId();
   if (chainId !== 4663) {
@@ -60,6 +61,16 @@ async function main() {
     throw new Error(`no bytecode: ${missing.join(", ")}`);
   }
   console.log(`verify:chain ok — ${Object.keys(named).length} contracts on 4663`);
+
+  const chainstack = process.env.CHAINSTACK_RPC_URL?.trim();
+  if (chainstack?.startsWith("https://")) {
+    const cs = createPublicClient({
+      chain: robinhoodMainnet,
+      transport: http(chainstack, {timeout: 12_000, retryCount: 0}),
+    });
+    const csId = await cs.getChainId();
+    console.log(`verify:chain CHAINSTACK_RPC_URL ok — chain ${csId}`);
+  }
 }
 
 main().catch((error) => {

@@ -50,8 +50,9 @@ import {asAddress as parseAddress, normalizeAddress} from "@/lib/address";
 import {longWriteEligible} from "@/lib/longAuthenticity";
 import {resolveLongAuthenticity} from "./longAuthenticity";
 import {hasDatabase} from "../db";
+import {isRpcRateLimitError, PUBLIC_MAINNET_RPC} from "./rpcProviders";
 
-const PUBLIC_RPC = "https://rpc.mainnet.chain.robinhood.com";
+const PUBLIC_RPC = PUBLIC_MAINNET_RPC;
 const REORG = CATCHUP_REORG;
 const BUDGET_MS = 45_000;
 
@@ -61,6 +62,7 @@ const logsClient = createPublicClient({
 });
 
 let alchemyLogs: PublicClient | null | undefined;
+let chainstackLogs: PublicClient | null | undefined;
 
 function alchemyLogsClient(): PublicClient | null {
   if (alchemyLogs !== undefined) return alchemyLogs;
@@ -72,6 +74,35 @@ function alchemyLogsClient(): PublicClient | null {
       })
     : null;
   return alchemyLogs;
+}
+
+function chainstackLogsClient(): PublicClient | null {
+  if (chainstackLogs !== undefined) return chainstackLogs;
+  const url = process.env.CHAINSTACK_RPC_URL?.trim();
+  chainstackLogs = url?.startsWith("https://")
+    ? createPublicClient({
+        chain: robinhoodMainnet,
+        transport: http(url, {timeout: 30_000, retryCount: 0}),
+      })
+    : null;
+  return chainstackLogs;
+}
+
+type LogsProvider = "alchemy" | "chainstack" | "public";
+
+function logsProviders(): {client: PublicClient; provider: LogsProvider}[] {
+  const out: {client: PublicClient; provider: LogsProvider}[] = [
+    {client: logsClient, provider: "public"},
+  ];
+  const chainstack = chainstackLogsClient();
+  if (chainstack) out.unshift({client: chainstack, provider: "chainstack"});
+  const alchemy = alchemyLogsClient();
+  if (alchemy) out.unshift({client: alchemy, provider: "alchemy"});
+  return out;
+}
+
+function logsProviderKind(provider: LogsProvider): boolean {
+  return provider === "alchemy";
 }
 
 const logLimiter = new LogScanLimiter();
@@ -238,17 +269,27 @@ async function logsUnlocked(
   const out: LaunchLog[] = [];
   if (to < from) return emptyFetch(true);
   const span = to - from + 1n;
+  const providers = logsProviders();
   const alchemy = alchemyLogsClient();
   const preferAlchemy = shouldUseAlchemyForLogs({
     hasAlchemy: Boolean(alchemy),
     caughtUp: Boolean(opts.caughtUp),
     span,
   });
-  let client = preferAlchemy && alchemy ? alchemy : logsClient;
-  let usingAlchemy = Boolean(preferAlchemy && alchemy);
+  let providerIndex = 0;
+  if (!preferAlchemy) {
+    while (
+      providerIndex < providers.length - 1 &&
+      providers[providerIndex].provider === "alchemy"
+    ) {
+      providerIndex += 1;
+    }
+  }
+  let client = providers[providerIndex].client;
+  let usingProvider = providers[providerIndex].provider;
   let startWindow = getLogsStartWindow({
     caughtUp: Boolean(opts.caughtUp),
-    alchemy: usingAlchemy,
+    alchemy: logsProviderKind(usingProvider),
     live: Boolean(opts.live),
     span,
   });
@@ -306,29 +347,37 @@ async function logsUnlocked(
         await sleep(20_000);
         continue;
       }
-      if (/429|too many requests|rate limit/i.test(text)) {
-        if (!usingAlchemy && alchemy) {
-          client = alchemy;
-          usingAlchemy = true;
+      if (
+        isRpcRateLimitError(text) ||
+        /Archive, Debug and Trace|not available on your current plan|ResourceUnavailableRpcError|-32002/i.test(
+          text,
+        )
+      ) {
+        if (providerIndex + 1 < providers.length) {
+          providerIndex += 1;
+          client = providers[providerIndex].client;
+          usingProvider = providers[providerIndex].provider;
           startWindow = getLogsStartWindow({
             caughtUp: Boolean(opts.caughtUp),
-            alchemy: true,
+            alchemy: logsProviderKind(usingProvider),
             live: Boolean(opts.live),
             span,
           });
           window = startWindow;
           console.error(
-            "public RPC 429; retrying getLogs on Alchemy",
+            `getLogs ${text.slice(0, 80)}; retrying on ${usingProvider}`,
             cursor.toString(),
             end.toString(),
           );
           continue;
         }
-        window = shrinkLogWindow(window);
-        const wait = logLimiter.note429(cursor, end);
-        console.error("getLogs 429; backing off", wait, cursor.toString(), end.toString());
-        await sleep(wait);
-        continue;
+        if (isRpcRateLimitError(text)) {
+          window = shrinkLogWindow(window);
+          const wait = logLimiter.note429(cursor, end);
+          console.error("getLogs 429; backing off", wait, cursor.toString(), end.toString());
+          await sleep(wait);
+          continue;
+        }
       }
       const capped =
         /exceeds|limit|range|invalid parameters|query returned more/i.test(
@@ -653,7 +702,7 @@ function capByBlock<T>(
   return {items: slice, endAt: blockOf(slice[slice.length - 1])};
 }
 
-async function indexFactory(
+export async function indexFactory(
   factory: FactorySpec,
   maxBlocks: bigint,
   deadline: number,

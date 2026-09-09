@@ -2,10 +2,11 @@
  * getLogs window + public-RPC 429 policy for the live-tip indexer.
  *
  * Public Robinhood RPC is the live tip only — Alchemy's head has sat stale.
- * When ALCHEMY_RPC_URL is set, every getLogs (catch-up and subscribe) uses
- * that HTTP client. Catch-up used to keep 128-block public windows and 429
- * until cursors were marked done without the launches.
- * If Alchemy is unset, keep the small public windows.
+ * When ALCHEMY_RPC_URL is set, every getLogs (catch-up and subscribe) prefers
+ * that HTTP client; on Alchemy 429/quota it falls back to CHAINSTACK_RPC_URL
+ * when set, then public Robinhood RPC. Catch-up used to keep 128-block public
+ * windows and 429 until cursors were marked done without the launches.
+ * If neither provider is set, keep the small public windows.
  */
 
 /** Alchemy plan cap. Live tip scans must stay at or under this on that client. */

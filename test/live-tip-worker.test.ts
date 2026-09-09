@@ -143,7 +143,8 @@ describe("live tip shared pass", () => {
     assert.match(indexer, /cursorAfterLogScan/);
     assert.match(indexer, /resumeIfPersisted/);
     assert.match(indexer, /logScanBackingOff/);
-    assert.match(indexer, /retrying getLogs on Alchemy/);
+    assert.match(indexer, /chainstackLogsClient/);
+    assert.match(indexer, /retrying on \$\{usingProvider\}/);
     assert.doesNotMatch(indexer, /public RPC rate-limited repeatedly/);
     const headAt = indexer.indexOf("async function head(");
     const headBody = indexer.slice(headAt, indexer.indexOf("interface LaunchLog"));

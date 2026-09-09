@@ -58,22 +58,15 @@ import {
   shouldLogLockWait,
   type LockHolderRow,
 } from "@/lib/server/live/workerLock";
+import {headWsUrls, PUBLIC_MAINNET_RPC} from "@/lib/server/live/rpcProviders";
 
-const PUBLIC_RPC = "https://rpc.mainnet.chain.robinhood.com";
+const PUBLIC_RPC = PUBLIC_MAINNET_RPC;
 /** Extra pause after a pass that wrote rows so PostgREST is not hammered. */
 const WRITE_PASS_PAUSE_MS = 400;
 
 let exiting = false;
 let workerPool: pg.Pool | null = null;
 let lockClient: pg.PoolClient | null = null;
-
-function alchemyWsUrl(): string | null {
-  const wss = process.env.ALCHEMY_WSS_URL?.trim();
-  if (wss?.startsWith("wss://")) return wss;
-  const http = process.env.ALCHEMY_RPC_URL?.trim();
-  if (http?.startsWith("https://")) return `wss://${http.slice("https://".length)}`;
-  return null;
-}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
@@ -102,25 +95,27 @@ type HeadMode = "subscribe" | "poll";
 class HeadFeed {
   mode: HeadMode = "poll";
   private ws: WebSocket | null = null;
+  private wsUrl: string | null = null;
   private waiters: Array<() => void> = [];
   private reconnectAttempt = 0;
   private closed = false;
   private reconnecting: Promise<void> | null = null;
 
   async start(): Promise<HeadMode> {
-    const url = alchemyWsUrl();
-    if (!url) {
-      console.warn("live-tip heads: no ALCHEMY_WSS_URL; polling public RPC");
-      this.mode = "poll";
-      return this.mode;
+    const urls = headWsUrls();
+    for (const url of urls) {
+      const ok = await this.connect(url);
+      if (ok) {
+        this.wsUrl = url;
+        this.mode = "subscribe";
+        console.info("live-tip heads: eth_subscribe(newHeads) on provider WSS");
+        return this.mode;
+      }
     }
-    const ok = await this.connect(url);
-    this.mode = ok ? "subscribe" : "poll";
-    if (!ok) {
-      console.warn("live-tip heads: eth_subscribe failed; polling at block time");
-    } else {
-      console.info("live-tip heads: eth_subscribe(newHeads) on Alchemy WSS");
-    }
+    console.warn(
+      "live-tip heads: no ALCHEMY_WSS_URL or CHAINSTACK_WSS_URL; polling public RPC",
+    );
+    this.mode = "poll";
     return this.mode;
   }
 
@@ -241,15 +236,19 @@ class HeadFeed {
       this.reconnectAttempt += 1;
       await sleep(wait);
       if (this.closed) return;
-      const ok = await this.connect(url);
-      if (ok) {
-        this.mode = "subscribe";
-        this.reconnectAttempt = 0;
-        console.info("live-tip heads: resubscribed to newHeads");
-        this.wake();
-      } else {
-        this.mode = "poll";
+      const candidates = [url, ...headWsUrls().filter((candidate) => candidate !== url)];
+      for (const candidate of candidates) {
+        const ok = await this.connect(candidate);
+        if (ok) {
+          this.wsUrl = candidate;
+          this.mode = "subscribe";
+          this.reconnectAttempt = 0;
+          console.info("live-tip heads: resubscribed to newHeads");
+          this.wake();
+          return;
+        }
       }
+      this.mode = "poll";
     })().finally(() => {
       this.reconnecting = null;
     });
@@ -690,8 +689,10 @@ async function main(): Promise<void> {
   if (!hasDatabase) {
     throw new Error("Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
   }
-  if (!process.env.ALCHEMY_RPC_URL?.trim()) {
-    console.warn("live-tip: ALCHEMY_RPC_URL unset; getLogs and token meta will use the public RPC");
+  if (!process.env.ALCHEMY_RPC_URL?.trim() && !process.env.CHAINSTACK_RPC_URL?.trim()) {
+    console.warn(
+      "live-tip: no ALCHEMY_RPC_URL or CHAINSTACK_RPC_URL; getLogs and token meta will use the public RPC",
+    );
   }
 
   const pool = await openWorkerPool();

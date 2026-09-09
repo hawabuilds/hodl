@@ -1,6 +1,7 @@
-import {createPublicClient, http, parseAbi, type PublicClient} from "viem";
+import {createPublicClient, parseAbi, type PublicClient} from "viem";
 import {robinhoodMainnet} from "@/config/chain";
 import {cached} from "./cache";
+import {createReadTransport} from "./rpcProviders";
 import {recordPayload, recordRetry} from "./rpcMeter";
 
 /**
@@ -19,23 +20,13 @@ export function rpc(): PublicClient {
   if (!client) {
     client = createPublicClient({
       chain: robinhoodMainnet,
-      transport: http(process.env.ALCHEMY_RPC_URL, {
-        batch: true,
-        // Retries are handled one level up in `attempt`, which has the backoff
-        // and knows the difference between a revert and an unreachable batch.
-        // Leaving this at two nested them: three tries here inside two there
-        // meant a failing batch cost six requests, and since the provider
-        // limits on compute rather than requests, the response to being
-        // throttled was to spend five more attempts making it worse.
-        timeout: 12_000,
-        retryCount: 0,
-        onFetchRequest: async (request) => {
-          try {
-            recordPayload(await request.clone().json());
-          } catch {
-            // Counting must never be able to break a request.
-          }
-        },
+      // ALCHEMY_RPC_URL → CHAINSTACK_RPC_URL → public Robinhood RPC.
+      transport: createReadTransport(async (request) => {
+        try {
+          recordPayload(await request.clone().json());
+        } catch {
+          // Counting must never be able to break a request.
+        }
       }),
       batch: {multicall: {wait: 20}},
     }) as PublicClient;

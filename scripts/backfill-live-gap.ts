@@ -18,7 +18,7 @@ dns.setDefaultResultOrder("ipv4first");
 
 const PUBLIC_RPC = "https://rpc.mainnet.chain.robinhood.com";
 const WINDOW = 4_000n;
-const WRITE_CAP = 32;
+const WRITE_CAP = 128;
 const PASS_BUDGET_MS = 90_000;
 const REORG = 30n;
 const LIVE_IDS = ALL_FACTORIES

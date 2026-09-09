@@ -13,9 +13,8 @@ const DEFAULT_MAINNET_RPC = "https://rpc.mainnet.chain.robinhood.com";
  * feeds and the Stock Tokens themselves only exist here, so the resolution job
  * reads prices from mainnet while claims keep settling in testnet mocks.
  *
- * ALCHEMY_RPC_URL is preferred: Alchemy is the RPC provider Robinhood Chain
- * recommends, and the public endpoint is not rate-limit friendly for a job that
- * reads a couple of hundred balances at once.
+ * ALCHEMY_RPC_URL is primary; CHAINSTACK_RPC_URL is secondary when set.
+ * Public Robinhood RPC is the last-resort fallback.
  */
 export const robinhoodMainnet = defineChain({
   id: RH_MAINNET_ID,
@@ -23,7 +22,11 @@ export const robinhoodMainnet = defineChain({
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: {
     default: {
-      http: [process.env.ALCHEMY_RPC_URL || DEFAULT_MAINNET_RPC],
+      http: [
+        process.env.ALCHEMY_RPC_URL,
+        process.env.CHAINSTACK_RPC_URL,
+        DEFAULT_MAINNET_RPC,
+      ].filter((url): url is string => Boolean(url?.trim())),
     },
   },
   blockExplorers: {

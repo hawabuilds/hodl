@@ -7,6 +7,7 @@ import type {Trade} from "@/lib/types";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {cachedLocal} from "./cache";
 import {recordCalls} from "./rpcMeter";
+import {httpRpcUrls, isRpcRateLimitError} from "./rpcProviders";
 import {QUOTE_ASSETS} from "./dexscreener";
 
 /**
@@ -82,22 +83,42 @@ interface RawLog {
 }
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
-  const url = process.env.ALCHEMY_RPC_URL;
-  if (!url) throw new Error("no rpc configured");
+  const urls = httpRpcUrls();
+  let lastError: unknown;
 
-  recordCalls([method]);
+  for (const url of urls) {
+    recordCalls([method]);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        cache: "no-store",
+        body: JSON.stringify({jsonrpc: "2.0", id: 1, method, params}),
+        signal: AbortSignal.timeout(6000),
+      });
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {"content-type": "application/json"},
-    cache: "no-store",
-    body: JSON.stringify({jsonrpc: "2.0", id: 1, method, params}),
-    signal: AbortSignal.timeout(6000),
-  });
+      if (res.status === 429) {
+        lastError = new Error(`getLogs ${res.status}`);
+        continue;
+      }
 
-  const body = (await res.json()) as {result?: T; error?: {message: string}};
-  if (body.error) throw new Error(body.error.message);
-  return body.result as T;
+      const body = (await res.json()) as {result?: T; error?: {message: string}};
+      if (body.error) {
+        if (isRpcRateLimitError(body.error.message)) {
+          lastError = new Error(body.error.message);
+          continue;
+        }
+        throw new Error(body.error.message);
+      }
+      return body.result as T;
+    } catch (error) {
+      lastError = error;
+      if (isRpcRateLimitError(String(error))) continue;
+      throw error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("no rpc configured");
 }
 
 /** The chain head, read once a second for the whole process. */
