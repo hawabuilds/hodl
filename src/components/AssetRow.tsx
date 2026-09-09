@@ -9,13 +9,14 @@ import {applyCachedToken, rememberTokens} from "@/lib/tokenCache";
 import {useLivePrice} from "@/hooks/useLivePrice";
 import {formatMarketCapAt, formatPriceUsd, formatVolumeUsd, isPriced} from "@/lib/priceState";
 import {cn} from "@/lib/cn";
-import {percent, tokenAge} from "@/lib/format";
+import {tokenAge} from "@/lib/format";
 import {SECTORS} from "@/lib/sectors";
 import {assetHref} from "@/lib/routes";
 import type {Asset, Timeframe} from "@/lib/types";
 import {Sparkline} from "./Sparkline";
 import {Avatar} from "./ui/Avatar";
 import {PairTicker, VerifiedTick} from "./ui/Badges";
+import {PriceDelta} from "./ui/PriceDelta";
 
 const SECTOR_LABEL = new Map(SECTORS.map((sector) => [sector.id, sector.label]));
 
@@ -103,7 +104,7 @@ export function AssetRow({
             </>
           )}
         </div>
-        <div className="tnum mt-[3px] flex items-center gap-2.5 truncate text-[12.5px] font-semibold">
+        <div className="tabular-nums mt-[3px] flex items-center gap-2.5 truncate text-[12.5px] font-semibold">
           {rwa ? (
             <span className="text-faint">
               {SECTOR_LABEL.get(asset.sector) ?? asset.name}
@@ -128,7 +129,7 @@ export function AssetRow({
       />
 
       <div className="flex shrink-0 flex-col items-end gap-[3px] text-right">
-        <span className="tnum text-[15px] font-extrabold tracking-[-0.02em]">
+        <span className="tabular-nums text-[15px] font-extrabold tracking-[-0.02em]">
           {rwa
             ? formatPriceUsd(shownPrice)
             : formatMarketCapAt(asset, shownPrice)}
@@ -136,18 +137,14 @@ export function AssetRow({
             <span className="ml-1 text-[11px] font-bold text-faint">MC</span>
           )}
         </span>
-        <span
-          className={cn(
-            "tnum text-[12.5px] font-bold",
-            !rwa && !isPriced(shownPrice)
-              ? "text-faint"
-              : positive
-                ? "text-green-deep"
-                : "text-red",
-          )}
-        >
-          {!rwa && !isPriced(shownPrice) ? "—" : percent(asset.changePct)}
-        </span>
+        {!rwa && !isPriced(shownPrice) ? (
+          <span className="tabular-nums text-[12.5px] font-bold text-faint">—</span>
+        ) : (
+          <PriceDelta
+            value={asset.changePct}
+            className="text-[12.5px] font-bold"
+          />
+        )}
       </div>
     </Link>
   );

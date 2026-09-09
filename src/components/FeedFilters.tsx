@@ -44,7 +44,7 @@ export function FeedFilterButton({
       >
         <FilterIcon className="h-[15px] w-[15px]" />
         {count > 0 ? (
-          <span className="absolute -right-0.5 -top-0.5 h-[7px] w-[7px] rounded-full bg-green ring-2 ring-[var(--premium-bg)]" />
+          <span className="absolute -right-0.5 -top-0.5 h-[7px] w-[7px] rounded-full bg-brand-500 ring-2 ring-[var(--surface-base)]" />
         ) : null}
       </button>
 
@@ -91,13 +91,13 @@ function FilterSheet({
         type="button"
         aria-label="Close filters"
         onClick={onClose}
-        className="absolute inset-0 bg-black/45 backdrop-blur-[2px]"
+        className="absolute inset-0 bg-[var(--backdrop-scrim)] backdrop-blur-[2px]"
       />
 
       <div
         role="dialog"
         aria-label="Feed filters"
-        className="relative w-full max-w-[380px] overflow-hidden rounded-[20px] border border-hairline bg-card p-5 shadow-2xl"
+        className="relative w-full max-w-[380px] overflow-hidden rounded-2xl bg-surface-elevated p-5 shadow-modal"
       >
         <div className="flex items-center justify-between">
           <h2 className="text-[16px] font-extrabold tracking-[-0.02em]">
@@ -113,7 +113,7 @@ function FilterSheet({
         </div>
 
         <Section label="Time range">
-          <div className="flex gap-1.5">
+          <div className="flex gap-1 rounded-2xl bg-[var(--segment-track)] p-1 shadow-inset-soft">
             {FEED_WINDOWS.map((window) => (
               <button
                 key={window}
@@ -121,15 +121,10 @@ function FilterSheet({
                 onClick={() => set({window})}
                 aria-pressed={draft.window === window}
                 className={cn(
-                  "flex-1 rounded-[9px] py-2 text-[12.5px] font-extrabold transition-colors",
-                  // `text-premium-bg` was not a real class — `premium` is
-                  // registered as a background image, not a colour — so the
-                  // label kept whatever colour it inherited and vanished
-                  // against the filled pill. This is the same active treatment
-                  // the sort rail uses, which is defined in both themes.
+                  "flex-1 rounded-xl py-2 text-[12.5px] font-extrabold transition-[background-color,color,box-shadow]",
                   draft.window === window
-                    ? "bg-[var(--overlay-wash-hover)] font-extrabold text-ink"
-                    : "bg-[var(--overlay-wash)] text-muted hover:text-ink",
+                    ? "bg-surface-elevated text-ink shadow-tab-active"
+                    : "text-muted hover:bg-[var(--overlay-wash)] hover:text-ink",
                 )}
               >
                 {window}
@@ -208,7 +203,7 @@ function FilterSheet({
         <button
           type="button"
           onClick={apply}
-          className="mt-5 w-full rounded-[12px] bg-green py-3 text-[14px] font-extrabold text-white transition-opacity hover:opacity-90"
+          className="mt-5 w-full rounded-[12px] bg-brand-500 py-3 text-[14px] font-bold text-white shadow-brand transition-opacity hover:bg-brand-600"
         >
           Show results
         </button>
@@ -284,7 +279,7 @@ function RangeInputs({
         // The global focus ring is a green rectangle, which reads as a
         // validation state on a field you are simply typing in. The label
         // carries a quiet ring instead, matching the trade inputs.
-        className="tnum w-full min-w-0 bg-transparent text-[13px] font-bold outline-none placeholder:font-semibold placeholder:text-faint focus:outline-none focus-visible:outline-none"
+        className="tabular-nums w-full min-w-0 bg-transparent text-[13px] font-bold outline-none placeholder:font-semibold placeholder:text-faint focus:outline-none focus-visible:outline-none"
       />
       {suffix ? (
         <span className="text-[12px] font-bold text-faint">{suffix}</span>

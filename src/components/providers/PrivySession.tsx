@@ -29,7 +29,7 @@ export function PrivySessionProvider({children}: {children: ReactNode}) {
         supportedChains: [robinhoodMainnet],
         appearance: {
           theme,
-          accentColor: "#00C805",
+          accentColor: "#6860FF",
           walletChainType: "ethereum-only",
         },
       }}

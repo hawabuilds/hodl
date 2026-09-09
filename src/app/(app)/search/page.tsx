@@ -194,10 +194,10 @@ function PersonRow({person}: {person: Profile}) {
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <div className="tnum text-[13.5px] font-extrabold tracking-[-0.015em]">
+          <div className="tabular-nums text-[13.5px] font-extrabold tracking-[-0.015em]">
             {compactMoney(value)}
           </div>
-          <div className="tnum text-[11.5px] font-semibold text-faint">
+          <div className="tabular-nums text-[11.5px] font-semibold text-faint">
             {compact(person.followers)} followers
           </div>
         </div>

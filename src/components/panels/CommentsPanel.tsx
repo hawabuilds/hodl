@@ -73,14 +73,14 @@ export function CommentsPanel({
       ) : threads.length === 0 ? (
         <PanelNote>No reads on {symbol} yet. Post the first one.</PanelNote>
       ) : (
-        <ul>
+        <ul className="flex flex-col gap-4">
           {threads.map((thread) => (
             <Thread key={thread.root.id} thread={thread} onReply={startReply} />
           ))}
         </ul>
       )}
 
-      <div className="sticky bottom-0 mt-2 border-t border-hairline bg-card pt-2.5">
+      <div className="sticky bottom-0 mt-2 bg-surface-base/95 pt-2.5 shadow-[0_-10px_28px_-14px_var(--shadow-color)] backdrop-blur-[12px]">
         {replyTo ? (
           <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-semibold text-faint">
             <span className="min-w-0 truncate">
@@ -116,13 +116,13 @@ export function CommentsPanel({
                   : `Your thesis on ${symbol}…`
                 : "Sign in to post"
             }
-            className="max-h-[64px] min-h-[38px] flex-1 resize-none rounded-control border border-hairline bg-card px-3 py-2.5 text-[13px] leading-[1.4] text-ink outline-none transition-[border-color,box-shadow] placeholder:text-faint focus:border-[rgba(0,200,5,0.35)] focus:shadow-[0_0_0_3px_rgba(0,200,5,0.08)] disabled:cursor-not-allowed disabled:opacity-55"
+            className="max-h-[64px] min-h-[38px] flex-1 resize-none rounded-2xl bg-[var(--bg-input)] px-3 py-2.5 text-[13px] leading-[1.4] text-ink shadow-inset-soft outline-none transition-[box-shadow,background-color] placeholder:text-faint focus:shadow-inset-focus disabled:cursor-not-allowed disabled:opacity-55"
           />
           <button
             type="button"
             disabled={!canPost || !trimmed}
             onClick={submit}
-            className="shrink-0 rounded-control bg-green px-4 py-2.5 text-[12.5px] font-extrabold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
+            className="shrink-0 rounded-full bg-brand-500 px-4 py-2.5 text-[12.5px] font-bold text-white shadow-brand transition-[transform,background-color,opacity] duration-150 hover:-translate-y-px hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-45"
           >
             {replyTo ? "Reply" : "Post"}
           </button>
@@ -131,7 +131,7 @@ export function CommentsPanel({
           <p
             className={
               remaining <= 0
-                ? "mt-1.5 text-right text-[11px] font-semibold text-red"
+                ? "mt-1.5 text-right text-[11px] font-semibold text-error"
                 : "mt-1.5 text-right text-[11px] font-semibold text-faint"
             }
           >
@@ -154,13 +154,13 @@ function Thread({
   onReply: (comment: AssetComment, rootId: string) => void;
 }) {
   return (
-    <li className="border-b border-hairline py-3 last:border-b-0">
+    <li>
       <CommentRow
         comment={thread.root}
         onReply={(comment) => onReply(comment, thread.root.id)}
       />
       {thread.replies.length > 0 ? (
-        <ul className="ml-[15px] mt-3 flex flex-col gap-3 border-l border-hairline pl-[15px]">
+        <ul className="ml-[15px] mt-3 flex flex-col gap-3 border-l-2 border-[var(--overlay-wash-hover)] pl-[15px]">
           {thread.replies.map((reply) => (
             <li key={reply.id}>
               <CommentRow
@@ -199,7 +199,7 @@ function CommentRow({
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <Link
             href={profilePath(comment.author.handle)}
-            className="text-[13px] font-extrabold tracking-[-0.01em] transition-colors hover:text-green-deep"
+            className="text-[13px] font-extrabold tracking-[-0.01em] transition-colors hover:text-accent-link"
           >
             @{comment.author.handle}
           </Link>
@@ -216,7 +216,7 @@ function CommentRow({
         <button
           type="button"
           onClick={() => onReply(comment)}
-          className="mt-1 text-[11.5px] font-bold text-faint transition-colors hover:text-green-deep"
+          className="mt-1 text-[11.5px] font-bold text-faint transition-colors hover:text-accent-link"
         >
           Reply
         </button>

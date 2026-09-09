@@ -27,7 +27,7 @@ export function NewsPanel({
   return (
     <div>
       {seeded ? (
-        <p className="mb-2 rounded-[12px] border border-hairline bg-wash px-3 py-2 text-[11.5px] font-medium leading-[1.45] text-faint">
+        <p className="mb-2 rounded-2xl bg-[var(--segment-track)] px-3 py-2 text-[11.5px] font-medium leading-[1.45] text-faint shadow-inset-soft">
           Sample headlines. Connect a news provider to replace them.
         </p>
       ) : null}
@@ -46,13 +46,13 @@ export function NewsPanel({
           );
 
           return (
-            <li key={item.id} className="border-b border-hairline last:border-b-0">
+            <li key={item.id}>
               {live ? (
                 <a
                   href={item.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block py-3 transition-colors hover:text-green-deep"
+                  className="block py-3 transition-colors hover:text-accent-link"
                 >
                   {body}
                 </a>

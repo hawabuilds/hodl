@@ -7,12 +7,12 @@ import {ipfsGatewayCandidates} from "@/lib/tokenImage";
 import {loadedLogoFor, rememberLoadedLogo} from "@/lib/tokenLogoCache";
 
 const GRADIENTS = [
-  "linear-gradient(135deg,#00C805,#0B7A3C)",
-  "linear-gradient(135deg,#7C5CFF,#3D2BA8)",
-  "linear-gradient(135deg,#FF8A3D,#C24A12)",
-  "linear-gradient(135deg,#3DBBFF,#1465B8)",
-  "linear-gradient(135deg,#FF5C93,#B01253)",
-  "linear-gradient(135deg,#F5C518,#B8860B)",
+  "linear-gradient(135deg,#6860FF,#524BD4)",
+  "linear-gradient(135deg,#3DDBA8,#047857)",
+  "linear-gradient(135deg,#FF6B7A,#DC2626)",
+  "linear-gradient(135deg,#ABAEF5,#3F3999)",
+  "linear-gradient(135deg,#8A85FF,#2D2866)",
+  "linear-gradient(135deg,#F59E0B,#B8860B)",
 ];
 
 /** Stable colour per user so avatars do not reshuffle between renders. */
@@ -112,7 +112,8 @@ export function Avatar({
       }}
       className={cn(
         "relative grid shrink-0 place-items-center overflow-hidden rounded-full font-extrabold text-white",
-        ring && "shadow-[0_0_0_2px_#fff,0_6px_16px_-8px_rgba(9,24,14,0.4)]",
+        ring &&
+          "shadow-[0_0_0_2px_var(--text-primary),0_6px_16px_-8px_var(--shadow-color)]",
         className,
       )}
     >

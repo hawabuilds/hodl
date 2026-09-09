@@ -12,6 +12,8 @@ interface ModalProps {
   children: ReactNode;
   /** Drops the white card chrome so callers can supply their own surface. */
   bare?: boolean;
+  /** Near-black terminal popup — stays dark in legacy palette and light mode. */
+  surface?: "elevated" | "popup";
   closeTone?: "light" | "dark";
   className?: string;
 }
@@ -22,6 +24,7 @@ export function Modal({
   title,
   children,
   bare,
+  surface = "elevated",
   closeTone = "light",
   className,
 }: ModalProps) {
@@ -45,18 +48,24 @@ export function Modal({
         }}
         className={cn(
           "absolute inset-0 z-50 flex items-center justify-center p-[22px]",
-          "bg-[rgba(8,12,9,0.46)] backdrop-blur-[7px] transition-opacity duration-300",
+          "bg-[var(--backdrop-scrim)] backdrop-blur-[7px] transition-opacity duration-300",
           open
             ? "visible opacity-100 pointer-events-auto"
             : "invisible pointer-events-none opacity-0",
         )}
       >
         <div
+          data-surface={surface === "popup" ? "popup" : undefined}
           className={cn(
             "relative max-h-[92%] w-full max-w-[366px] overflow-y-auto scroll-quiet",
             "transition-[transform,opacity] duration-300 ease-sheet",
             open ? "scale-100 opacity-100" : "scale-[0.93] opacity-40",
-            !bare && "rounded-[28px] bg-card p-6 pt-[30px] shadow-modal",
+            !bare &&
+              surface === "popup" &&
+              "rounded-2xl bg-surface-popup p-6 pt-[30px] shadow-modal",
+            !bare &&
+              surface !== "popup" &&
+              "rounded-2xl bg-surface-elevated p-6 pt-[30px] shadow-modal",
             bare && "rounded-[26px] shadow-modal",
             className,
           )}

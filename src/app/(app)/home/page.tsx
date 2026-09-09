@@ -15,6 +15,7 @@ import {HomeTabs, type HomeTab} from "@/components/HomeTabs";
 import {StarIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
 import {useNewTokens} from "@/hooks/useNewTokens";
+import {useTheme} from "@/hooks/useTheme";
 import {useWatchlistAssets} from "@/hooks/useWatchlist";
 import {
   homeQuery,
@@ -25,6 +26,7 @@ import {
   type WatchFilter,
 } from "@/lib/homeState";
 import {SECTORS, type SectorId} from "@/lib/sectors";
+import Image from "next/image";
 import {APP_NAME} from "@/config/app";
 import type {Asset} from "@/lib/types";
 
@@ -63,6 +65,7 @@ export default function HomePage() {
 }
 
 function HomeFeed() {
+  const {theme} = useTheme();
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
@@ -236,8 +239,15 @@ function HomeFeed() {
   return (
     <div>
       <StickyPageHeader>
-        <div className="mb-4 text-[21px] font-extrabold leading-none tracking-[-0.04em]">
-          {APP_NAME}
+        <div className="mb-4">
+          <Image
+            src={theme === "light" ? "/brand/logo.svg" : "/brand/logo-white-text.svg"}
+            alt={APP_NAME}
+            width={112}
+            height={32}
+            priority
+            className="h-8 w-auto"
+          />
         </div>
 
         <HomeTabs value={tab} onChange={setTab} />

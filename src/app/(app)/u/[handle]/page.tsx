@@ -100,8 +100,8 @@ export default function PublicProfilePage({
             className={cn(
               "shrink-0 rounded-pill px-4 py-2.5 text-[12.5px] font-bold transition-colors",
               following
-                ? "border border-hairline bg-card text-muted hover:border-[var(--border-hover-strong)]"
-                : "bg-btn-dark text-btn-dark-fg",
+                ? "bg-[var(--overlay-wash)] text-muted hover:bg-[var(--overlay-wash-hover)]"
+                : "bg-btn-dark text-btn-dark-fg shadow-brand",
             )}
           >
             {following ? "Following" : "Follow"}
@@ -115,17 +115,17 @@ export default function PublicProfilePage({
         <button
           type="button"
           onClick={() => setConnections("followers")}
-          className="transition-colors hover:text-green-deep"
+          className="transition-colors hover:text-accent-link"
         >
-          <b className="tnum font-extrabold">{compact(followerCount)}</b>{" "}
+          <b className="tabular-nums font-extrabold">{compact(followerCount)}</b>{" "}
           <span className="text-faint">followers</span>
         </button>
         <button
           type="button"
           onClick={() => setConnections("following")}
-          className="transition-colors hover:text-green-deep"
+          className="transition-colors hover:text-accent-link"
         >
-          <b className="tnum font-extrabold">{compact(profile.following)}</b>{" "}
+          <b className="tabular-nums font-extrabold">{compact(profile.following)}</b>{" "}
           <span className="text-faint">following</span>
         </button>
       </div>
@@ -135,10 +135,10 @@ export default function PublicProfilePage({
       <div className="mt-5 text-[11px] font-bold tracking-[0.09em] text-faint">
         TOTAL HOLDINGS
       </div>
-      <div className="tnum mt-1.5 text-[32px] font-extrabold leading-none tracking-[-0.035em]">
+      <div className="tabular-nums mt-1.5 text-[32px] font-extrabold leading-none tracking-[-0.035em]">
         {money(totals.value)}
       </div>
-      <div className="tnum mt-2 text-[13.5px] font-semibold text-faint">
+      <div className="tabular-nums mt-2 text-[13.5px] font-semibold text-faint">
         Held on Robinhood Chain
       </div>
 

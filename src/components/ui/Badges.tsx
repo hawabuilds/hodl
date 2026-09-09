@@ -32,7 +32,7 @@ export function VerifiedTick({
   return (
     <span
       title={label}
-      className={cn("inline-flex shrink-0 text-green", className)}
+      className={cn("inline-flex shrink-0 text-brand-400", className)}
     >
       <VerifiedIcon style={{width: size, height: size}} />
       <span className="sr-only">{label}</span>
@@ -95,7 +95,7 @@ export function PairMarket({
       <span className="text-muted">{base}</span>
       <span className="text-faint">/</span>
       <span className="text-ink">{quote}</span>
-      <VerifiedIcon className="h-3 w-3 text-green" />
+      <VerifiedIcon className="h-3 w-3 text-brand-400" />
     </AssetLink>
   );
 }
@@ -160,12 +160,12 @@ export function TaxChip({
         "inline-flex shrink-0 items-center gap-1 rounded-[8px] px-2 py-1",
         "text-[11.5px] font-extrabold leading-none",
         free
-          ? "bg-[rgba(0,200,5,0.11)] text-green-deep"
+          ? "bg-[rgb(61_219_168/11%)] text-price-up"
           : "bg-[var(--overlay-wash)] text-ink",
         className,
       )}
     >
-      <span className={free ? "text-green-deep opacity-70" : "text-faint"}>
+      <span className={free ? "text-price-up opacity-70" : "text-faint"}>
         Tax
       </span>
       {label}

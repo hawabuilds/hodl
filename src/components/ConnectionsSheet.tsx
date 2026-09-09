@@ -60,7 +60,7 @@ export function ConnectionsSheet({
                     @{person.handle} · {compact(person.followers)} followers
                   </div>
                 </div>
-                <span className="tnum shrink-0 text-[12.5px] font-bold text-muted">
+                <span className="tabular-nums shrink-0 text-[12.5px] font-bold text-muted">
                   {compactMoney(
                     person.holdings.reduce((sum, h) => sum + h.valueUsd, 0),
                   )}

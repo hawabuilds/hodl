@@ -24,7 +24,7 @@ export function PanelTabs<T extends string>({
     <div
       role="tablist"
       aria-label="Asset detail"
-      className="flex border-b border-hairline"
+      className="flex"
     >
       {tabs.map((tab) => {
         const active = tab.value === value;
@@ -45,7 +45,7 @@ export function PanelTabs<T extends string>({
               aria-hidden="true"
               className={cn(
                 "absolute inset-x-3 -bottom-px h-[2px] rounded-full transition-opacity duration-150",
-                active ? "bg-green opacity-100" : "opacity-0",
+                active ? "bg-brand-500 opacity-100" : "opacity-0",
               )}
             />
           </button>

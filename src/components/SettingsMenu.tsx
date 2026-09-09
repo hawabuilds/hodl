@@ -1,10 +1,18 @@
 "use client";
 
 import {useEffect, useRef, useState} from "react";
+import {useTheme} from "@/hooks/useTheme";
 import {cn} from "@/lib/cn";
+import type {ThemePreference} from "@/lib/theme";
 import {SettingsIcon} from "./ui/Icons";
 import {WalletControls} from "./WalletControls";
 import {NotificationSettings} from "./NotificationSettings";
+
+const THEME_OPTIONS: {value: ThemePreference; label: string}[] = [
+  {value: "system", label: "System"},
+  {value: "light", label: "Light"},
+  {value: "dark", label: "Dark"},
+];
 
 /**
  * Account settings, anchored to the gear that opens them.
@@ -16,6 +24,7 @@ export function SettingsMenu() {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
+  const {preference, setPreference} = useTheme();
 
   useEffect(() => {
     if (!open) return;
@@ -58,9 +67,10 @@ export function SettingsMenu() {
       <div
         role="menu"
         aria-label="Settings"
+        data-surface="popup"
         className={cn(
           "absolute right-0 top-[calc(100%+8px)] z-50 w-[min(286px,calc(100vw-44px))]",
-          "rounded-panel border border-hairline bg-card p-2 shadow-menu",
+          "rounded-2xl bg-surface-popup p-2 shadow-panel",
           "origin-top-right transition-[opacity,transform,visibility] duration-150",
           open
             ? "visible scale-100 opacity-100"
@@ -68,6 +78,39 @@ export function SettingsMenu() {
         )}
       >
         <WalletControls onNavigate={() => setOpen(false)} />
+
+        <div className="mt-1 px-2.5 py-1.5">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
+            Appearance
+          </p>
+          <div
+            role="group"
+            aria-label="Theme"
+            className="grid grid-cols-3 gap-1 rounded-2xl bg-[var(--segment-track)] p-1 shadow-inset-soft"
+          >
+            {THEME_OPTIONS.map((option) => {
+              const active = preference === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={active}
+                  onClick={() => setPreference(option.value)}
+                  className={cn(
+                    "rounded-xl px-2 py-1.5 text-[12px] font-bold transition-[background-color,color,box-shadow]",
+                    active
+                      ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
+                      : "text-faint hover:bg-[var(--overlay-wash)] hover:text-muted",
+                  )}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <button
           type="button"
           role="menuitem"
@@ -85,7 +128,7 @@ export function SettingsMenu() {
             href="https://www.tradingview.com/lightweight-charts/"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline decoration-hairline underline-offset-2 hover:text-muted"
+            className="text-accent-link underline decoration-[var(--overlay-wash-hover)] underline-offset-2 hover:text-accent"
           >
             Lightweight Charts
           </a>

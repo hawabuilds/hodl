@@ -742,6 +742,7 @@ export function OrderModal({
     <Modal
       open={asset !== null}
       onClose={onClose}
+      surface="popup"
       className="max-w-[352px] p-5 pt-5"
     >
       {asset ? (
@@ -773,7 +774,7 @@ export function OrderModal({
             />
           ) : null}
 
-          <div className="mb-3.5 flex gap-0.5 rounded-[12px] border border-hairline bg-wash p-[3px]">
+          <div className="mb-3.5 flex gap-1 rounded-2xl bg-[var(--segment-track)] p-1 shadow-inset-soft">
             {(["buy", "sell"] as const).map((option) => {
               const active = option === activeSide;
               return (
@@ -790,10 +791,14 @@ export function OrderModal({
                     setTxHash(null);
                   }}
                   className={cn(
-                    "flex-1 rounded-[9px] py-2 text-[13px] font-extrabold capitalize transition-all duration-150",
-                    active && option === "buy" && "bg-green text-white",
-                    active && option === "sell" && "bg-red text-white",
-                    !active && "text-faint",
+                    "flex-1 rounded-full py-2 text-[13px] font-extrabold capitalize transition-all duration-150",
+                    active &&
+                      option === "buy" &&
+                      "bg-[var(--price-up-wash)] text-price-up shadow-price-up",
+                    active &&
+                      option === "sell" &&
+                      "bg-[var(--price-down-wash)] text-price-down shadow-price-down",
+                    !active && "text-faint hover:bg-[var(--overlay-wash)] hover:text-muted",
                   )}
                 >
                   {option}
@@ -805,13 +810,13 @@ export function OrderModal({
           <label htmlFor="order-amount" className="sr-only">
             {buying ? `Amount in ${eth ? "ETH" : "US dollars"}` : `Amount in ${symbol}`}
           </label>
-          <div className="rounded-panel border border-hairline bg-card px-4 py-3.5 transition-colors focus-within:border-[var(--border-hover-strong)]">
+          <div className="rounded-2xl bg-[var(--bg-input)] px-4 py-3.5 shadow-inset-soft transition-[box-shadow,background-color] focus-within:shadow-inset-focus">
             <div className="mb-1 flex items-center justify-between gap-2">
               <span className="text-[10px] font-bold uppercase tracking-[0.09em] text-faint">
                 Amount
               </span>
               {buying ? (
-                <div className="flex gap-0.5 rounded-[8px] bg-wash p-[2px]">
+                <div className="flex gap-0.5 rounded-full bg-[var(--segment-track)] p-[2px]">
                   {(["USD", "ETH"] as const).map((option) => {
                     const active = option === settings.currency;
                     return (
@@ -822,8 +827,10 @@ export function OrderModal({
                         disabled={option === "ETH" && ethUsd === null}
                         onClick={() => switchCurrency(option)}
                         className={cn(
-                          "rounded-[6px] px-2 py-1 text-[10.5px] font-extrabold transition-colors",
-                          active ? "bg-card text-ink" : "text-faint",
+                          "tabular-nums rounded-full px-2 py-1 text-[10.5px] font-extrabold transition-colors",
+                          active
+                            ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
+                            : "text-faint hover:text-muted",
                           option === "ETH" && ethUsd === null && "opacity-40",
                         )}
                       >
@@ -871,7 +878,7 @@ export function OrderModal({
                   setFilled(null);
                   setTxHash(null);
                 }}
-                className="tnum w-full min-w-0 border-none bg-transparent text-[30px] font-extrabold tracking-[-0.03em] text-ink outline-none placeholder:text-faint focus:outline-none focus-visible:outline-none"
+                className="tabular-nums w-full min-w-0 border-none bg-transparent text-[30px] font-extrabold tracking-[-0.03em] text-ink outline-none placeholder:text-faint focus:outline-none focus-visible:outline-none"
               />
               {!buying ? (
                 <span className="text-[15px] font-extrabold text-faint">{symbol}</span>
@@ -880,7 +887,7 @@ export function OrderModal({
               ) : null}
             </div>
 
-            <div className="tnum mt-1 text-[12px] font-semibold text-faint">
+            <div className="tabular-nums mt-1 text-[12px] font-semibold text-faint">
               {valid && quote && buying && receivePreview
                 ? receivePreview.youReceive
                 : valid && quote
@@ -898,8 +905,8 @@ export function OrderModal({
             {valid && quote && buying && receivePreview ? (
               <div
                 className={cn(
-                  "tnum mt-0.5 text-[12px] font-semibold",
-                  receivePreview.impactLevel === "ok" ? "text-faint" : "text-red",
+                  "tabular-nums mt-0.5 text-[12px] font-semibold",
+                  receivePreview.impactLevel === "ok" ? "text-faint" : "text-error",
                 )}
               >
                 {receivePreview.receiveUsdLabel}
@@ -938,11 +945,11 @@ export function OrderModal({
             />
           </div>
 
-          <div className="mt-3.5 flex items-center justify-between gap-3 rounded-[13px] bg-wash px-3.5 py-2.5 text-[12.5px] font-semibold">
+          <div className="mt-3.5 flex items-center justify-between gap-3 rounded-2xl bg-[var(--segment-track)] px-3.5 py-2.5 text-[12.5px] font-semibold shadow-inset-soft">
             <span className="text-faint">
               {buying ? "Available" : `Your ${symbol}`}
             </span>
-            <span className="tnum truncate font-extrabold">
+            <span className="tabular-nums truncate font-extrabold">
               {!wallet
                 ? "—"
                 : buying
@@ -973,7 +980,7 @@ export function OrderModal({
           ) : null}
 
           {buying && receivePreview && receivePreview.impactLevel !== "ok" ? (
-            <p role="alert" className="mt-3 text-[12.5px] font-semibold text-red">
+            <p role="alert" className="mt-3 text-[12.5px] font-semibold text-error">
               {receivePreview.impactLevel === "block"
                 ? `${receivePreview.impactLabel}. You would receive ${receivePreview.receiveUsdLabel} of ${units(estimatedOut)} ${symbol}. Confirm is disabled.`
                 : `${receivePreview.impactLabel}.`}
@@ -1006,7 +1013,7 @@ export function OrderModal({
           ) : null}
 
           {error || undersized || oversized || sellBlocked || (blocked && ticket.authenticated && !quotePending) ? (
-            <p role="alert" className="mt-3 text-[12.5px] font-semibold text-red">
+            <p role="alert" className="mt-3 text-[12.5px] font-semibold text-error">
               {error ?? undersized ?? oversized ?? sellBlocked ?? blocked}
               {error && txHash && !filled ? (
                 <>
@@ -1026,7 +1033,7 @@ export function OrderModal({
           {filled ? (
             <p
               role="status"
-              className="mt-3 text-[12.5px] font-semibold text-green-deep"
+              className="mt-3 text-[12.5px] font-semibold text-success"
             >
               {filled}
               {txHash ? (
@@ -1050,10 +1057,10 @@ export function OrderModal({
             onClick={() => void confirm()}
             disabled={confirmDisabled}
             className={cn(
-              "mt-4 w-full rounded-[16px] py-[16px] text-[16px] font-extrabold text-white",
-              "transition-[transform,opacity] duration-200 hover:-translate-y-0.5",
-              "disabled:pointer-events-none disabled:bg-wash disabled:text-faint",
-              buying ? "bg-green shadow-green" : "bg-red",
+              "mt-4 w-full rounded-2xl py-[16px] text-[16px] font-extrabold text-white",
+              "bg-brand-500 shadow-brand transition-[transform,background-color,opacity] duration-200",
+              "hover:-translate-y-0.5 hover:bg-brand-600",
+              "disabled:pointer-events-none disabled:bg-surface-hover disabled:text-text-disabled disabled:shadow-none",
             )}
           >
             {confirmLabel}
@@ -1099,7 +1106,7 @@ function TicketBreakdown({
     <div className="mt-2.5 space-y-1 px-1 text-[12px] font-semibold">
       <div className="flex items-center justify-between gap-3">
         <span className="text-faint">{fee.title}</span>
-        <span className="tnum font-bold text-muted">
+        <span className="tabular-nums font-bold text-muted">
           {fee.taken && feeRaw
             ? `${units(Number(feeRaw))} ${feeAmountSymbol(quote)}${feeUsd > 0 ? ` · ${money(feeUsd)}` : ""}`
             : fee.taken
@@ -1119,8 +1126,8 @@ function TicketBreakdown({
         <span className="text-faint">Price impact</span>
         <span
           className={cn(
-            "tnum font-bold",
-            impactLevel === "ok" ? "text-muted" : "text-red",
+            "tabular-nums font-bold",
+            impactLevel === "ok" ? "text-muted" : "text-error",
           )}
         >
           {impactLabel === "—" ? "—" : impactLabel.replace(/^Price impact\s+/, "")}
@@ -1128,7 +1135,7 @@ function TicketBreakdown({
       </div>
       <div className="flex items-center justify-between gap-3">
         <span className="text-faint">Minimum received</span>
-        <span className="tnum font-bold text-muted">
+        <span className="tabular-nums font-bold text-muted">
           {units(Number(minHuman))}{" "}
           {ticketReceivedSymbol({side, tokenSymbol, quote})}
         </span>
@@ -1139,7 +1146,7 @@ function TicketBreakdown({
       </div>
       <div className="flex items-center justify-between gap-3">
         <span className="text-faint">Quote refresh</span>
-        <span className="tnum font-bold text-muted">{quoteLeftSec}s</span>
+        <span className="tabular-nums font-bold text-muted">{quoteLeftSec}s</span>
       </div>
     </div>
   );
@@ -1159,7 +1166,7 @@ function QuickButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="flex-1 rounded-pill border border-hairline bg-card py-2.5 text-[12px] font-bold text-ink transition-colors hover:border-[var(--border-hover-strong)] disabled:cursor-not-allowed disabled:opacity-40"
+      className="tabular-nums flex-1 rounded-full bg-[var(--overlay-wash)] py-2.5 text-[12px] font-bold text-ink transition-[background-color,transform] hover:-translate-y-px hover:bg-[var(--overlay-wash-hover)] disabled:cursor-not-allowed disabled:opacity-40"
     >
       {label}
     </button>
@@ -1188,7 +1195,7 @@ function SlippageConfig({
   }
 
   return (
-    <div className="mb-3.5 rounded-panel border border-hairline bg-wash p-3.5">
+    <div className="mb-3.5 rounded-2xl bg-[var(--segment-track)] p-3.5 shadow-inset-soft">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[11px] font-bold uppercase tracking-[0.09em] text-faint">
           Max slippage
@@ -1215,8 +1222,10 @@ function SlippageConfig({
                 save(preset);
               }}
               className={cn(
-                "flex-1 rounded-[10px] py-2 text-[12.5px] font-extrabold transition-colors",
-                active ? "bg-card text-ink shadow-card" : "text-faint hover:text-muted",
+                "tabular-nums flex-1 rounded-full py-2 text-[12.5px] font-extrabold transition-colors",
+                active
+                  ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
+                  : "text-faint hover:text-muted",
               )}
             >
               {preset}%
@@ -1224,7 +1233,7 @@ function SlippageConfig({
           );
         })}
 
-        <label className="flex flex-1 items-center gap-0.5 rounded-[10px] bg-card px-2.5 py-2 focus-within:ring-1 focus-within:ring-[var(--border-hover-strong)]">
+        <label className="flex flex-1 items-center gap-0.5 rounded-xl bg-[var(--bg-input)] px-2.5 py-2 shadow-inset-soft focus-within:shadow-inset-focus">
           <span className="sr-only">Custom slippage percentage</span>
           <input
             inputMode="decimal"
@@ -1235,7 +1244,7 @@ function SlippageConfig({
               setCustom(next);
               save(Number.parseFloat(next));
             }}
-            className="tnum w-full min-w-0 border-none bg-transparent text-[12.5px] font-extrabold text-ink outline-none placeholder:font-bold placeholder:text-faint focus-visible:outline-none"
+            className="tabular-nums w-full min-w-0 border-none bg-transparent text-[12.5px] font-extrabold text-ink outline-none placeholder:font-bold placeholder:text-faint focus-visible:outline-none"
           />
           {custom ? (
             <span className="text-[12.5px] font-extrabold text-faint">%</span>
@@ -1244,7 +1253,7 @@ function SlippageConfig({
       </div>
 
       {settings.slippagePct > SLIPPAGE_WARN_PCT ? (
-        <p role="alert" className="mt-2 text-[11px] font-bold leading-[1.45] text-red">
+        <p role="alert" className="mt-2 text-[11px] font-bold leading-[1.45] text-error">
           Slippage above {SLIPPAGE_WARN_PCT}% can fill far from the quote.
         </p>
       ) : (

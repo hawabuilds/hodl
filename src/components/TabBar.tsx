@@ -37,7 +37,7 @@ export function TabBar() {
       <div
         className={cn(
           "pointer-events-auto flex items-center gap-1 rounded-full p-1.5",
-          "border border-hairline bg-card/80 shadow-menu backdrop-blur-[22px]",
+          "bg-surface-elevated/80 shadow-panel backdrop-blur-[22px]",
         )}
       >
         {TABS.map((tab) => {
@@ -56,8 +56,8 @@ export function TabBar() {
                 "grid h-[46px] w-[54px] place-items-center rounded-full",
                 "transition-[background-color,color,box-shadow] duration-200",
                 active
-                  ? "bg-[var(--overlay-wash-hover)] text-ink shadow-[0_6px_18px_-10px_rgba(0,200,5,0.7)]"
-                  : "text-faint hover:text-muted",
+                  ? "bg-surface-elevated text-ink shadow-tab-active"
+                  : "text-faint hover:bg-[var(--overlay-wash)] hover:text-muted",
               )}
             >
               <Icon className="h-[21px] w-[21px]" />

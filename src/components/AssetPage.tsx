@@ -14,7 +14,8 @@ import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {useAsset, useChart, useNews, useTrades} from "@/hooks/useAsset";
 import {cn} from "@/lib/cn";
 import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
-import {clock, percent, shortAddress} from "@/lib/format";
+import {clock, shortAddress} from "@/lib/format";
+import {PriceDelta} from "./ui/PriceDelta";
 import {lastHomePath} from "@/lib/homeState";
 import {sectorFor} from "@/lib/sectors";
 import {defaultChartTimeframe} from "@/lib/chartTimeframe";
@@ -291,23 +292,16 @@ export function AssetPage({
 
       <div className="mt-4 flex items-end justify-between gap-3">
         <div>
-          <div className="tnum text-[32px] font-extrabold leading-none tracking-[-0.035em]">
+          <div className="tabular-nums text-[32px] font-extrabold leading-none tracking-[-0.035em]">
             {formatPriceUsd(shownPrice)}
           </div>
-          <div
-            className={cn(
-              "tnum mt-1.5 text-[13.5px] font-bold",
-              asset.kind === "token" && shownMarketCap === "—"
-                ? "text-faint"
-                : shownChange >= 0
-                  ? "text-green-deep"
-                  : "text-red",
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[13.5px] font-bold">
+            {asset.kind === "token" && shownMarketCap === "—" ? (
+              <span className="tabular-nums text-faint">—</span>
+            ) : (
+              <PriceDelta value={shownChange} />
             )}
-          >
-            {asset.kind === "token" && shownMarketCap === "—"
-              ? "—"
-              : percent(shownChange)}
-            <span className="ml-1.5 font-semibold text-faint">
+            <span className="font-semibold text-faint">
               {scrubbed
                 ? clock(scrubbed.t)
                 : timeframeLabel(timeframe, chart.resolvedTimeframe)}
@@ -319,11 +313,11 @@ export function AssetPage({
           <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
             Market cap
           </div>
-          <div className="tnum text-[15px] font-extrabold tracking-[-0.02em]">
+          <div className="tabular-nums text-[15px] font-extrabold tracking-[-0.02em]">
             {shownMarketCap}
           </div>
           {asset.kind === "token" ? (
-            <div className="tnum mt-0.5 inline-flex items-center gap-1 rounded-[6px] bg-[var(--overlay-wash)] px-1.5 py-[3px] text-[11px] font-bold">
+            <div className="tabular-nums mt-0.5 inline-flex items-center gap-1 rounded-[6px] bg-[var(--overlay-wash)] px-1.5 py-[3px] text-[11px] font-bold">
               <span className="text-faint">Liq</span>
               <span className="text-muted">
                 {formatLiquidityUsd(asset.liquidityUsd)}

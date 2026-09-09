@@ -45,7 +45,7 @@ export function LaunchpadMark({
           // into a light card, so it gets a rounded tile and an edge. A vector
           // brings its own silhouette — Long's is a circle — and boxing it in
           // a rounded square draws a border that is not part of the logo.
-          vector ? null : "border border-hairline object-cover",
+          vector ? null : "object-cover shadow-inset-soft",
           className,
         )}
       />

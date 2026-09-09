@@ -80,12 +80,14 @@ interface ChartColors {
 function readColors(el: HTMLElement): ChartColors {
   const css = getComputedStyle(el);
   return {
-    green: css.getPropertyValue("--green").trim() || "#00c805",
-    red: css.getPropertyValue("--red").trim() || "#ff5a52",
-    faint: css.getPropertyValue("--faint").trim() || "#8a938c",
-    hairline: css.getPropertyValue("--hairline").trim() || "rgba(11,15,12,0.09)",
-    ink: css.getPropertyValue("--ink").trim() || "#0b0f0c",
-    card: css.getPropertyValue("--card").trim() || "#ffffff",
+    green: css.getPropertyValue("--price-up").trim(),
+    red: css.getPropertyValue("--price-down").trim(),
+    faint: css.getPropertyValue("--text-tertiary").trim(),
+    hairline: css.getPropertyValue("--border-default").trim(),
+    ink: css.getPropertyValue("--text-primary").trim(),
+    card:
+      css.getPropertyValue("--bg-base").trim() ||
+      css.getPropertyValue("--surface-base").trim(),
   };
 }
 

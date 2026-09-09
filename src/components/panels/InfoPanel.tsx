@@ -50,7 +50,7 @@ export function InfoPanel({token}: {token: TokenAsset}) {
         {token.description}
       </p>
 
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-0 overflow-hidden rounded-panel border border-hairline bg-card">
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-0 overflow-hidden rounded-2xl bg-surface-elevated shadow-card">
         <Stat label="Liquidity" value={formatLiquidityUsd(token.liquidityUsd)} />
         <Stat label="24h volume" value={formatVolumeUsd(token.volume24hUsd)} />
         <Stat label="Market cap" value={formatMarketCapAt(token, shownPrice)} />
@@ -68,9 +68,9 @@ export function InfoPanel({token}: {token: TokenAsset}) {
         />
       </dl>
 
-      <div className="mt-4 overflow-hidden rounded-panel border border-hairline bg-card">
+      <div className="mt-4 overflow-hidden rounded-2xl bg-surface-elevated shadow-card">
         <Row label="Pair">
-          <span className="tnum text-[13px] font-extrabold">
+          <span className="tabular-nums text-[13px] font-extrabold">
             {token.symbol} / {token.pairedTicker}
           </span>
         </Row>
@@ -80,7 +80,7 @@ export function InfoPanel({token}: {token: TokenAsset}) {
               href={token.launchpad.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-2 text-[13px] font-extrabold transition-colors hover:text-green-deep"
+              className="flex items-center gap-2 text-[13px] font-extrabold transition-colors hover:text-price-up"
             >
               <LaunchpadMark launchpad={token.launchpad} size={20} />
               {token.launchpad.name}
@@ -95,13 +95,13 @@ export function InfoPanel({token}: {token: TokenAsset}) {
           )}
         </Row>
         <Row label="Trading cost">
-          <span className="tnum text-[13px] font-extrabold">
+          <span className="tabular-nums text-[13px] font-extrabold">
             {token.buyTaxPct === null && token.sellTaxPct === null ? (
               // Not "None": nothing was measurable here, and saying none would
               // be a claim rather than an answer.
               <span className="text-faint">Not measured</span>
             ) : token.buyTaxPct === 0 && token.sellTaxPct === 0 ? (
-              <span className="text-green-deep">None</span>
+              <span className="text-price-up">None</span>
             ) : (
               <>
                 {fmtPct(token.buyTaxPct)} buy
@@ -113,7 +113,7 @@ export function InfoPanel({token}: {token: TokenAsset}) {
         </Row>
         {token.feeSplit ? (
           <Row label="Fee goes to">
-            <span className="tnum text-[13px] font-extrabold">
+            <span className="tabular-nums text-[13px] font-extrabold">
               {token.feeSplit.creatorPct > 0 ? (
                 <>
                   {fmtPct(token.feeSplit.creatorPct)} creator
@@ -135,7 +135,7 @@ export function InfoPanel({token}: {token: TokenAsset}) {
             href={addressUrlForChain(token.address, RH_MAINNET_ID)}
             target="_blank"
             rel="noopener noreferrer"
-            className="tnum flex items-center gap-1.5 text-[13px] font-semibold text-muted transition-colors hover:text-ink"
+            className="tabular-nums flex items-center gap-1.5 text-[13px] font-semibold text-muted transition-colors hover:text-ink"
           >
             {shortAddress(token.address)}
             <ArrowUpRightIcon className="h-3.5 w-3.5" />
@@ -161,15 +161,15 @@ function Stat({
   tone?: "up" | "down";
 }) {
   return (
-    <div className="border-b border-hairline px-4 py-3 last:border-b-0 [&:nth-last-child(-n+2)]:border-b-0">
+    <div className="px-4 py-3 [&:nth-child(odd)]:bg-[var(--overlay-wash)]/40">
       <dt className="text-[10.5px] font-bold uppercase tracking-[0.07em] text-faint">
         {label}
       </dt>
       <dd
         className={cn(
-          "tnum mt-0.5 text-[15px] font-extrabold tracking-[-0.02em]",
-          tone === "up" && "text-green-deep",
-          tone === "down" && "text-red",
+          "tabular-nums mt-0.5 text-[15px] font-extrabold tracking-[-0.02em]",
+          tone === "up" && "text-price-up",
+          tone === "down" && "text-price-down",
         )}
       >
         {value}
@@ -180,7 +180,7 @@ function Stat({
 
 function Row({label, children}: {label: string; children: React.ReactNode}) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-hairline px-4 py-3 last:border-b-0">
+    <div className="flex items-center justify-between gap-3 px-4 py-3 even:bg-[var(--overlay-wash)]/40">
       <span className="text-[12.5px] font-bold text-faint">{label}</span>
       {children}
     </div>

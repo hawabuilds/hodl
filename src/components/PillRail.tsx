@@ -49,11 +49,11 @@ export function PillRail<T extends string>({
             aria-pressed={active}
             onClick={() => onChange(option)}
             className={cn(
-              "shrink-0 rounded-[9px] px-3.5 py-1.5 text-[12.5px] font-extrabold transition-colors duration-150",
+              "shrink-0 rounded-full px-3.5 py-1.5 text-[12.5px] font-extrabold transition-colors duration-150",
               active
                 ? positive
-                  ? "bg-[rgba(0,200,5,0.12)] text-green-deep"
-                  : "bg-[rgba(255,90,82,0.11)] text-red"
+                  ? "bg-[rgb(61_219_168/12%)] text-price-up"
+                  : "bg-[rgb(255_107_122/11%)] text-price-down"
                 : "text-faint hover:text-muted",
             )}
           >

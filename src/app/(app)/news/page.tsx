@@ -112,7 +112,7 @@ export default function NewsPage() {
                 title={lead ? "More stories" : "Stories"}
                 note={`${articles.length} in view`}
               />
-              <ul className="-mx-[22px]">
+              <ul className="-mx-[22px] flex flex-col gap-px">
                 {rest.map((item, i) => (
                   <StoryRow
                     key={item.id}
@@ -128,7 +128,7 @@ export default function NewsPage() {
       )}
 
       {feed.error ? (
-        <p className="mt-7 border-t border-hairline pt-4 text-[13px] text-muted">
+        <p className="mt-7 pt-4 text-[13px] text-muted">
           Could not load the news feed. Retrying.
         </p>
       ) : null}
@@ -188,7 +188,7 @@ function TopicChip({topic}: {topic: FeedItem["topic"]}) {
       className={cn(
         "rounded-[5px] px-[6px] py-[3px] text-[9.5px] font-extrabold uppercase leading-none tracking-[0.07em]",
         topic === "robinhood"
-          ? "bg-[rgba(0,200,5,0.14)] text-green-deep"
+          ? "bg-[var(--price-up-wash)] text-price-up"
           : "bg-[var(--overlay-wash)] text-muted",
       )}
     >
@@ -253,7 +253,7 @@ function LeadStory({item, window}: {item: FeedItem; window: NewsWindow}) {
       href={item.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="block overflow-hidden rounded-[20px] border border-hairline bg-card shadow-card transition-colors hover:border-[var(--border-hover-strong)]"
+      className="block overflow-hidden rounded-2xl bg-input shadow-card transition-[background-color,box-shadow] hover:bg-[var(--overlay-wash)] hover:shadow-lift"
     >
       {item.imageUrl ? (
         <div className="relative">
@@ -295,7 +295,7 @@ function StoryRow({
         href={item.url}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex items-start gap-3.5 px-[22px] py-3.5 transition-colors duration-150 hover:bg-[var(--overlay-wash)]"
+        className="flex items-start gap-3.5 px-[22px] py-[13px] transition-colors duration-150 hover:bg-[var(--overlay-wash)]"
       >
         <div className="min-w-0 flex-1">
           <TopicChip topic={item.topic} />
@@ -385,16 +385,18 @@ function SourceCard({item}: {item: FeedItem}) {
       target="_blank"
       rel="noopener noreferrer"
       className={cn(
-        "flex w-[210px] shrink-0 flex-col gap-2.5 rounded-[18px] p-3.5",
-        "border border-[rgba(0,200,5,0.26)] bg-[rgba(0,200,5,0.05)]",
-        "transition-transform duration-200 hover:-translate-y-0.5",
+        "group flex w-[210px] shrink-0 flex-col gap-2.5 rounded-[14px] p-3.5",
+        "bg-input shadow-card",
+        "transition-[background-color,box-shadow] duration-150",
+        "hover:bg-[var(--overlay-wash)] hover:shadow-lift",
+        "active:bg-[var(--overlay-wash-hover)]",
       )}
     >
       <div className="flex items-center gap-2">
         <Avatar name={item.source} src={item.avatarUrl} size={32} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1">
-            <span className="truncate text-[13px] font-extrabold tracking-[-0.015em]">
+            <span className="truncate text-[13px] font-extrabold tracking-[-0.015em] text-ink">
               {item.source}
             </span>
             <VerifiedTick size={12} label="Verified account" />
@@ -403,9 +405,9 @@ function SourceCard({item}: {item: FeedItem}) {
             @{item.handle}
           </div>
         </div>
-        <ArrowUpRightIcon className="h-3.5 w-3.5 shrink-0 text-faint" />
+        <ArrowUpRightIcon className="h-3.5 w-3.5 shrink-0 text-faint transition-colors group-hover:text-accent-link" />
       </div>
-      <p className="line-clamp-2 text-[12px] font-medium leading-[1.45] text-muted">
+      <p className="line-clamp-2 text-[12px] font-normal leading-[1.45] text-muted">
         {item.body}
       </p>
     </a>
@@ -415,7 +417,7 @@ function SourceCard({item}: {item: FeedItem}) {
 function EmptyFeed() {
   return (
     <div className="px-6 py-12 text-center">
-      <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-wash text-faint">
+      <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[var(--overlay-wash)] text-faint">
         <NewsIcon className="h-6 w-6" />
       </span>
       <p className="mt-4 text-[14px] font-bold">Nothing in this window</p>
@@ -429,16 +431,16 @@ function EmptyFeed() {
 function FeedSkeleton() {
   return (
     <div>
-      <div className="h-[300px] animate-pulse rounded-[20px] bg-wash" />
-      <div className="mt-6 space-y-4">
+      <div className="h-[300px] animate-pulse rounded-2xl bg-input shadow-inset-soft" />
+      <div className="mt-6 flex flex-col gap-px">
         {Array.from({length: 4}).map((_, i) => (
-          <div key={i} className="flex gap-3.5">
+          <div key={i} className="flex gap-3.5 px-[22px] py-[13px]">
             <div className="flex-1">
-              <div className="h-3 w-14 animate-pulse rounded bg-wash" />
-              <div className="mt-2.5 h-3.5 w-full animate-pulse rounded bg-wash" />
-              <div className="mt-2 h-3.5 w-2/3 animate-pulse rounded bg-wash" />
+              <div className="h-3 w-14 animate-pulse rounded bg-[var(--overlay-wash)]" />
+              <div className="mt-2.5 h-3.5 w-full animate-pulse rounded bg-[var(--overlay-wash)]" />
+              <div className="mt-2 h-3.5 w-2/3 animate-pulse rounded bg-[var(--overlay-wash)]" />
             </div>
-            <div className="h-[78px] w-[78px] shrink-0 animate-pulse rounded-[14px] bg-wash" />
+            <div className="h-[78px] w-[78px] shrink-0 animate-pulse rounded-[14px] bg-[var(--overlay-wash)]" />
           </div>
         ))}
       </div>

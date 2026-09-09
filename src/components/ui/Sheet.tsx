@@ -10,6 +10,8 @@ interface SheetProps {
   onClose: () => void;
   /** Sheet height as a percentage of the frame. */
   height?: "80%" | "90%" | "auto";
+  /** Near-black terminal popup — stays dark in legacy palette and light mode. */
+  surface?: "elevated" | "popup";
   header?: ReactNode;
   footer?: ReactNode;
   children: ReactNode;
@@ -20,6 +22,7 @@ export function Sheet({
   open,
   onClose,
   height = "90%",
+  surface = "elevated",
   header,
   footer,
   children,
@@ -45,17 +48,19 @@ export function Sheet({
         }}
         className={cn(
           "absolute inset-0 z-[55] flex items-end justify-center",
-          "bg-[rgba(8,12,9,0.46)] backdrop-blur-[6px] transition-opacity duration-300",
+          "bg-[var(--backdrop-scrim)] backdrop-blur-[6px] transition-opacity duration-300",
           open
             ? "visible opacity-100 pointer-events-auto"
             : "invisible pointer-events-none opacity-0",
         )}
       >
         <div
+          data-surface={surface === "popup" ? "popup" : undefined}
           style={{ height: height === "auto" ? undefined : height }}
           className={cn(
-            "flex min-h-0 w-full max-w-none flex-col rounded-t-[26px] bg-card",
+            "flex min-h-0 w-full max-w-none flex-col rounded-t-[26px] shadow-panel",
             "transition-transform duration-[400ms] ease-sheet sm:max-w-[430px]",
+            surface === "popup" ? "bg-surface-popup" : "bg-surface-elevated",
             open ? "translate-y-0" : "translate-y-full",
           )}
         >
@@ -102,7 +107,7 @@ export function SheetFooter({
   return (
     <div
       className={cn(
-        "grid gap-2.5 border-t border-hairline bg-card px-[22px] pt-3.5",
+        "grid gap-2.5 bg-surface-elevated px-[22px] pt-3.5 shadow-[0_-10px_28px_-14px_var(--shadow-color)]",
         "pb-[calc(18px+env(safe-area-inset-bottom))]",
         columns === 2 ? "grid-cols-2" : "grid-cols-1",
       )}

@@ -1,0 +1,252 @@
+/**
+ * HODL brand tokens — single source of truth.
+ *
+ * Default palette: terminal — near-black page base (#0D0F18), input-level elevation.
+ * Legacy palette: html[data-palette="legacy"] or ?palette=legacy (Step 3 deploy).
+ *
+ * Theme: html.dark (default) | html.light — set by boot script + ThemeProvider.
+ */
+
+/* Brand scale (shared across themes) */
+:root {
+  --brand-50: #f0efff;
+  --brand-100: #e0deff;
+  --brand-200: #c4c2ff;
+  --brand-300: #abaef5;
+  --brand-400: #8a85ff;
+  --brand-500: #6860ff;
+  --brand-600: #524bd4;
+  --brand-700: #3f3999;
+  --brand-800: #2d2866;
+  --brand-900: #1e1b45;
+  --brand-disabled: rgb(104 96 255 / 35%);
+  --brand-focus-ring: #abaef5;
+}
+
+/* --- Dark terminal palette (default) --- */
+:root,
+html.dark {
+  --bg-base: #0d0f18;
+  --surface-base: var(--bg-base);
+  --surface-card: #161a40;
+  --surface-elevated: #1e2452;
+  --surface-hover: #252b62;
+  --surface-pressed: #121633;
+  --bg-overlay: #080a12;
+  --bg-input: #101428;
+  --surface-popup: #0d0f18;
+
+  --border-default: #2e3568;
+  --border-subtle: #1e2452;
+  --divider: #323968;
+  --border-focus: #abaef5;
+
+  --text-primary: #f5f6ff;
+  --text-secondary: #9ea2c8;
+  --text-tertiary: #8b90ae;
+  --text-disabled: #4a4580;
+
+  --price-up: #3ddba8;
+  --price-up-light: #047857;
+  --price-up-chart: #4ae8b8;
+  --price-down: #ff6b7a;
+  --price-down-light: #dc2626;
+  --price-up-wash: rgb(61 219 168 / 14%);
+  --price-up-wash-hover: rgb(61 219 168 / 22%);
+  --price-down-wash: rgb(255 107 122 / 14%);
+  --price-down-wash-hover: rgb(255 107 122 / 22%);
+
+  --success: var(--price-up);
+  --error: var(--price-down);
+  --warning: #f59e0b;
+
+  --accent: #6860ff;
+  --accent-soft: #abaef5;
+  --accent-link: #8a85ff;
+
+  --btn-primary-bg: #6860ff;
+  --btn-primary-bg-hover: #524bd4;
+  --btn-primary-bg-alt: #524bd4;
+  --btn-primary-fg: #ffffff;
+
+  --overlay-wash: rgb(171 174 245 / 8%);
+  --overlay-wash-hover: rgb(171 174 245 / 14%);
+  --border-hover: rgb(171 174 245 / 18%);
+  --border-hover-strong: rgb(171 174 245 / 24%);
+  --scrollbar: rgb(171 174 245 / 16%);
+
+  --backdrop-scrim: rgb(8 10 18 / 46%);
+
+  --shadow-color: rgb(8 10 18 / 55%);
+  --shadow-card: 0 14px 30px -26px var(--shadow-color);
+  --shadow-lift: 0 22px 40px -26px var(--shadow-color);
+  --shadow-panel: 0 20px 44px -32px var(--shadow-color);
+  --shadow-modal: 0 40px 90px -24px var(--shadow-color),
+    0 0 0 1px rgb(171 174 245 / 8%);
+  --shadow-frame: 0 44px 100px -34px var(--shadow-color),
+    0 0 0 1px rgb(171 174 245 / 8%);
+  --shadow-menu: 0 24px 50px -18px var(--shadow-color);
+  --shadow-dark: 0 16px 34px -14px var(--shadow-color);
+  --shadow-brand: 0 16px 32px -14px rgb(104 96 255 / 45%);
+  --shadow-tab-active: 0 6px 18px -10px rgb(104 96 255 / 45%);
+  --shadow-price-up: 0 16px 32px -14px rgb(61 219 168 / 35%);
+  --shadow-price-down: 0 16px 32px -14px rgb(255 107 122 / 35%);
+  --shadow-inset-soft: inset 0 2px 8px rgb(0 0 0 / 35%);
+  --shadow-inset-focus: inset 0 2px 8px rgb(0 0 0 / 35%),
+    0 0 0 2px rgb(104 96 255 / 14%);
+
+  --segment-track: rgb(255 255 255 / 4%);
+
+  --frame-chrome: #080a12;
+  --frame-chrome-glow: #161a40;
+
+  --card: var(--surface-card);
+  --ink: var(--text-primary);
+  --muted: var(--text-secondary);
+  --faint: var(--text-tertiary);
+  --wash: var(--surface-hover);
+  --hairline: var(--border-default);
+  --green: var(--price-up);
+  --green-deep: var(--price-up);
+  --red: var(--price-down);
+  --surface-elevated-legacy: var(--surface-elevated);
+  --premium-bg: var(--bg-base);
+  --scrollbar-thumb: var(--scrollbar);
+  --btn-dark-bg: var(--btn-primary-bg);
+  --btn-dark-fg: var(--btn-primary-fg);
+  --shadow-green: var(--shadow-price-up);
+}
+
+/* Trade/settings popups — near-black terminal chrome even in legacy + light page themes */
+[data-surface="popup"] {
+  --surface-base: #0d0f18;
+  --surface-popup: #0d0f18;
+  --surface-elevated: #101428;
+  --surface-hover: #161a28;
+  --surface-pressed: #121633;
+  --bg-input: #101428;
+  --segment-track: rgb(255 255 255 / 4%);
+  --text-primary: #f5f6ff;
+  --text-secondary: #9ea2c8;
+  --text-tertiary: #8b90ae;
+  --text-disabled: #4a4580;
+  --overlay-wash: rgb(171 174 245 / 8%);
+  --overlay-wash-hover: rgb(171 174 245 / 14%);
+  --ink: var(--text-primary);
+  --muted: var(--text-secondary);
+  --faint: var(--text-tertiary);
+  --shadow-color: rgb(8 10 18 / 55%);
+}
+
+/* --- Light palette --- */
+html.light {
+  --bg-base: #f5f5ff;
+  --surface-base: #f5f5ff;
+  --surface-card: #fafaff;
+  --surface-elevated: #ffffff;
+  --surface-hover: #f0efff;
+  --surface-pressed: #e0deff;
+  --bg-overlay: rgb(22 26 64 / 42%);
+  --bg-input: #fafaff;
+  --surface-popup: #0d0f18;
+
+  --border-default: #e0deff;
+  --border-subtle: #f0efff;
+  --divider: #d4d6f0;
+  --border-focus: #6860ff;
+
+  --text-primary: #161a40;
+  --text-secondary: #525680;
+  --text-tertiary: #6b7089;
+  --text-disabled: #9ea2c8;
+
+  --price-up: #047857;
+  --price-up-light: #047857;
+  --price-up-chart: #059669;
+  --price-down: #dc2626;
+  --price-down-light: #dc2626;
+  --price-up-wash: rgb(4 120 87 / 10%);
+  --price-up-wash-hover: rgb(4 120 87 / 16%);
+  --price-down-wash: rgb(220 38 38 / 10%);
+  --price-down-wash-hover: rgb(220 38 38 / 16%);
+
+  --success: var(--price-up);
+  --error: var(--price-down);
+  --warning: #d97706;
+
+  --accent: #6860ff;
+  --accent-soft: #524bd4;
+  --accent-link: #6860ff;
+
+  --btn-primary-bg: #6860ff;
+  --btn-primary-bg-hover: #524bd4;
+  --btn-primary-bg-alt: #524bd4;
+  --btn-primary-fg: #ffffff;
+
+  --overlay-wash: rgb(104 96 255 / 6%);
+  --overlay-wash-hover: rgb(104 96 255 / 10%);
+  --border-hover: rgb(104 96 255 / 14%);
+  --border-hover-strong: rgb(104 96 255 / 20%);
+  --scrollbar: rgb(104 96 255 / 18%);
+
+  --backdrop-scrim: rgb(22 26 64 / 32%);
+
+  --shadow-color: rgb(22 26 64 / 10%);
+  --shadow-card: 0 14px 30px -26px var(--shadow-color);
+  --shadow-lift: 0 22px 40px -26px var(--shadow-color);
+  --shadow-panel: 0 20px 44px -32px var(--shadow-color);
+  --shadow-modal: 0 40px 90px -24px var(--shadow-color),
+    0 0 0 1px rgb(104 96 255 / 8%);
+  --shadow-frame: 0 44px 100px -34px var(--shadow-color),
+    0 0 0 1px rgb(104 96 255 / 10%);
+  --shadow-menu: 0 24px 50px -18px var(--shadow-color);
+  --shadow-dark: 0 16px 34px -14px var(--shadow-color);
+  --shadow-brand: 0 16px 32px -14px rgb(104 96 255 / 28%);
+  --shadow-tab-active: 0 6px 18px -10px rgb(104 96 255 / 22%);
+  --shadow-price-up: 0 16px 32px -14px rgb(4 120 87 / 22%);
+  --shadow-price-down: 0 16px 32px -14px rgb(220 38 38 / 22%);
+  --shadow-inset-soft: inset 0 2px 6px rgb(22 26 64 / 8%);
+  --shadow-inset-focus: inset 0 2px 6px rgb(22 26 64 / 8%),
+    0 0 0 2px rgb(104 96 255 / 12%);
+
+  --segment-track: rgb(22 26 64 / 5%);
+
+  --frame-chrome: #eef0ff;
+  --frame-chrome-glow: #fafaff;
+
+  --card: var(--surface-card);
+  --ink: var(--text-primary);
+  --muted: var(--text-secondary);
+  --faint: var(--text-tertiary);
+  --wash: var(--surface-hover);
+  --hairline: var(--border-default);
+  --green: var(--price-up);
+  --green-deep: var(--price-up);
+  --red: var(--price-down);
+  --premium-bg: var(--bg-base);
+  --scrollbar-thumb: var(--scrollbar);
+}
+
+/* Step 3 deploy — purple-navy page fill (#161A40 as base), dark only */
+html.dark[data-palette="legacy"],
+html[data-palette="legacy"]:not(.light) {
+  --bg-base: #161a40;
+  --surface-base: #161a40;
+  --surface-card: #1e2452;
+  --surface-elevated: #252b62;
+  --surface-hover: #2c336e;
+  --surface-pressed: #121633;
+  --bg-overlay: #0f1229;
+  --bg-input: #121633;
+
+  --border-default: #2e3568;
+  --border-subtle: #252b62;
+  --divider: #323968;
+
+  --shadow-color: rgb(15 18 41 / 55%);
+  --frame-chrome: #0f1229;
+  --frame-chrome-glow: #1e2452;
+
+  --card: var(--surface-base);
+  --premium-bg: var(--surface-base);
+}

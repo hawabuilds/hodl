@@ -56,7 +56,7 @@ export function ShareProfileButton({
       className={cn(
         "grid h-9 w-9 place-items-center rounded-full transition-colors",
         copied
-          ? "text-green-deep"
+          ? "text-success"
           : "text-muted hover:bg-[var(--overlay-wash)] hover:text-ink",
         className,
       )}

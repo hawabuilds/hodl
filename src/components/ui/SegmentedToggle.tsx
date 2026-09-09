@@ -26,7 +26,7 @@ export function SegmentedToggle<T extends string>({
     <div
       role="group"
       className={cn(
-        "flex gap-0.5 rounded-[10px] border border-hairline bg-wash p-[3px]",
+        "flex gap-1 rounded-2xl bg-[var(--segment-track)] p-1 shadow-inset-soft",
         className,
       )}
     >
@@ -40,11 +40,11 @@ export function SegmentedToggle<T extends string>({
             aria-label={option.label}
             onClick={() => onChange(option.value)}
             className={cn(
-              "grid place-items-center rounded-[7px] transition-all duration-150",
+              "grid place-items-center rounded-xl transition-[background-color,color,box-shadow] duration-150",
               option.icon ? "h-[26px] w-[30px]" : "h-[26px] px-3 text-[12px] font-bold",
               active
-                ? "bg-card text-ink shadow-[0_2px_6px_-3px_rgba(9,24,14,0.3)]"
-                : "text-faint",
+                ? "bg-surface-elevated/90 text-ink shadow-tab-active"
+                : "text-faint hover:bg-[var(--overlay-wash)] hover:text-muted",
             )}
           >
             {option.icon ?? option.label}

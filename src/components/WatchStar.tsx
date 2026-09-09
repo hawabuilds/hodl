@@ -36,7 +36,7 @@ export function WatchStar({
       className={cn(
         "grid h-8 w-8 shrink-0 place-items-center rounded-full transition-colors",
         watched
-          ? "text-green-deep hover:bg-[rgba(0,200,5,0.1)]"
+          ? "text-price-up hover:bg-[rgb(61_219_168/10%)]"
           : "text-faint hover:bg-[var(--overlay-wash)] hover:text-ink",
         className,
       )}

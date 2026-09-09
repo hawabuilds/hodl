@@ -3,13 +3,14 @@
 import Link from "next/link";
 import {AssetLink} from "@/components/AssetLink";
 import {cn} from "@/lib/cn";
-import {money, percent, units} from "@/lib/format";
+import {money, units} from "@/lib/format";
 import {formatLiquidityUsd} from "@/lib/priceState";
 import type {Holding} from "@/lib/types";
 import {loadedLogoFor} from "@/lib/tokenLogoCache";
 import {tokenFor} from "@/lib/tokenCache";
 import {Avatar} from "./ui/Avatar";
 import {VerifiedTick} from "./ui/Badges";
+import {PriceDelta} from "./ui/PriceDelta";
 
 /**
  * Holdings, as rows that link through to the chart page.
@@ -82,37 +83,42 @@ export function HoldingsList({
                   </span>
                   {holding.kind === "rwa" ? <VerifiedTick size={13} /> : null}
                 </div>
-                <div className="tnum mt-[3px] truncate text-[12px] font-semibold text-faint">
+                <div className="tabular-nums mt-[3px] truncate text-[12px] font-semibold text-faint">
                   {units(holding.amount)}{" "}
                   {holding.kind === "rwa" ? "shares" : "tokens"}
                 </div>
               </div>
 
               <div className="shrink-0 text-right">
-                <div className="tnum text-[14px] font-extrabold tracking-[-0.015em]">
+                <div className="tabular-nums text-[14px] font-extrabold tracking-[-0.015em]">
                   {formatLiquidityUsd(holding.valueUsd)}
                 </div>
-                <div
-                  className={cn(
-                    "tnum mt-[3px] text-[12px] font-bold",
-                    positive ? "text-green-deep" : "text-red",
-                  )}
-                >
+                <div className="tabular-nums mt-[3px] text-[12px] font-bold">
                   {pnlUsd === null ? (
                     <>
-                      {percent(holding.changePct)}
-                      <span className="ml-1.5 font-semibold opacity-75">24h</span>
+                      <PriceDelta value={holding.changePct} />
+                      <span className="ml-1.5 font-semibold text-faint opacity-75">
+                        24h
+                      </span>
                     </>
                   ) : (
-                    <>
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-0.5",
+                        positive ? "text-price-up" : "text-price-down",
+                      )}
+                    >
+                      <span aria-hidden="true" className="text-[0.85em]">
+                        {positive ? "▲" : "▼"}
+                      </span>
                       {positive ? "+" : "−"}
                       {money(Math.abs(pnlUsd))}
                       {pnlPct === null ? null : (
                         <span className="ml-1.5 font-semibold opacity-75">
-                          {percent(pnlPct)}
+                          <PriceDelta value={pnlPct} />
                         </span>
                       )}
-                    </>
+                    </span>
                   )}
                 </div>
               </div>

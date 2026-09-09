@@ -119,7 +119,7 @@ function colorFromSeed(seed: string): string {
   for (let i = 0; i < seed.length; i++) {
     hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
   }
-  const palette = ["#00C805", "#7C5CFF", "#FF8A3D", "#3DBBFF", "#FF5C93", "#F5C518"];
+  const palette = ["#6860FF", "#3DDBA8", "#FF6B7A", "#ABAEF5", "#8A85FF", "#F59E0B"];
   return palette[hash % palette.length];
 }
 

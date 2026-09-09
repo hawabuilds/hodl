@@ -82,7 +82,7 @@ export function TradesPanel({
                 <span
                   className={cn(
                     "block text-[12.5px] font-extrabold leading-none",
-                    buy ? "text-green-deep" : "text-red",
+                    buy ? "text-price-up" : "text-price-down",
                   )}
                 >
                   {buy ? "Buy" : "Sell"}
@@ -93,21 +93,21 @@ export function TradesPanel({
               </div>
 
               <div className="min-w-0">
-                <span className="tnum block truncate text-[13.5px] font-bold tracking-[-0.01em]">
+                <span className="tabular-nums block truncate text-[13.5px] font-bold tracking-[-0.01em]">
                   {units(trade.amount)}
                   <span className="ml-1 text-[10.5px] font-semibold text-faint">
                     {symbol}
                   </span>
                 </span>
-                <span className="tnum mt-1 block truncate text-[10.5px] font-semibold text-faint">
+                <span className="tabular-nums mt-1 block truncate text-[10.5px] font-semibold text-faint">
                   {fmtPrice(trade.priceUsd)}
                 </span>
               </div>
 
               <span
                 className={cn(
-                  "tnum self-center text-right text-[13.5px] font-extrabold tracking-[-0.01em]",
-                  buy ? "text-green-deep" : "text-red",
+                  "tabular-nums self-center text-right text-[13.5px] font-extrabold tracking-[-0.01em]",
+                  buy ? "text-price-up" : "text-price-down",
                 )}
               >
                 {compactMoney(trade.amountUsd)}
@@ -159,7 +159,7 @@ export function PanelError({
         <button
           type="button"
           onClick={onRetry}
-          className="mt-2 text-[13px] font-bold text-green-deep"
+          className="mt-2 text-[13px] font-bold text-accent-link"
         >
           Retry
         </button>

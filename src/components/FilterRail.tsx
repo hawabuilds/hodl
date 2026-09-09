@@ -81,11 +81,11 @@ export function FilterRail<T extends string>({
             aria-pressed={active}
             onClick={() => onChange(option.value)}
             className={cn(
-              "shrink-0 whitespace-nowrap rounded-[12px] px-3.5 py-2 text-[13.5px] leading-none",
+              "shrink-0 whitespace-nowrap rounded-full px-3.5 py-2 text-[13.5px] leading-none",
               "transition-[background-color,color,opacity] duration-150",
               active
-                ? "bg-[var(--overlay-wash-hover)] font-extrabold text-ink"
-                : "bg-[var(--overlay-wash)] font-semibold text-faint hover:text-muted",
+                ? "bg-surface-elevated font-extrabold text-ink shadow-tab-active"
+                : "bg-[var(--overlay-wash)] font-semibold text-faint hover:bg-[var(--overlay-wash-hover)] hover:text-muted",
               option.disabled && !active && "cursor-not-allowed opacity-40",
             )}
           >
@@ -93,7 +93,7 @@ export function FilterRail<T extends string>({
             {option.hint ? (
               <span
                 className={cn(
-                  "tnum ml-1.5 text-[11.5px] font-semibold",
+                  "tabular-nums ml-1.5 text-[11.5px] font-semibold",
                   active ? "text-muted" : "text-faint",
                 )}
               >

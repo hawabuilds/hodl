@@ -26,7 +26,7 @@ function Tick({
       onClick={onClick}
       className={cn(
         "rounded-full px-2.5 py-1 text-[12px] font-bold",
-        on ? "bg-green text-[#04230A]" : "bg-wash text-muted",
+        on ? "bg-success text-[var(--surface-pressed)]" : "bg-surface-hover text-muted",
       )}
     >
       {label}
@@ -105,7 +105,7 @@ export function NotificationSettings({open, onClose}: {open: boolean; onClose: (
   }
 
   return (
-    <Sheet open={open} onClose={onClose} height="90%" label="Notifications">
+    <Sheet open={open} onClose={onClose} height="90%" surface="popup" label="Notifications">
       <div className="space-y-5 px-1 pb-8">
         {!prefs ? (
           <p className="text-[13px] text-muted">Loading…</p>
@@ -184,7 +184,7 @@ export function NotificationSettings({open, onClose}: {open: boolean; onClose: (
                 onChange={(event) =>
                   void save({...prefs, minPositionUsd: Math.max(0, Number(event.target.value) || 0)})
                 }
-                className="mt-1 w-full rounded-[12px] border border-hairline bg-wash px-3 py-2 text-[14px] text-ink"
+                className="mt-1 w-full rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[14px] text-ink shadow-inset-soft focus:shadow-inset-focus"
               />
             </label>
             <label className="block text-[12px] font-semibold text-muted">
@@ -194,13 +194,13 @@ export function NotificationSettings({open, onClose}: {open: boolean; onClose: (
                   type="time"
                   value={prefs.quietStart ?? ""}
                   onChange={(event) => void save({...prefs, quietStart: event.target.value || null})}
-                  className="flex-1 rounded-[12px] border border-hairline bg-wash px-3 py-2 text-[14px] text-ink"
+                  className="flex-1 rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[14px] text-ink shadow-inset-soft focus:shadow-inset-focus"
                 />
                 <input
                   type="time"
                   value={prefs.quietEnd ?? ""}
                   onChange={(event) => void save({...prefs, quietEnd: event.target.value || null})}
-                  className="flex-1 rounded-[12px] border border-hairline bg-wash px-3 py-2 text-[14px] text-ink"
+                  className="flex-1 rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[14px] text-ink shadow-inset-soft focus:shadow-inset-focus"
                 />
               </div>
             </label>
@@ -226,7 +226,7 @@ function Row({title, on, onToggle}: {title: string; on: boolean; onToggle: () =>
       <span
         className={cn(
           "relative h-6 w-10 rounded-full transition-colors",
-          on ? "bg-green" : "bg-wash",
+          on ? "bg-success" : "bg-surface-hover",
         )}
       >
         <span

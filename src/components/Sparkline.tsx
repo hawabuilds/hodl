@@ -41,7 +41,7 @@ export function Sparkline({
     >
       <path
         d={path}
-        stroke={positive ? "var(--green)" : "var(--red)"}
+        stroke={positive ? "var(--price-up)" : "var(--price-down)"}
         strokeWidth="2.2"
         strokeLinecap="round"
         strokeLinejoin="round"

@@ -21,8 +21,8 @@ export function SearchBar({
   return (
     <div
       className={cn(
-        "flex items-center gap-2.5 rounded-control border border-hairline bg-card px-[15px] py-[13px]",
-        "transition-[border-color] duration-200",
+        "flex items-center gap-2.5 rounded-2xl bg-[var(--bg-input)] px-[15px] py-[13px] shadow-inset-soft",
+        "transition-[box-shadow] duration-200 focus-within:shadow-inset-focus",
         className,
       )}
     >

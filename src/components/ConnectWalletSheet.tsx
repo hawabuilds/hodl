@@ -79,7 +79,7 @@ export function ConnectWalletSheet({
       </p>
 
       {list.length === 0 ? (
-        <div className="rounded-[14px] border border-hairline bg-wash px-4 py-5 text-center text-[13px] text-muted">
+        <div className="rounded-2xl bg-[var(--segment-track)] px-4 py-5 text-center text-[13px] text-muted shadow-inset-soft">
           No wallets detected. Install MetaMask, Rabby or Coinbase Wallet, then
           reopen this sheet.
         </div>
@@ -92,8 +92,8 @@ export function ConnectWalletSheet({
               disabled={busyId !== null}
               onClick={() => void handle(connector)}
               className={cn(
-                "flex items-center gap-3 rounded-[14px] border border-hairline bg-card px-4 py-3.5",
-                "text-left transition-colors hover:bg-wash disabled:opacity-55",
+                "flex items-center gap-3 rounded-2xl bg-[var(--overlay-wash)] px-4 py-3.5",
+                "text-left transition-[background-color,transform] hover:-translate-y-px hover:bg-[var(--overlay-wash-hover)] disabled:opacity-55",
               )}
             >
               <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-wash">
@@ -123,7 +123,7 @@ export function ConnectWalletSheet({
       )}
 
       {error ? (
-        <p className="mt-3 text-[12.5px] font-medium text-red">{error}</p>
+        <p className="mt-3 text-[12.5px] font-medium text-error">{error}</p>
       ) : null}
     </Sheet>
   );

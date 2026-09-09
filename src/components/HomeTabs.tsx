@@ -29,7 +29,7 @@ export function HomeTabs({
     <div
       role="tablist"
       aria-label="Market"
-      className="-mx-[22px] flex border-b border-hairline px-[22px]"
+      className="-mx-[22px] flex px-[22px]"
     >
       {TABS.map((tab) => {
         const active = tab.value === value;
@@ -54,7 +54,7 @@ export function HomeTabs({
               aria-hidden="true"
               className={cn(
                 "absolute inset-x-2 -bottom-px h-[2.5px] rounded-full transition-opacity duration-150",
-                active ? "bg-green opacity-100" : "opacity-0",
+                active ? "bg-brand-500 opacity-100" : "opacity-0",
               )}
             />
           </button>

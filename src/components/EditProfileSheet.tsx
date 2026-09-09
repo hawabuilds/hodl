@@ -82,7 +82,7 @@ export function EditProfileSheet({
             value={bio}
             onChange={(event) => setBio(event.target.value.slice(0, BIO_LIMIT))}
             placeholder="What you trade and why"
-            className="w-full resize-none rounded-control border border-hairline bg-card px-3.5 py-3 text-[14px] leading-[1.45] text-ink outline-none transition-[border-color,box-shadow] placeholder:text-faint focus:border-[rgba(0,200,5,0.35)] focus:shadow-[0_0_0_3px_rgba(0,200,5,0.08)]"
+            className="w-full resize-none rounded-2xl bg-[var(--bg-input)] px-3.5 py-3 text-[14px] leading-[1.45] text-ink shadow-inset-soft outline-none transition-[box-shadow,background-color] placeholder:text-faint focus:shadow-inset-focus"
           />
           <p className="mt-1 text-right text-[11px] font-semibold text-faint">
             {BIO_LIMIT - bio.length}
@@ -157,7 +157,7 @@ function Field({
         maxLength={maxLength}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-control border border-hairline bg-card px-3.5 py-3 text-[14px] font-medium text-ink outline-none transition-[border-color,box-shadow] placeholder:text-faint focus:border-[rgba(0,200,5,0.35)] focus:shadow-[0_0_0_3px_rgba(0,200,5,0.08)]"
+        className="w-full rounded-2xl bg-[var(--bg-input)] px-3.5 py-3 text-[14px] font-medium text-ink shadow-inset-soft outline-none transition-[box-shadow,background-color] placeholder:text-faint focus:shadow-inset-focus"
       />
     </div>
   );

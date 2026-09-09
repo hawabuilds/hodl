@@ -34,11 +34,11 @@ export function StickyPageHeader({
   return (
     <div
       className={cn(
-        "sticky top-0 z-20 -mx-[22px] border-b border-hairline bg-card px-[22px]",
+        "sticky top-0 z-20 -mx-[22px] bg-surface-base px-[22px] shadow-[0_8px_24px_-20px_var(--shadow-color)]",
         APP_SCROLL_PAD_TOP,
         className,
       )}
-      style={{backgroundColor: "var(--card)"}}
+      style={{backgroundColor: "var(--surface-base)"}}
     >
       {children}
     </div>
@@ -56,14 +56,14 @@ export function AppShell({children}: {children: ReactNode}) {
   }, [ready, authenticated, router]);
 
   if (ready && !authenticated) {
-    return <div className="h-full bg-premium" />;
+    return <div className="h-full bg-surface-base" />;
   }
   if (!ready && !cached) {
-    return <div className="h-full bg-premium" />;
+    return <div className="h-full bg-surface-base" />;
   }
 
   return (
-    <div className="flex h-full flex-col bg-premium">
+    <div className="flex h-full flex-col bg-surface-base">
       <div className="scroll-quiet min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-[22px] pb-[calc(96px+env(safe-area-inset-bottom))]">
         {children}
       </div>

@@ -100,9 +100,9 @@ export default function ProfilePage() {
         <button
           type="button"
           onClick={() => setConnections("followers")}
-          className="transition-colors hover:text-green-deep"
+          className="transition-colors hover:text-accent-link"
         >
-          <b className="tnum font-extrabold">
+          <b className="tabular-nums font-extrabold">
             {compact(followers.followers.length)}
           </b>{" "}
           <span className="text-faint">followers</span>
@@ -110,9 +110,9 @@ export default function ProfilePage() {
         <button
           type="button"
           onClick={() => setConnections("following")}
-          className="transition-colors hover:text-green-deep"
+          className="transition-colors hover:text-accent-link"
         >
-          <b className="tnum font-extrabold">{follows.following.length}</b>{" "}
+          <b className="tabular-nums font-extrabold">{follows.following.length}</b>{" "}
           <span className="text-faint">following</span>
         </button>
       </div>
@@ -121,7 +121,7 @@ export default function ProfilePage() {
         <button
           type="button"
           onClick={() => setEditOpen(true)}
-          className="flex items-center gap-1.5 rounded-pill border border-hairline bg-card px-3.5 py-2 text-[12.5px] font-bold text-ink transition-colors hover:border-[var(--border-hover-strong)]"
+          className="flex items-center gap-1.5 rounded-full bg-[var(--overlay-wash)] px-3.5 py-2 text-[12.5px] font-bold text-ink transition-[background-color,transform] hover:-translate-y-px hover:bg-[var(--overlay-wash-hover)]"
         >
           <PencilIcon className="h-3.5 w-3.5" />
           Edit profile
@@ -132,7 +132,7 @@ export default function ProfilePage() {
       <div className="text-[11px] font-bold tracking-[0.09em] text-faint">
         PORTFOLIO VALUE
       </div>
-      <div className="tnum mt-1.5 text-[38px] font-extrabold leading-none tracking-[-0.035em]">
+      <div className="tabular-nums mt-1.5 text-[38px] font-extrabold leading-none tracking-[-0.035em]">
         {book.nativeReady || book.tokensReady
           ? book.holdings.length > 0 && shownValue <= 0
             ? "—"
@@ -141,10 +141,13 @@ export default function ProfilePage() {
       </div>
       <div
         className={cn(
-          "tnum mt-2 text-[13.5px] font-bold",
-          shownChangeUsd >= 0 ? "text-green-deep" : "text-red",
+          "tabular-nums mt-2 text-[13.5px] font-bold",
+          shownChangeUsd >= 0 ? "text-price-up" : "text-price-down",
         )}
       >
+        <span aria-hidden="true" className="mr-0.5">
+          {shownChangeUsd >= 0 ? "▲" : "▼"}
+        </span>
         {shownChangeUsd >= 0 ? "+" : "−"}
         {money(Math.abs(shownChangeUsd))}
         <span className="ml-1.5">{percent(shownChangePct)}</span>
@@ -173,13 +176,13 @@ export default function ProfilePage() {
       ) : null}
 
       <div className="mb-1 mt-6 text-[12.5px] font-semibold text-muted">
-        <span className="tnum font-extrabold text-ink">
+        <span className="tabular-nums font-extrabold text-ink">
           {book.holdings.length > 0 && book.positionsValue <= 0
             ? "—"
             : money(book.positionsValue)}
         </span>{" "}
         in positions ·{" "}
-        <span className="tnum font-extrabold text-ink">
+        <span className="tabular-nums font-extrabold text-ink">
           {money(book.ethValueUsd)}
         </span>{" "}
         ETH
@@ -207,7 +210,7 @@ export default function ProfilePage() {
       )}
 
       {book.error ? (
-        <p className="mt-5 px-0.5 text-[13px] leading-[1.5] text-red">
+        <p className="mt-5 px-0.5 text-[13px] leading-[1.5] text-error">
           Couldn&apos;t load your balances. Pull to refresh and try again.
         </p>
       ) : book.degraded ? (

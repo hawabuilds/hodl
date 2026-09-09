@@ -115,10 +115,10 @@ export function PushPrompt() {
           <button
             type="button"
             onClick={() => void enable()}
-            className="flex w-full items-center justify-between rounded-[16px] border border-hairline bg-card px-4 py-3 text-left shadow-menu"
+            className="flex w-full items-center justify-between rounded-2xl bg-surface-elevated px-4 py-3 text-left shadow-panel"
           >
             <span className="text-[13.5px] font-bold text-ink">Turn on notifications</span>
-            <span className="text-[12px] font-bold text-green-deep">Allow</span>
+            <span className="text-[12px] font-bold text-accent-link">Allow</span>
           </button>
         </div>
       ) : null}

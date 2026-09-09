@@ -9,22 +9,66 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        brand: {
+          50: "var(--brand-50)",
+          100: "var(--brand-100)",
+          200: "var(--brand-200)",
+          300: "var(--brand-300)",
+          400: "var(--brand-400)",
+          500: "var(--brand-500)",
+          600: "var(--brand-600)",
+          700: "var(--brand-700)",
+          800: "var(--brand-800)",
+          900: "var(--brand-900)",
+          DEFAULT: "var(--brand-500)",
+        },
+        surface: {
+          base: "var(--surface-base)",
+          card: "var(--surface-card)",
+          elevated: "var(--surface-elevated)",
+          hover: "var(--surface-hover)",
+          pressed: "var(--surface-pressed)",
+          popup: "var(--surface-popup)",
+          input: "var(--bg-input)",
+        },
+        input: {
+          DEFAULT: "var(--bg-input)",
+        },
+        text: {
+          primary: "var(--text-primary)",
+          secondary: "var(--text-secondary)",
+          tertiary: "var(--text-tertiary)",
+          disabled: "var(--text-disabled)",
+        },
+        price: {
+          up: "var(--price-up)",
+          down: "var(--price-down)",
+        },
+        success: "var(--success)",
+        error: "var(--error)",
+        warning: "var(--warning)",
+        accent: {
+          DEFAULT: "var(--accent)",
+          soft: "var(--accent-soft)",
+          link: "var(--accent-link)",
+        },
+        /* Legacy aliases — card follows --card (surface-card in terminal, base in legacy) */
         card: "var(--card)",
-        ink: "var(--ink)",
-        muted: "var(--muted)",
-        faint: "var(--faint)",
-        wash: "var(--wash)",
-        hairline: "var(--hairline)",
+        ink: "var(--text-primary)",
+        muted: "var(--text-secondary)",
+        faint: "var(--text-tertiary)",
+        wash: "var(--surface-hover)",
+        hairline: "var(--border-default)",
         green: {
-          DEFAULT: "var(--green)",
-          deep: "var(--green-deep)",
+          DEFAULT: "var(--price-up)",
+          deep: "var(--price-up)",
         },
         red: {
-          DEFAULT: "var(--red)",
+          DEFAULT: "var(--price-down)",
         },
         "btn-dark": {
-          DEFAULT: "var(--btn-dark-bg)",
-          fg: "var(--btn-dark-fg)",
+          DEFAULT: "var(--btn-primary-bg)",
+          fg: "var(--btn-primary-fg)",
         },
       },
       fontFamily: {
@@ -51,12 +95,16 @@ const config: Config = {
         frame: "var(--shadow-frame)",
         menu: "var(--shadow-menu)",
         dark: "var(--shadow-dark)",
-        green: "var(--shadow-green)",
+        brand: "var(--shadow-brand)",
+        green: "var(--shadow-price-up)",
+        "price-up": "var(--shadow-price-up)",
+        "price-down": "var(--shadow-price-down)",
+        "tab-active": "var(--shadow-tab-active)",
+        "inset-soft": "var(--shadow-inset-soft)",
+        "inset-focus": "var(--shadow-inset-focus)",
       },
       backgroundImage: {
         premium: "var(--premium-bg)",
-        flex:
-          "linear-gradient(150deg, #0B0F0C, #10261A 70%, #0B3D1F)",
       },
       keyframes: {
         rise: {

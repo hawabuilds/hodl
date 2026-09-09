@@ -1,5 +1,5 @@
 import type {Metadata, Viewport} from "next";
-import {Inter_Tight, JetBrains_Mono} from "next/font/google";
+import {Inter, JetBrains_Mono} from "next/font/google";
 import {APP_NAME, APP_SUBTITLE, APP_TAGLINE} from "@/config/app";
 import {appOrigin} from "@/config/appUrl";
 import {Providers} from "@/components/providers/Providers";
@@ -7,24 +7,16 @@ import {OVERLAY_ROOT_ID} from "@/components/ui/OverlayPortal";
 import "./globals.css";
 
 /**
- * Inter Tight for everything the eye reads as interface.
- *
- * Its default tracking is already close to what a dense ticker list wants, so
- * headlines and 11px labels both sit right without per-element correction, and
- * its tabular figures keep a column of prices from shifting as digits change.
+ * Inter for interface copy: 400 body, 300 large display, 500/700 headings.
+ * Tabular figures keep price columns stable; mono stays on hashes only.
  */
-const display = Inter_Tight({
+const display = Inter({
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
+  weight: ["300", "400", "500", "700"],
   variable: "--font-display",
   display: "swap",
 });
 
-/**
- * A mono for the things that are literally hashes: contract addresses, wallets,
- * transaction ids. Not for prices — proportional figures with `tabular-nums`
- * read faster at a glance, and mono at 32px looks like a terminal.
- */
 const mono = JetBrains_Mono({
   subsets: ["latin"],
   weight: ["400", "500", "700"],
@@ -41,11 +33,21 @@ export const metadata: Metadata = {
     description: APP_SUBTITLE,
     siteName: APP_NAME,
     type: "website",
+    images: [{url: "/brand/og-logo.png", width: 1200, height: 630, alt: APP_NAME}],
   },
   appleWebApp: {
     capable: true,
     title: APP_NAME,
     statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: [
+      {url: "/brand/favicon-16.png", sizes: "16x16", type: "image/png"},
+      {url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png"},
+      {url: "/brand/favicon-64.png", sizes: "64x64", type: "image/png"},
+      {url: "/brand/favicon-128.png", sizes: "128x128", type: "image/png"},
+    ],
+    apple: [{url: "/brand/apple-icon.png", sizes: "180x180", type: "image/png"}],
   },
 };
 
@@ -53,11 +55,9 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  // Two entries so the phone's own chrome follows the theme; a single light
-  // value left a white bar above a dark app.
   themeColor: [
-    {media: "(prefers-color-scheme: light)", color: "#FFFFFF"},
-    {media: "(prefers-color-scheme: dark)", color: "#0A0B0B"},
+    {media: "(prefers-color-scheme: light)", color: "#F5F5FF"},
+    {media: "(prefers-color-scheme: dark)", color: "#0D0F18"},
   ],
 };
 
@@ -71,10 +71,9 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        {/* Applied before first paint so a dark-mode reload never flashes white. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("rwa.theme");var d=t==="dark"||(t!=="light"&&window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(d){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark";var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content","#0A0B0B");}}catch(e){}})();`,
+            __html: `(function(){try{var root=document.documentElement;var pref=null;try{pref=localStorage.getItem("rwa.theme");}catch(e){}var sys=window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";var theme=(pref==="light"||pref==="dark")?pref:(pref==="system"?sys:sys);root.classList.toggle("dark",theme==="dark");root.classList.toggle("light",theme==="light");root.style.colorScheme=theme;root.dataset.theme=theme;var q=new URLSearchParams(location.search).get("palette");var p=(q==="legacy"||q==="terminal")?q:null;if(!p){try{p=localStorage.getItem("rwa.palette");}catch(e){}}if(p==="legacy"&&theme==="dark"){root.setAttribute("data-palette","legacy");}else{root.removeAttribute("data-palette");}if(q==="legacy"||q==="terminal"){try{localStorage.setItem("rwa.palette",q);}catch(e){}}var tc=theme==="light"?"#F5F5FF":(p==="legacy"?"#161A40":"#0D0F18");var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content",tc);}catch(e){document.documentElement.classList.add("dark");}})();`,
           }}
         />
       </head>

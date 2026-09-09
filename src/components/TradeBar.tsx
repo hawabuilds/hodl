@@ -18,12 +18,15 @@ export function TradeBar({
 }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-[calc(84px+env(safe-area-inset-bottom))] z-30 px-[22px]">
-      <div className="pointer-events-auto grid grid-cols-2 gap-2.5 rounded-[19px] border border-hairline bg-card/92 p-2 shadow-panel backdrop-blur-[16px]">
+      <div
+        data-surface="popup"
+        className="pointer-events-auto grid grid-cols-2 gap-2 rounded-2xl bg-surface-popup/88 p-2 shadow-panel backdrop-blur-[16px]"
+      >
         <button
           type="button"
           onClick={onBuy}
           aria-label={`Buy ${symbol}`}
-          className="rounded-[14px] bg-green py-[13px] text-[15px] font-extrabold text-white shadow-green transition-transform duration-150 hover:-translate-y-0.5"
+          className="rounded-2xl bg-[var(--price-up-wash)] py-[13px] text-[15px] font-bold tabular-nums text-price-up shadow-price-up transition-[transform,background-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:bg-[var(--price-up-wash-hover)]"
         >
           Buy
         </button>
@@ -31,7 +34,7 @@ export function TradeBar({
           type="button"
           onClick={onSell}
           aria-label={`Sell ${symbol}`}
-          className="rounded-[14px] bg-red py-[13px] text-[15px] font-extrabold text-white transition-transform duration-150 hover:-translate-y-0.5"
+          className="rounded-2xl bg-[var(--price-down-wash)] py-[13px] text-[15px] font-bold tabular-nums text-price-down shadow-price-down transition-[transform,background-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:bg-[var(--price-down-wash-hover)]"
         >
           Sell
         </button>
