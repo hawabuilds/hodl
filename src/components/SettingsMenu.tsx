@@ -1,7 +1,9 @@
 "use client";
 
 import {useEffect, useRef, useState} from "react";
+import {useMe} from "@/hooks/useMe";
 import {useTheme} from "@/hooks/useTheme";
+import {useUser} from "@/hooks/useUser";
 import {cn} from "@/lib/cn";
 import type {ThemePreference} from "@/lib/theme";
 import {SettingsIcon} from "./ui/Icons";
@@ -25,6 +27,8 @@ export function SettingsMenu() {
   const [open, setOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
   const {preference, setPreference} = useTheme();
+  const user = useUser();
+  const me = useMe();
 
   useEffect(() => {
     if (!open) return;
@@ -110,6 +114,30 @@ export function SettingsMenu() {
             })}
           </div>
         </div>
+
+        {user.authenticated ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => me.savePortfolioPublic(!me.portfolioPublic)}
+            className="mt-0.5 flex w-full items-center justify-between rounded-[12px] px-2.5 py-2 text-left hover:bg-[var(--overlay-wash)]"
+          >
+            <span className="text-[13.5px] font-bold text-ink">Show portfolio publicly</span>
+            <span
+              className={cn(
+                "relative h-6 w-10 shrink-0 rounded-full transition-colors",
+                me.portfolioPublic ? "bg-success" : "bg-surface-hover",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform",
+                  me.portfolioPublic ? "left-[18px]" : "left-0.5",
+                )}
+              />
+            </span>
+          </button>
+        ) : null}
 
         <button
           type="button"

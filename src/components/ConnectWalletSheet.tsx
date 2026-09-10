@@ -70,12 +70,13 @@ export function ConnectWalletSheet({
       open={open}
       onClose={onClose}
       height="auto"
-      label="Use another wallet"
-      header={<SheetTitle title="Use another wallet" onClose={onClose} />}
+      label="Connect external wallet"
+      header={<SheetTitle title="Connect external wallet" onClose={onClose} />}
     >
       <p className="mb-4 mt-1 text-[13px] leading-[1.5] text-muted">
-        A wallet was created for you at sign-in. Import another only if you
-        already have one you would rather hold your positions in.
+        Your HODL wallet stays as-is. Connect MetaMask or Rabby only if you want
+        to trade from an external wallet — both addresses count toward your
+        portfolio.
       </p>
 
       {list.length === 0 ? (

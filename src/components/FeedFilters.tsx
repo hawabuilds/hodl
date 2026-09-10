@@ -97,7 +97,8 @@ function FilterSheet({
       <div
         role="dialog"
         aria-label="Feed filters"
-        className="relative w-full max-w-[380px] overflow-hidden rounded-2xl bg-surface-elevated p-5 shadow-modal"
+        data-surface="popup"
+        className="relative w-full max-w-[380px] overflow-hidden rounded-2xl bg-surface-popup p-5 shadow-modal"
       >
         <div className="flex items-center justify-between">
           <h2 className="text-[16px] font-extrabold tracking-[-0.02em]">
@@ -123,7 +124,7 @@ function FilterSheet({
                 className={cn(
                   "flex-1 rounded-xl py-2 text-[12.5px] font-extrabold transition-[background-color,color,box-shadow]",
                   draft.window === window
-                    ? "bg-surface-elevated text-ink shadow-tab-active"
+                    ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
                     : "text-muted hover:bg-[var(--overlay-wash)] hover:text-ink",
                 )}
               >

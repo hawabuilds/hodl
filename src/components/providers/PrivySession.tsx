@@ -2,6 +2,7 @@
 
 import {useCallback, useEffect, useMemo, useRef, type ReactNode} from "react";
 import {PrivyProvider, usePrivy, useWallets} from "@privy-io/react-auth";
+import {useDisconnect} from "wagmi";
 import {useTheme} from "@/hooks/useTheme";
 import {RH_MAINNET_ID, robinhoodMainnet} from "@/config/chain";
 import {PRIVY_APP_ID} from "@/lib/env";
@@ -45,11 +46,12 @@ function PrivyBridge({children}: {children: ReactNode}) {
     authenticated,
     user,
     login,
-    logout,
+    logout: privyLogout,
     exportWallet,
     getAccessToken,
     sendTransaction,
   } = usePrivy();
+  const {disconnect} = useDisconnect();
   const {wallets} = useWallets();
   const syncedRef = useRef<string | null>(null);
 
@@ -145,6 +147,11 @@ function PrivyBridge({children}: {children: ReactNode}) {
     await exportWallet();
   }, [exportWallet]);
 
+  const logout = useCallback(() => {
+    disconnect();
+    void privyLogout();
+  }, [disconnect, privyLogout]);
+
   const fetchAccessToken = useCallback(async () => {
     try {
       return await getAccessToken();
@@ -159,7 +166,7 @@ function PrivyBridge({children}: {children: ReactNode}) {
       authenticated,
       user: appUser,
       login: () => login({loginMethods: ["twitter"]}),
-      logout: () => void logout(),
+      logout,
       mode: "privy",
       getEmbeddedProvider,
       sendEmbeddedTransaction,

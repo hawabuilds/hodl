@@ -131,7 +131,17 @@ export interface TokenAsset {
    * Volume and price move over each window the feed offers, so a filter set to
    * "1h" ranks on the hour rather than re-slicing a day's figure.
    */
-  windows: Record<FeedWindow, {volumeUsd: number; changePct: number}>;
+  windows: Record<
+    FeedWindow,
+    {
+      volumeUsd: number;
+      changePct: number;
+      /** DexScreener buy count for the window — participation signal. */
+      buys?: number;
+      /** DexScreener sell count for the window. */
+      sells?: number;
+    }
+  >;
   holders: number;
   createdAt: string;
   /** Bond time for Pons, launch time for Long — New feed sort key. */
@@ -268,6 +278,8 @@ export interface NewsItem {
   url: string;
   source: string;
   publishedAt: string;
+  /** Finnhub teaser copy, when the wire sent one. */
+  summary: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +324,8 @@ export interface FeedItem {
   avatarUrl: string | null;
   /** True while the item is a placeholder rather than something fetched. */
   sample: boolean;
+  /** Finnhub teaser copy, when the wire sent one. */
+  summary: string | null;
 }
 
 export interface Holding {

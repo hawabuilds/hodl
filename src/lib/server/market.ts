@@ -438,6 +438,7 @@ export function newsFor(asset: RwaAsset, now: number = Date.now()): NewsItem[] {
     publishedAt: new Date(
       now - between(next, 0.5, 60) * 3_600_000,
     ).toISOString(),
+    summary: null,
   }));
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import {useCallback, useEffect, useMemo, useState, type ReactNode} from "react";
+import {useDisconnect} from "wagmi";
 import {SessionContext, type AppUser, type Session} from "@/lib/session";
 
 const STORAGE_KEY = "rwa.demo-user";
@@ -19,6 +20,7 @@ const DEMO_USER: AppUser = {
 };
 
 export function DemoSessionProvider({children}: {children: ReactNode}) {
+  const {disconnect} = useDisconnect();
   const [authenticated, setAuthenticated] = useState(false);
   const [ready, setReady] = useState(false);
 
@@ -33,9 +35,10 @@ export function DemoSessionProvider({children}: {children: ReactNode}) {
   }, []);
 
   const logout = useCallback(() => {
+    disconnect();
     window.localStorage.removeItem(STORAGE_KEY);
     setAuthenticated(false);
-  }, []);
+  }, [disconnect]);
 
   const value: Session = useMemo(
     () => ({

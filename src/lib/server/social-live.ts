@@ -21,6 +21,7 @@ interface UserRow {
   bio: string | null;
   socials: Record<string, string | null> | null;
   wallet: string | null;
+  portfolio_public?: boolean | null;
 }
 
 /** What a comment join brings back — a subset of the user row. */
@@ -87,11 +88,12 @@ export async function userById(id: string): Promise<{
   pfpUrl: string | null;
   wallet: string | null;
   bio: string;
+  portfolioPublic: boolean;
 } | null> {
   if (!hasDatabase) return null;
   const {data} = await db()
     .from("users")
-    .select("handle, display_name, pfp_url, wallet, bio")
+    .select("handle, display_name, pfp_url, wallet, bio, portfolio_public")
     .eq("id", id)
     .maybeSingle();
   if (!data) return null;
@@ -101,7 +103,30 @@ export async function userById(id: string): Promise<{
     pfpUrl: data.pfp_url,
     wallet: data.wallet,
     bio: data.bio ?? "",
+    portfolioPublic: data.portfolio_public !== false,
   };
+}
+
+/** Whether a handle shows holdings publicly (false = opted out; null/true = show). */
+export async function portfolioPublicForHandle(handle: string): Promise<boolean> {
+  if (!hasDatabase) return true;
+  const {data} = await db()
+    .from("users")
+    .select("portfolio_public")
+    .ilike("handle", handleIlike(handle))
+    .maybeSingle();
+  return (data as {portfolio_public?: boolean} | null)?.portfolio_public !== false;
+}
+
+export async function savePortfolioPublic(
+  id: string,
+  portfolioPublic: boolean,
+): Promise<void> {
+  if (!hasDatabase) return;
+  await db()
+    .from("users")
+    .update({portfolio_public: portfolioPublic})
+    .eq("id", id);
 }
 
 /** Creates or refreshes the caller's row. Identity comes from the token. */
@@ -370,12 +395,29 @@ async function edgesFor(
     .filter((entry): entry is string => Boolean(entry));
 }
 
+/** Follower counts for a batch of user ids — one query for whole lists. */
+async function followerCountsFor(userIds: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (!hasDatabase || userIds.length === 0) return counts;
+  for (const id of userIds) counts.set(id, 0);
+
+  const {data} = await db()
+    .from("follows")
+    .select("following_id")
+    .in("following_id", userIds);
+
+  for (const row of data ?? []) {
+    const id = String((row as {following_id: string}).following_id);
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
+}
+
 /**
  * Profiles for a set of handles, in the order asked for.
  *
  * One query rather than one per handle: follower lists render dozens of these
- * at once, and the counts are left at zero because a list row shows a name and
- * a picture, not a follower tally.
+ * at once, with follower counts batched in a second read.
  */
 export async function profilesByHandles(
   handles: string[],
@@ -389,10 +431,15 @@ export async function profilesByHandles(
     .select("id, handle, display_name, pfp_url, bio, socials, wallet")
     .in("handle", wanted);
 
+  const rows = (data ?? []) as UserRow[];
+  const counts = await followerCountsFor(rows.map((row) => row.id));
+
   const byHandle = new Map(
-    (data ?? []).map((row) => {
-      const user = row as UserRow;
-      return [user.handle?.toLowerCase() ?? user.id.slice(-8).toLowerCase(), toProfile(user)];
+    rows.map((row) => {
+      return [
+        row.handle?.toLowerCase() ?? row.id.slice(-8).toLowerCase(),
+        toProfile(row, counts.get(row.id) ?? 0),
+      ];
     }),
   );
 
@@ -422,12 +469,11 @@ export async function followerProfilesOfId(userId: string): Promise<Profile[]> {
     )
     .eq("following_id", userId);
 
-  return (data ?? [])
-    .map((row) => {
-      const joined = one(
-        (row as {users?: UserRow | UserRow[]}).users,
-      );
-      return joined ? toProfile(joined) : null;
-    })
-    .filter((profile): profile is Profile => profile !== null);
+  const rows = (data ?? [])
+    .map((row) => one((row as {users?: UserRow | UserRow[]}).users))
+    .filter((row): row is UserRow => row !== undefined);
+
+  const counts = await followerCountsFor(rows.map((row) => row.id));
+
+  return rows.map((row) => toProfile(row, counts.get(row.id) ?? 0));
 }

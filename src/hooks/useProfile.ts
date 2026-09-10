@@ -13,6 +13,7 @@ interface ProfileResponse {
   profile: Profile;
   followerHandles: string[];
   followingHandles: string[];
+  holdingsVisible?: boolean;
 }
 
 export function useProfile(handle: string) {
@@ -31,6 +32,7 @@ export function useProfile(handle: string) {
     profile: query.data?.profile ?? null,
     followerHandles: query.data?.followerHandles ?? [],
     followingHandles: query.data?.followingHandles ?? [],
+    holdingsVisible: query.data?.holdingsVisible !== false,
     isLoading: query.isLoading,
     notFound: query.data === null && !query.isLoading,
   };

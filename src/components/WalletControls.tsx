@@ -23,12 +23,10 @@ import {Sheet, SheetTitle} from "./ui/Sheet";
 import type {Theme} from "@/lib/theme";
 
 /**
- * Wallet and account controls.
+ * Wallet and account controls in the profile settings menu.
  *
- * Rendered in two places — the avatar dropdown in the header and the settings
- * sheet on the Profile tab — so the body lives here once. Both entry points
- * need the same import / export / sign-out set, and having them drift apart is
- * exactly the kind of thing nobody notices until someone cannot find export.
+ * Keeps HODL embedded wallet and optional external connect in one place so
+ * export, disconnect, and sign-out stay aligned with the Option B model.
  */
 export function WalletControls({onNavigate}: {onNavigate?: () => void}) {
   const {displayName, handle, embeddedWallet, logout} = useUser();
@@ -39,19 +37,17 @@ export function WalletControls({onNavigate}: {onNavigate?: () => void}) {
   const [connectOpen, setConnectOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
 
   const external = wallet.isConnected ? wallet.address : null;
-  const destination = external ?? embeddedWallet;
 
-  async function copyAddress() {
-    if (!destination) return;
+  async function copyAddress(address: string) {
     try {
-      await navigator.clipboard.writeText(destination);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
+      await navigator.clipboard.writeText(address);
+      setCopiedAddress(address);
+      window.setTimeout(() => setCopiedAddress(null), 1600);
     } catch {
-      setCopied(false);
+      setCopiedAddress(null);
     }
   }
 
@@ -98,50 +94,53 @@ export function WalletControls({onNavigate}: {onNavigate?: () => void}) {
         />
       </div>
 
-      <div className="mx-1 mt-2 rounded-[13px] bg-wash px-3 py-2.5">
-        <div className="text-[12.5px] font-bold">
-          {external ? (wallet.walletName ?? "Imported wallet") : "Your wallet"}
-        </div>
-        <div className="mt-1 flex items-center gap-1.5">
-          <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-muted">
-            {destination ? shortAddress(destination) : "Setting up…"}
-          </span>
-          {destination ? (
-            <>
-              <button
-                type="button"
-                onClick={() => void copyAddress()}
-                aria-label={copied ? "Address copied" : "Copy address"}
-                className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] text-muted transition-colors hover:bg-card hover:text-ink"
-              >
-                <CopyIcon className="h-3.5 w-3.5" />
-              </button>
-              <a
-                href={addressUrlForChain(destination, RH_MAINNET_ID)}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="View on explorer"
-                className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] text-muted transition-colors hover:bg-card hover:text-ink"
-              >
-                <ArrowUpRightIcon className="h-3.5 w-3.5" />
-              </a>
-            </>
-          ) : null}
-        </div>
-        {copied ? (
-          <div className="mt-1 text-[11px] font-semibold text-success">Copied</div>
+      <div className="mx-1 mt-2 flex flex-col gap-2">
+        {embeddedWallet ? (
+          <WalletCard
+            title="Your HODL wallet"
+            subtitle={
+              external
+                ? "Created at sign-in · counts toward portfolio"
+                : "Created at sign-in · default for trading"
+            }
+            address={embeddedWallet}
+            active={!external}
+            copied={copiedAddress === embeddedWallet}
+            onCopy={() => void copyAddress(embeddedWallet)}
+          />
         ) : null}
+
+        {external ? (
+          <WalletCard
+            title={wallet.walletName ?? "External wallet"}
+            subtitle="Active for trading · both wallets count toward portfolio"
+            address={external}
+            active
+            copied={copiedAddress === external}
+            onCopy={() => void copyAddress(external)}
+          />
+        ) : (
+          <div className="rounded-[13px] bg-wash px-3 py-2.5">
+            <div className="text-[12.5px] font-bold">Connect external wallet</div>
+            <p className="mt-0.5 text-[11px] leading-snug text-faint">
+              Optional MetaMask or Rabby. Both addresses count toward your
+              portfolio.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="mt-1 flex flex-col">
-        <MenuRow
-          onClick={() => {
-            onNavigate?.();
-            setConnectOpen(true);
-          }}
-          icon={<WalletIcon className="h-4 w-4" />}
-          label="Import wallet"
-        />
+        {!external ? (
+          <MenuRow
+            onClick={() => {
+              onNavigate?.();
+              setConnectOpen(true);
+            }}
+            icon={<WalletIcon className="h-4 w-4" />}
+            label="Connect external wallet"
+          />
+        ) : null}
         {exportEmbeddedWallet && embeddedWallet ? (
           <MenuRow
             onClick={() => {
@@ -149,7 +148,7 @@ export function WalletControls({onNavigate}: {onNavigate?: () => void}) {
               setBackupOpen(true);
             }}
             icon={<CopyIcon className="h-4 w-4" />}
-            label="Export wallet"
+            label="Export HODL wallet"
           />
         ) : null}
         {external && wallet.onWrongChain ? (
@@ -163,7 +162,7 @@ export function WalletControls({onNavigate}: {onNavigate?: () => void}) {
           <MenuRow
             onClick={() => wallet.disconnect()}
             icon={<WalletIcon className="h-4 w-4" />}
-            label="Disconnect wallet"
+            label="Disconnect external wallet"
           />
         ) : null}
       </div>
@@ -191,12 +190,19 @@ export function WalletControls({onNavigate}: {onNavigate?: () => void}) {
         open={backupOpen}
         onClose={() => setBackupOpen(false)}
         height="auto"
-        label="Export wallet"
-        header={<SheetTitle title="Export wallet" onClose={() => setBackupOpen(false)} />}
+        label="Export HODL wallet"
+        header={
+          <SheetTitle title="Export HODL wallet" onClose={() => setBackupOpen(false)} />
+        }
       >
         <p className="mt-1 text-[14px] leading-[1.55] text-muted">
-          Save this somewhere only you can reach. You will need it to restore
-          your wallet on another device.
+          This exports your HODL embedded wallet only — the one created when you
+          signed in. If you connected MetaMask or another external wallet, export
+          those keys from that wallet app instead.
+        </p>
+        <p className="mt-3 text-[13px] leading-[1.55] text-faint">
+          Save the backup somewhere only you can reach. You will need it to
+          restore your HODL wallet on another device.
         </p>
         <Button
           variant="dark"
@@ -209,6 +215,61 @@ export function WalletControls({onNavigate}: {onNavigate?: () => void}) {
         </Button>
       </Sheet>
     </>
+  );
+}
+
+function WalletCard({
+  title,
+  subtitle,
+  address,
+  active,
+  copied,
+  onCopy,
+}: {
+  title: string;
+  subtitle: string;
+  address: string;
+  active?: boolean;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="rounded-[13px] bg-wash px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <div className="text-[12.5px] font-bold">{title}</div>
+        {active ? (
+          <span className="rounded-full bg-success/15 px-1.5 py-0.5 text-[10px] font-bold text-success">
+            Active
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-0.5 text-[11px] leading-snug text-faint">{subtitle}</p>
+      <div className="mt-1 flex items-center gap-1.5">
+        <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-muted">
+          {shortAddress(address)}
+        </span>
+        <button
+          type="button"
+          onClick={onCopy}
+          aria-label={copied ? "Address copied" : "Copy address"}
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] text-muted transition-colors hover:bg-card hover:text-ink"
+        >
+          <CopyIcon className="h-3.5 w-3.5" />
+        </button>
+        <a
+          href={addressUrlForChain(address, RH_MAINNET_ID)}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="View on explorer"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] text-muted transition-colors hover:bg-card hover:text-ink"
+        >
+          <ArrowUpRightIcon className="h-3.5 w-3.5" />
+        </a>
+      </div>
+      {copied ? (
+        <div className="mt-1 text-[11px] font-semibold text-success">Copied</div>
+      ) : null}
+    </div>
   );
 }
 

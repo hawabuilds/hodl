@@ -126,6 +126,7 @@ async function load(): Promise<FeedItem[]> {
       avatarUrl:
         user?.profile_image_url?.replace("_normal", "_400x400") ?? null,
       sample: false,
+      summary: null,
     });
   }
 

@@ -84,7 +84,7 @@ export function FilterRail<T extends string>({
               "shrink-0 whitespace-nowrap rounded-full px-3.5 py-2 text-[13.5px] leading-none",
               "transition-[background-color,color,opacity] duration-150",
               active
-                ? "bg-surface-elevated font-extrabold text-ink shadow-tab-active"
+                ? "bg-[var(--bg-input)] font-extrabold text-ink shadow-tab-active"
                 : "bg-[var(--overlay-wash)] font-semibold text-faint hover:bg-[var(--overlay-wash-hover)] hover:text-muted",
               option.disabled && !active && "cursor-not-allowed opacity-40",
             )}

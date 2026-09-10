@@ -111,11 +111,14 @@ export function PushPrompt() {
   return (
     <>
       {showBar ? (
-        <div className="pointer-events-auto absolute inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-[40] px-[22px]">
+        <div
+          data-surface="popup"
+          className="pointer-events-auto absolute inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-[40] px-[22px]"
+        >
           <button
             type="button"
             onClick={() => void enable()}
-            className="flex w-full items-center justify-between rounded-2xl bg-surface-elevated px-4 py-3 text-left shadow-panel"
+            className="flex w-full items-center justify-between rounded-2xl bg-surface-popup px-4 py-3 text-left shadow-panel"
           >
             <span className="text-[13.5px] font-bold text-ink">Turn on notifications</span>
             <span className="text-[12px] font-bold text-accent-link">Allow</span>

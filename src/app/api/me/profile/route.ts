@@ -1,6 +1,12 @@
 import {json} from "@/lib/server/http";
 import {requireCaller} from "@/lib/server/auth";
-import {ensureUser, saveProfile, upsertUser, userById} from "@/lib/server/social-live";
+import {
+  ensureUser,
+  savePortfolioPublic,
+  saveProfile,
+  upsertUser,
+  userById,
+} from "@/lib/server/social-live";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +16,16 @@ export async function GET(request: Request) {
   if (caller instanceof Response) return caller;
   await ensureUser(caller.userId);
   const row = await userById(caller.userId);
-  return json(row ?? {displayName: null, handle: null, pfpUrl: null, wallet: null, bio: ""});
+  return json(
+    row ?? {
+      displayName: null,
+      handle: null,
+      pfpUrl: null,
+      wallet: null,
+      bio: "",
+      portfolioPublic: true,
+    },
+  );
 }
 
 /**
@@ -30,6 +45,7 @@ export async function POST(request: Request) {
     wallet?: string | null;
     bio?: string | null;
     socials?: unknown;
+    portfolioPublic?: boolean;
   };
 
   await upsertUser({
@@ -46,6 +62,10 @@ export async function POST(request: Request) {
       bio: body.bio ?? null,
       socials: body.socials ?? {},
     });
+  }
+
+  if (typeof body.portfolioPublic === "boolean") {
+    await savePortfolioPublic(caller.userId, body.portfolioPublic);
   }
 
   return json({ok: true});

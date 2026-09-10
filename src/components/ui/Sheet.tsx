@@ -22,7 +22,7 @@ export function Sheet({
   open,
   onClose,
   height = "90%",
-  surface = "elevated",
+  surface = "popup",
   header,
   footer,
   children,
@@ -107,7 +107,7 @@ export function SheetFooter({
   return (
     <div
       className={cn(
-        "grid gap-2.5 bg-surface-elevated px-[22px] pt-3.5 shadow-[0_-10px_28px_-14px_var(--shadow-color)]",
+        "grid gap-2.5 bg-surface-popup px-[22px] pt-3.5 shadow-[0_-10px_28px_-14px_var(--shadow-color)]",
         "pb-[calc(18px+env(safe-area-inset-bottom))]",
         columns === 2 ? "grid-cols-2" : "grid-cols-1",
       )}

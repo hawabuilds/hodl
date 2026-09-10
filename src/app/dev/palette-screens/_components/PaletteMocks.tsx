@@ -45,7 +45,10 @@ function StaticTabBar() {
       aria-label="Primary"
       className="pointer-events-none absolute inset-x-0 z-40 flex justify-center px-[22px] bottom-[calc(14px+env(safe-area-inset-bottom))]"
     >
-      <div className="pointer-events-auto flex items-center gap-1 rounded-full bg-surface-elevated/80 p-1.5 shadow-panel backdrop-blur-[22px]">
+      <div
+        data-surface="popup"
+        className="pointer-events-auto flex items-center gap-1 rounded-full bg-surface-popup/80 p-1.5 shadow-panel backdrop-blur-[22px]"
+      >
         {[HomeIcon, SearchIcon, NewsIcon, UserIcon].map((Icon, i) => (
           <div
             key={i}
@@ -217,7 +220,7 @@ export function PaletteTokenMock() {
 
         <PriceChart points={points} height={220} className="mt-3" positive />
 
-        <div className="mt-4 overflow-hidden rounded-2xl bg-surface-elevated shadow-card">
+        <div className="mt-4 overflow-hidden rounded-2xl bg-surface-card shadow-card">
           <div className="grid grid-cols-2 gap-x-3 px-4 py-3">
             <div>
               <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
@@ -236,7 +239,10 @@ export function PaletteTokenMock() {
       </div>
 
       <div className="pointer-events-none absolute inset-x-0 bottom-[calc(14px+env(safe-area-inset-bottom))] z-40 flex justify-center px-[22px]">
-        <div className="pointer-events-auto grid w-full max-w-[380px] grid-cols-2 gap-2.5 rounded-[19px] bg-surface-elevated/92 p-2 shadow-panel backdrop-blur-[16px]">
+        <div
+          data-surface="popup"
+          className="pointer-events-auto grid w-full max-w-[380px] grid-cols-2 gap-2.5 rounded-[19px] bg-surface-popup/92 p-2 shadow-panel backdrop-blur-[16px]"
+        >
           <button
             type="button"
             className="rounded-[14px] bg-price-up py-3.5 text-[15px] font-bold text-[var(--surface-pressed)]"

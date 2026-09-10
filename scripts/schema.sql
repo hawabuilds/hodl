@@ -23,10 +23,15 @@ CREATE TABLE IF NOT EXISTS users (
   pfp_url       text,
   bio           text,
   socials       jsonb NOT NULL DEFAULT '{}'::jsonb,
-  wallet        text,
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  updated_at    timestamptz NOT NULL DEFAULT now()
+  wallet           text,
+  portfolio_public boolean NOT NULL DEFAULT true,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now()
 );
+
+-- Existing DBs: column may exist with DEFAULT false — run the migration in the
+-- deploy notes to SET DEFAULT true and backfill rows to public.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS portfolio_public boolean NOT NULL DEFAULT true;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_handle_unique
   ON users (lower(handle))

@@ -9,13 +9,19 @@ import type {RwaAsset} from "@/lib/types";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export type MarketSort = "volume" | "marketCap" | "change" | "new" | "rewards";
+export type MarketSort =
+  | "volume"
+  | "trending"
+  | "marketCap"
+  | "change"
+  | "new"
+  | "rewards";
 
 function feedSort(sort: MarketSort): FeedSort {
   if (sort === "new") return "new";
   if (sort === "marketCap") return "mcap";
   if (sort === "rewards") return "rewards";
-  return "volume";
+  return "trending";
 }
 
 function sortRwas(rwas: RwaAsset[], sort: MarketSort): RwaAsset[] {

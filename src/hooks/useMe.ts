@@ -22,6 +22,7 @@ interface MeRow {
   pfpUrl: string | null;
   wallet: string | null;
   bio: string;
+  portfolioPublic: boolean;
 }
 
 export function useMe() {
@@ -44,6 +45,7 @@ export function useMe() {
           pfpUrl: user.pfpUrl,
           wallet: user.embeddedWallet,
           bio: "",
+          portfolioPublic: true,
         };
       }
       const res = await fetch("/api/me/profile", {
@@ -64,6 +66,7 @@ export function useMe() {
   const pfpUrl = remote.data?.pfpUrl ?? cached?.pfpUrl ?? user.pfpUrl;
   const wallet = remote.data?.wallet ?? cached?.wallet ?? user.embeddedWallet;
   const bio = edits.bio ?? remote.data?.bio ?? cached?.bio ?? "";
+  const portfolioPublic = remote.data?.portfolioPublic !== false;
 
   useEffect(() => {
     if (!pfpUrl && displayName === "You") return;
@@ -124,6 +127,24 @@ export function useMe() {
     [session, user],
   );
 
+  const savePortfolioPublic = useCallback(
+    (next: boolean) => {
+      void session.getAccessToken().then(async (token) => {
+        if (!token) return;
+        await fetch("/api/me/profile", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({portfolioPublic: next}),
+        });
+        await remote.refetch();
+      });
+    },
+    [remote, session],
+  );
+
   return {
     handle,
     displayName,
@@ -131,7 +152,9 @@ export function useMe() {
     pfpUrl,
     wallet,
     socials,
+    portfolioPublic,
     edits,
     save,
+    savePortfolioPublic,
   };
 }

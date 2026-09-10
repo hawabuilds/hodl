@@ -50,7 +50,7 @@ export function InfoPanel({token}: {token: TokenAsset}) {
         {token.description}
       </p>
 
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-0 overflow-hidden rounded-2xl bg-surface-elevated shadow-card">
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-0 overflow-hidden rounded-2xl bg-surface-card shadow-card">
         <Stat label="Liquidity" value={formatLiquidityUsd(token.liquidityUsd)} />
         <Stat label="24h volume" value={formatVolumeUsd(token.volume24hUsd)} />
         <Stat label="Market cap" value={formatMarketCapAt(token, shownPrice)} />
@@ -68,7 +68,7 @@ export function InfoPanel({token}: {token: TokenAsset}) {
         />
       </dl>
 
-      <div className="mt-4 overflow-hidden rounded-2xl bg-surface-elevated shadow-card">
+      <div className="mt-4 overflow-hidden rounded-2xl bg-surface-card shadow-card">
         <Row label="Pair">
           <span className="tabular-nums text-[13px] font-extrabold">
             {token.symbol} / {token.pairedTicker}

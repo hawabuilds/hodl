@@ -402,6 +402,7 @@ export async function fetchNews(
           url: item.url,
           source: item.source,
           publishedAt: item.publishedAt,
+          summary: item.summary,
         })),
         seeded: false,
       };

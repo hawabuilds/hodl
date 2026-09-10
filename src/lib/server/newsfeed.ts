@@ -113,6 +113,7 @@ function buildFeed(now: number): FeedItem[] {
       imageUrl: null,
       avatarUrl: null,
       sample: true,
+      summary: null,
     });
   }
 
@@ -132,6 +133,7 @@ function buildFeed(now: number): FeedItem[] {
       imageUrl: null,
       avatarUrl: null,
       sample: true,
+      summary: null,
     });
   }
 
@@ -151,6 +153,7 @@ function buildFeed(now: number): FeedItem[] {
       imageUrl: null,
       avatarUrl: null,
       sample: true,
+      summary: null,
     });
   }
 

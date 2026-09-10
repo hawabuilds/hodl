@@ -449,7 +449,7 @@ export function deepestPoolForToken(
  */
 export async function listTokens(): Promise<TokenAsset[]> {
   if (hasDatabase) {
-    const page = await loadDecoratedFeedPage({sort: "volume", limit: 50});
+    const page = await loadDecoratedFeedPage({sort: "trending", limit: 50});
     return page.tokens;
   }
 

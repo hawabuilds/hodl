@@ -282,7 +282,7 @@ export async function listStoredTokens(): Promise<TokenRow[]> {
   return (data as TokenRow[]) ?? [];
 }
 
-export type FeedSort = "new" | "volume" | "mcap" | "rewards";
+export type FeedSort = "new" | "volume" | "trending" | "mcap" | "rewards";
 
 /** Stats-ordered pages require a real pool so fake-liq clones cannot dominate. */
 export function hasRealPool(row: {
@@ -402,8 +402,12 @@ export async function listTokensPage(
 ): Promise<{rows: TokenRow[]; stats: Map<string, TokenStatRow>; next: string | null}> {
   if (!hasDatabase) return {rows: [], stats: new Map(), next: null};
   const sort = query.sort ?? "new";
-  if (sort === "volume" || sort === "mcap") {
-    return listStatsOrderedPage(query, sort === "mcap" ? "last_mcap" : "vol_24h");
+  if (sort === "volume" || sort === "trending" || sort === "mcap") {
+    return listStatsOrderedPage(
+      query,
+      sort === "mcap" ? "last_mcap" : "vol_24h",
+      sort === "trending" || sort === "volume",
+    );
   }
   if (sort === "rewards") {
     return listRewardsOrderedPage(query);
@@ -553,9 +557,12 @@ async function listRewardsOrderedPage(
 async function listStatsOrderedPage(
   query: TokenPageQuery,
   column: "vol_24h" | "last_mcap",
+  momentumCandidates = false,
 ): Promise<{rows: TokenRow[]; stats: Map<string, TokenStatRow>; next: string | null}> {
   const limit = Math.min(Math.max(query.limit ?? 50, 1), 100);
-  const fetchN = Math.min(limit * 4, 200);
+  const fetchN = momentumCandidates
+    ? Math.min(limit * 8, 400)
+    : Math.min(limit * 4, 200);
   let statsQuery: any = db()
     .from("token_stats")
     .select("*")

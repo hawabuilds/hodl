@@ -1,6 +1,6 @@
 "use client";
 
-import {useMemo, useState} from "react";
+import {useMemo, useRef, useState} from "react";
 import {useRouter} from "next/navigation";
 import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
 import {ConnectionsSheet} from "@/components/ConnectionsSheet";
@@ -25,11 +25,15 @@ export default function PublicProfilePage({
   params: {handle: string};
 }) {
   const router = useRouter();
-  const {profile, followerHandles, followingHandles, isLoading, notFound} =
+  const {profile, followerHandles, followingHandles, holdingsVisible, isLoading, notFound} =
     useProfile(params.handle);
   const follows = useFollows();
   const [side, setSide] = useState<Side>("token");
   const [connections, setConnections] = useState<Connections | null>(null);
+  const followersRef = useRef<HTMLButtonElement>(null);
+  const followingRef = useRef<HTMLButtonElement>(null);
+  const connectionsAnchor =
+    connections === "following" ? followingRef : followersRef;
 
   const shownHandles =
     connections === "following" ? followingHandles : followerHandles;
@@ -113,16 +117,22 @@ export default function PublicProfilePage({
 
       <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] font-semibold">
         <button
+          ref={followersRef}
           type="button"
-          onClick={() => setConnections("followers")}
+          onClick={() =>
+            setConnections((prev) => (prev === "followers" ? null : "followers"))
+          }
           className="transition-colors hover:text-accent-link"
         >
           <b className="tabular-nums font-extrabold">{compact(followerCount)}</b>{" "}
           <span className="text-faint">followers</span>
         </button>
         <button
+          ref={followingRef}
           type="button"
-          onClick={() => setConnections("following")}
+          onClick={() =>
+            setConnections((prev) => (prev === "following" ? null : "following"))
+          }
           className="transition-colors hover:text-accent-link"
         >
           <b className="tabular-nums font-extrabold">{compact(profile.following)}</b>{" "}
@@ -132,35 +142,44 @@ export default function PublicProfilePage({
 
       <SocialRow socials={profile.socials} className="-ml-2 mt-1.5" />
 
-      <div className="mt-5 text-[11px] font-bold tracking-[0.09em] text-faint">
-        TOTAL HOLDINGS
-      </div>
-      <div className="tabular-nums mt-1.5 text-[32px] font-extrabold leading-none tracking-[-0.035em]">
-        {money(totals.value)}
-      </div>
-      <div className="tabular-nums mt-2 text-[13.5px] font-semibold text-faint">
-        Held on Robinhood Chain
-      </div>
+      {holdingsVisible ? (
+        <>
+          <div className="mt-5 text-[11px] font-bold tracking-[0.09em] text-faint">
+            TOTAL HOLDINGS
+          </div>
+          <div className="tabular-nums mt-1.5 text-[32px] font-extrabold leading-none tracking-[-0.035em]">
+            {money(totals.value)}
+          </div>
+          <div className="tabular-nums mt-2 text-[13.5px] font-semibold text-faint">
+            Held on Robinhood Chain
+          </div>
 
-      <FilterRail
-        label="Filter holdings"
-        options={sides}
-        value={side}
-        onChange={setSide}
-        className="mb-1 mt-4"
-      />
+          <FilterRail
+            label="Filter holdings"
+            options={sides}
+            value={side}
+            onChange={setSide}
+            className="mb-1 mt-4"
+          />
 
-      <HoldingsList
-        holdings={holdings.filter((h) => h.kind === side)}
-        empty={
-          side === "rwa"
-            ? `@${profile.handle} holds no tokenized stocks.`
-            : `@${profile.handle} holds no RWA-paired tokens.`
-        }
-      />
+          <HoldingsList
+            holdings={holdings.filter((h) => h.kind === side)}
+            empty={
+              side === "rwa"
+                ? `@${profile.handle} holds no tokenized stocks.`
+                : `@${profile.handle} holds no RWA-paired tokens.`
+            }
+          />
+        </>
+      ) : (
+        <p className="mt-5 text-[13px] leading-[1.5] text-muted">
+          @{profile.handle} keeps their portfolio private.
+        </p>
+      )}
 
       <ConnectionsSheet
         open={connections !== null}
+        anchorRef={connectionsAnchor}
         title={connections === "following" ? "Following" : "Followers"}
         people={connectionProfiles.people}
         loading={connectionProfiles.isLoading}

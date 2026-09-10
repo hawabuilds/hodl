@@ -35,9 +35,10 @@ export function TabBar() {
       className="pointer-events-none absolute inset-x-0 z-40 flex justify-center px-[22px] bottom-[calc(14px+env(safe-area-inset-bottom))]"
     >
       <div
+        data-surface="popup"
         className={cn(
           "pointer-events-auto flex items-center gap-1 rounded-full p-1.5",
-          "bg-surface-elevated/80 shadow-panel backdrop-blur-[22px]",
+          "bg-surface-popup/80 shadow-panel backdrop-blur-[22px]",
         )}
       >
         {TABS.map((tab) => {
@@ -56,7 +57,7 @@ export function TabBar() {
                 "grid h-[46px] w-[54px] place-items-center rounded-full",
                 "transition-[background-color,color,box-shadow] duration-200",
                 active
-                  ? "bg-surface-elevated text-ink shadow-tab-active"
+                  ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
                   : "text-faint hover:bg-[var(--overlay-wash)] hover:text-muted",
               )}
             >

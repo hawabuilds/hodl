@@ -1,6 +1,7 @@
 "use client";
 
 import {useEffect, useMemo, useState} from "react";
+import Link from "next/link";
 import {useQuery} from "@tanstack/react-query";
 import {AssetLink} from "@/components/AssetLink";
 import {StickyPageHeader} from "@/components/AppShell";
@@ -11,6 +12,7 @@ import {ArrowUpRightIcon, NewsIcon} from "@/components/ui/Icons";
 import {cn} from "@/lib/cn";
 import {newsTime} from "@/lib/format";
 import {NEWS_FEED_QUERY_KEY, selectTodayStories} from "@/lib/newsWindow";
+import {newsArticlePath} from "@/lib/routes";
 import type {FeedItem, NewsTopic, NewsWindow} from "@/lib/types";
 
 const WINDOWS: FilterOption<NewsWindow>[] = [
@@ -249,10 +251,8 @@ function StoryImage({
 /** The story at the top of the section, given the room a lead deserves. */
 function LeadStory({item, window}: {item: FeedItem; window: NewsWindow}) {
   return (
-    <a
-      href={item.url}
-      target="_blank"
-      rel="noopener noreferrer"
+    <Link
+      href={newsArticlePath(item.id)}
       className="block overflow-hidden rounded-2xl bg-input shadow-card transition-[background-color,box-shadow] hover:bg-[var(--overlay-wash)] hover:shadow-lift"
     >
       {item.imageUrl ? (
@@ -276,7 +276,7 @@ function LeadStory({item, window}: {item: FeedItem; window: NewsWindow}) {
         <ByLine item={item} window={window} className="mt-2.5" />
         <TickerChips tickers={item.tickers} className="mt-3" />
       </div>
-    </a>
+    </Link>
   );
 }
 
@@ -291,10 +291,8 @@ function StoryRow({
 }) {
   return (
     <li>
-      <a
-        href={item.url}
-        target="_blank"
-        rel="noopener noreferrer"
+      <Link
+        href={newsArticlePath(item.id)}
         className="flex items-start gap-3.5 px-[22px] py-[13px] transition-colors duration-150 hover:bg-[var(--overlay-wash)]"
       >
         <div className="min-w-0 flex-1">
@@ -310,7 +308,7 @@ function StoryRow({
           className="h-[78px] w-[78px] shrink-0 rounded-[14px]"
           priority={priority}
         />
-      </a>
+      </Link>
     </li>
   );
 }

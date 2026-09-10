@@ -43,7 +43,7 @@ export function SegmentedToggle<T extends string>({
               "grid place-items-center rounded-xl transition-[background-color,color,box-shadow] duration-150",
               option.icon ? "h-[26px] w-[30px]" : "h-[26px] px-3 text-[12px] font-bold",
               active
-                ? "bg-surface-elevated/90 text-ink shadow-tab-active"
+                ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
                 : "text-faint hover:bg-[var(--overlay-wash)] hover:text-muted",
             )}
           >

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   classifyWireCopy,
   finnhubDate,
+  mapFinnhubToFeedItem,
   newestAgeMs,
   WIRE_CACHE_KEY,
   WIRE_SHARED_TTL_SECONDS,
@@ -106,6 +107,38 @@ describe("classifyWireCopy", () => {
       ),
       null,
     );
+  });
+});
+
+describe("mapFinnhubToFeedItem", () => {
+  it("passes Finnhub summary through and drops blank copy", () => {
+    const withSummary = mapFinnhubToFeedItem(
+      {
+        id: 42,
+        datetime: 1_757_359_200,
+        headline: "Apple unveils new iPhone",
+        summary: "  Cupertino event highlights AI features.  ",
+        url: "https://example.com/apple",
+        source: "Reuters",
+      },
+      "rwa",
+      ["AAPL"],
+    );
+    assert.equal(withSummary?.summary, "Cupertino event highlights AI features.");
+
+    const withoutSummary = mapFinnhubToFeedItem(
+      {
+        id: 43,
+        datetime: 1_757_359_200,
+        headline: "Markets close mixed",
+        summary: "   ",
+        url: "https://example.com/markets",
+        source: "CNBC",
+      },
+      "market",
+      [],
+    );
+    assert.equal(withoutSummary?.summary, null);
   });
 });
 

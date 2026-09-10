@@ -53,7 +53,7 @@ export function finnhubDate(value: number | string | undefined): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-function toFeedItem(
+export function mapFinnhubToFeedItem(
   article: FinnhubArticle,
   topic: FeedItem["topic"],
   tickers: string[],
@@ -76,6 +76,7 @@ function toFeedItem(
     imageUrl: article.image?.trim() ? article.image : null,
     avatarUrl: null,
     sample: false,
+    summary: article.summary?.trim() ? article.summary.trim() : null,
   };
 }
 
@@ -238,7 +239,7 @@ async function companyNews(
 
   return (Array.isArray(body) ? body : [])
     .filter((article) => isAbout(article, symbol, companyName))
-    .map((article) => toFeedItem(article, topic, tickers))
+    .map((article) => mapFinnhubToFeedItem(article, topic, tickers))
     .filter((item): item is FeedItem => item !== null)
     .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
 }
@@ -296,7 +297,11 @@ async function marketNews(): Promise<FeedItem[]> {
         article.source ?? "",
       );
       if (!classified) return [];
-      const item = toFeedItem(article, classified.topic, classified.tickers);
+      const item = mapFinnhubToFeedItem(
+        article,
+        classified.topic,
+        classified.tickers,
+      );
       return item ? [item] : [];
     })
     .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
@@ -448,6 +453,14 @@ export async function feed(
 }
 
 /** Headlines for one ticker, for the RWA chart page's News tab. */
+/** One cached wire article, for the in-app reader. */
+export async function articleById(id: string): Promise<FeedItem | null> {
+  const all = await buildFeed();
+  const item = all.find((entry) => entry.id === id);
+  if (!item || item.kind !== "article") return null;
+  return item;
+}
+
 export async function newsForTicker(ticker: string): Promise<FeedItem[]> {
   if (!process.env.NEWS_API_KEY) {
     throw new Error("News provider is not configured.");

@@ -28,6 +28,11 @@ export function profilePath(handle: string): string {
   return `/u/${handle.replace(/^@/, "")}`;
 }
 
+/** In-app article reader — id is encoded because Finnhub ids may embed URLs. */
+export function newsArticlePath(id: string): string {
+  return `/news/${encodeURIComponent(id)}`;
+}
+
 /** Absolute public profile URL for share / copy. */
 export function profileShareUrl(handle: string): string {
   return `${appOrigin()}${profilePath(handle)}`;

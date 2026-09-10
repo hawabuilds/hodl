@@ -1,6 +1,6 @@
 "use client";
 
-import {useState} from "react";
+import {useRef, useState} from "react";
 import {ConnectionsSheet} from "@/components/ConnectionsSheet";
 import {EditProfileSheet} from "@/components/EditProfileSheet";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
@@ -15,6 +15,8 @@ import {Avatar} from "@/components/ui/Avatar";
 import {PencilIcon} from "@/components/ui/Icons";
 import {usePortfolio} from "@/hooks/usePortfolio";
 import {useMe} from "@/hooks/useMe";
+import {useUser} from "@/hooks/useUser";
+import {useWallet} from "@/hooks/useWallet";
 import {useMyFollowers, usePeople} from "@/hooks/usePeople";
 import {useFollows} from "@/hooks/useProfile";
 import {cn} from "@/lib/cn";
@@ -30,6 +32,10 @@ const SIDES: FilterOption<Side>[] = [
 
 export default function ProfilePage() {
   const me = useMe();
+  const {embeddedWallet} = useUser();
+  const imported = useWallet();
+  const activeWallet =
+    (imported.isConnected ? imported.address : null) ?? embeddedWallet ?? me.wallet;
   const [range, setRange] = useState<PortfolioRange>("1D");
   const book = usePortfolio(range);
   const [side, setSide] = useState<Side>("token");
@@ -38,6 +44,10 @@ export default function ProfilePage() {
   const [connections, setConnections] = useState<"followers" | "following" | null>(
     null,
   );
+  const followersRef = useRef<HTMLButtonElement>(null);
+  const followingRef = useRef<HTMLButtonElement>(null);
+  const connectionsAnchor =
+    connections === "following" ? followingRef : followersRef;
 
   const follows = useFollows();
   // Loaded up front rather than on open, so the count beside the label is the
@@ -76,9 +86,9 @@ export default function ProfilePage() {
             </div>
             <div className="truncate text-[12.5px] font-semibold text-faint">
               {me.handle ? `@${me.handle}` : "Signed in"}
-              {me.wallet ? (
+              {activeWallet ? (
                 <span className="ml-1 font-mono text-[11.5px] font-medium">
-                  {shortAddress(me.wallet, 4)}
+                  {shortAddress(activeWallet, 4)}
                 </span>
               ) : null}
             </div>
@@ -98,8 +108,11 @@ export default function ProfilePage() {
 
       <div className="mb-4 flex items-center gap-4 text-[12.5px] font-semibold">
         <button
+          ref={followersRef}
           type="button"
-          onClick={() => setConnections("followers")}
+          onClick={() =>
+            setConnections((prev) => (prev === "followers" ? null : "followers"))
+          }
           className="transition-colors hover:text-accent-link"
         >
           <b className="tabular-nums font-extrabold">
@@ -108,8 +121,11 @@ export default function ProfilePage() {
           <span className="text-faint">followers</span>
         </button>
         <button
+          ref={followingRef}
           type="button"
-          onClick={() => setConnections("following")}
+          onClick={() =>
+            setConnections((prev) => (prev === "following" ? null : "following"))
+          }
           className="transition-colors hover:text-accent-link"
         >
           <b className="tabular-nums font-extrabold">{follows.following.length}</b>{" "}
@@ -228,19 +244,18 @@ export default function ProfilePage() {
       ) : null}
 
       <ConnectionsSheet
-        open={connections === "followers"}
-        title="Followers"
-        people={followers.followers}
-        loading={followers.isLoading}
-        emptyLabel="Nobody yet."
-        onClose={() => setConnections(null)}
-      />
-      <ConnectionsSheet
-        open={connections === "following"}
-        title="Following"
-        people={following.people}
-        loading={following.isLoading}
-        emptyLabel="You are not following anyone yet. Open a profile from any comment to follow them."
+        open={connections !== null}
+        anchorRef={connectionsAnchor}
+        title={connections === "following" ? "Following" : "Followers"}
+        people={connections === "following" ? following.people : followers.followers}
+        loading={
+          connections === "following" ? following.isLoading : followers.isLoading
+        }
+        emptyLabel={
+          connections === "following"
+            ? "You are not following anyone yet. Open a profile from any comment to follow them."
+            : "Nobody yet."
+        }
         onClose={() => setConnections(null)}
       />
 

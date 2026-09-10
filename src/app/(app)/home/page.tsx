@@ -29,6 +29,7 @@ import {SECTORS, type SectorId} from "@/lib/sectors";
 import Image from "next/image";
 import {APP_NAME} from "@/config/app";
 import type {Asset} from "@/lib/types";
+import {compareTrendingMomentum} from "@/lib/trendingScore";
 
 const TOKEN_SORTS: FilterOption<TokenSort>[] = [
   {value: "trending", label: "Trending"},
@@ -117,7 +118,7 @@ function HomeFeed() {
       ? "marketCap"
       : tokenSort === "rewards"
         ? "rewards"
-        : "volume",
+        : "trending",
     {
     minLiq: filters.minLiquidity ?? initial.minLiq,
     maxLiq: filters.maxLiquidity ?? initial.maxLiq,
@@ -197,6 +198,8 @@ function HomeFeed() {
         return list
           .filter((token) => token.rewards24hUsd > 0)
           .sort((a, b) => b.rewards24hUsd - a.rewards24hUsd);
+      case "trending":
+        return list.sort(compareTrendingMomentum);
       default:
         return list.sort(
           (a, b) =>

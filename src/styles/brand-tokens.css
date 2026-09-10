@@ -28,12 +28,14 @@
 html.dark {
   --bg-base: #0d0f18;
   --surface-base: var(--bg-base);
+  /* Small cards only — never sheets, modals, or full-width panels */
   --surface-card: #161a40;
-  --surface-elevated: #1e2452;
-  --surface-hover: #252b62;
+  --surface-elevated: #161a40;
+  --surface-hover: #1e2452;
   --surface-pressed: #121633;
   --bg-overlay: #080a12;
   --bg-input: #101428;
+  /* Sheets, modals, dropdowns, floating chrome */
   --surface-popup: #0d0f18;
 
   --border-default: #2e3568;

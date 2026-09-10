@@ -24,7 +24,7 @@ export function Modal({
   title,
   children,
   bare,
-  surface = "elevated",
+  surface = "popup",
   closeTone = "light",
   className,
 }: ModalProps) {

@@ -1,8 +1,11 @@
+import {callerId} from "@/lib/server/auth";
 import {json, notFound} from "@/lib/server/http";
 import {
   followersOf,
   followingByHandle,
+  portfolioPublicForHandle,
   profileByHandle,
+  userById,
   walletForHandle,
 } from "@/lib/server/social-live";
 import {holdingsFor} from "@/lib/server/live/holdings";
@@ -16,26 +19,32 @@ export const dynamic = "force-dynamic";
  *
  * Real throughout when the database is configured: the account, both sides of
  * its follow graph, and the holdings read from the wallet it signed in with.
- * Those holdings come from the same reader as the owner's own portfolio, so a
- * profile cannot show a different position to the person looking at their own.
+ * Holdings are shown by default; omitted when the owner opted out or has no wallet.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   {params}: {params: {handle: string}},
 ) {
   if (hasDatabase) {
     const profile = await profileByHandle(params.handle);
     if (profile) {
-      // Read here and used here. The address is what prices the holdings, and
-      // it goes no further than this function — the profile itself carries a
-      // null wallet by construction.
-      const address = await walletForHandle(profile.handle);
+      const viewerId = await callerId(request);
+      let holdingsVisible = await portfolioPublicForHandle(profile.handle);
+      if (!holdingsVisible && viewerId) {
+        const viewer = await userById(viewerId);
+        if (
+          viewer?.handle &&
+          viewer.handle.toLowerCase() === profile.handle.toLowerCase()
+        ) {
+          holdingsVisible = true;
+        }
+      }
+
+      const address = holdingsVisible ? await walletForHandle(profile.handle) : null;
 
       const [followerHandles, followingHandles, book] = await Promise.all([
         followersOf(profile.handle),
         followingByHandle(profile.handle),
-        // A profile with no wallet on file is a real state, not an error: the
-        // account exists, it just has nothing on chain to show.
         address && /^0x[0-9a-fA-F]{40}$/.test(address)
           ? holdingsFor(address)
           : Promise.resolve({holdings: [], ethBalance: 0, degraded: false}),
@@ -45,6 +54,7 @@ export async function GET(
         profile: {...profile, holdings: book.holdings},
         followerHandles,
         followingHandles,
+        holdingsVisible,
         seeded: false,
       });
     }
@@ -61,6 +71,7 @@ export async function GET(
     profile: seeded,
     followerHandles: connectionsFor(seeded.handle, "followers"),
     followingHandles: connectionsFor(seeded.handle, "following"),
+    holdingsVisible: true,
     seeded: true,
   });
 }

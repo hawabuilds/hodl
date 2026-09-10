@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import {relativeTime} from "@/lib/format";
+import {newsArticlePath} from "@/lib/routes";
 import type {NewsItem} from "@/lib/types";
 import {PanelError, PanelNote} from "./TradesPanel";
 
@@ -48,14 +50,12 @@ export function NewsPanel({
           return (
             <li key={item.id}>
               {live ? (
-                <a
-                  href={item.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <Link
+                  href={newsArticlePath(item.id)}
                   className="block py-3 transition-colors hover:text-accent-link"
                 >
                   {body}
-                </a>
+                </Link>
               ) : (
                 <div className="py-3">{body}</div>
               )}

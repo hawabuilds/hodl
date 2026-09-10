@@ -1,4 +1,4 @@
-import type {TokenAsset} from "@/lib/types";
+import type {FeedWindow, TokenAsset} from "@/lib/types";
 import {pairsForAddresses, seriesFrom, type DexPair} from "./dexscreener";
 import {looksInvertedMemecoin, usdPriceFor} from "@/lib/pairOrientation";
 import {
@@ -13,10 +13,40 @@ import {
   showsWithVolume24h,
 } from "@/lib/priceState";
 import {marketCapAt} from "@/lib/marketCap";
+import {
+  effectiveTrendingBounds,
+  rankTrendingTokens,
+} from "@/lib/trendingScore";
 
 function round(value: number, dp = 6): number {
   const f = 10 ** dp;
   return Math.round(value * f) / f;
+}
+
+const WINDOW_KEYS: {window: FeedWindow; vol: keyof NonNullable<DexPair["volume"]>; chg: keyof NonNullable<DexPair["priceChange"]>; txn: keyof NonNullable<DexPair["txns"]>}[] = [
+  {window: "5m", vol: "m5", chg: "m5", txn: "m5"},
+  {window: "1h", vol: "h1", chg: "h1", txn: "h1"},
+  {window: "6h", vol: "h6", chg: "h6", txn: "h6"},
+  {window: "24h", vol: "h24", chg: "h24", txn: "h24"},
+];
+
+function windowsFromPair(pair: DexPair, volume24hUsd: number, changePct: number) {
+  const out = {} as TokenAsset["windows"];
+  for (const {window, vol, chg, txn} of WINDOW_KEYS) {
+    const tx = pair.txns?.[txn];
+    out[window] = {
+      volumeUsd: Math.round(
+        window === "24h" ? volume24hUsd : (pair.volume?.[vol] ?? 0),
+      ),
+      changePct: round(
+        window === "24h" ? changePct : (pair.priceChange?.[chg] ?? 0),
+        2,
+      ),
+      buys: tx?.buys != null ? Math.round(tx.buys) : undefined,
+      sells: tx?.sells != null ? Math.round(tx.sells) : undefined,
+    };
+  }
+  return out;
 }
 
 function deepestForToken(pairs: DexPair[], wanted: Set<string>): Map<string, DexPair> {
@@ -115,24 +145,7 @@ export function applyDexPair(asset: TokenAsset, pair: DexPair): TokenAsset {
     liquidityUsd,
     tradeable,
     marketCapUsd,
-    windows: {
-      "5m": {
-        volumeUsd: Math.round(pair.volume?.m5 ?? 0),
-        changePct: round(pair.priceChange?.m5 ?? 0, 2),
-      },
-      "1h": {
-        volumeUsd: Math.round(pair.volume?.h1 ?? 0),
-        changePct: round(pair.priceChange?.h1 ?? 0, 2),
-      },
-      "6h": {
-        volumeUsd: Math.round(pair.volume?.h6 ?? 0),
-        changePct: round(pair.priceChange?.h6 ?? 0, 2),
-      },
-      "24h": {
-        volumeUsd: volume24hUsd ?? 0,
-        changePct: round(changePct, 2),
-      },
-    },
+    windows: windowsFromPair(pair, volume24hUsd ?? 0, changePct),
     series: series.length > 0 ? series.map((value) => round(value, 10)) : asset.series,
   };
 }
@@ -202,7 +215,7 @@ export async function decorateTokenAssets(
 
 /**
  * Decorate the page the user is looking at — not a global top-N.
- * New = listed_at. Trending = volume. Each tab owns its own page.
+ * New = listed_at. Trending = momentum after Dex decorate. Each tab owns its page.
  */
 export async function loadDecoratedFeedPage(query: TokenPageQuery): Promise<{
   tokens: TokenAsset[];
@@ -210,6 +223,9 @@ export async function loadDecoratedFeedPage(query: TokenPageQuery): Promise<{
   hasMore: boolean;
   decorateMs: number;
 }> {
+  const sort = query.sort ?? "new";
+  const trending = sort === "trending" || sort === "volume";
+  const trendingBounds = trending ? effectiveTrendingBounds(query) : null;
   const page = await listTokensPage(query);
   const started = Date.now();
   let decorated: TokenAsset[];
@@ -223,7 +239,7 @@ export async function loadDecoratedFeedPage(query: TokenPageQuery): Promise<{
       rowToAsset(row, page.stats.get(row.address.toLowerCase())),
     );
   }
-  const tokens = decorated.filter(
+  const bounded = decorated.filter(
     (token) =>
       rowPassesFeedBounds({
         mcap: token.marketCapUsd,
@@ -231,9 +247,9 @@ export async function loadDecoratedFeedPage(query: TokenPageQuery): Promise<{
         tradeable: token.tradeable,
         volume: token.volume24hUsd,
         createdAt: token.createdAt,
-        minMarketCap: query.minMarketCap,
+        minMarketCap: trendingBounds?.minMarketCap ?? query.minMarketCap,
         maxMarketCap: query.maxMarketCap,
-        minLiquidity: query.minLiquidity,
+        minLiquidity: trendingBounds?.minLiquidity ?? query.minLiquidity,
         maxLiquidity: query.maxLiquidity,
         minVolume: query.minVolume,
         maxVolume: query.maxVolume,
@@ -241,6 +257,12 @@ export async function loadDecoratedFeedPage(query: TokenPageQuery): Promise<{
         maxAgeHours: query.maxAgeHours,
       }) && showsWithVolume24h(token.volume24hUsd),
   );
+  const tokens = trending
+    ? rankTrendingTokens(bounded, trendingBounds ?? query).slice(
+        0,
+        Math.min(Math.max(query.limit ?? 50, 1), 100),
+      )
+    : bounded;
   return {
     tokens,
     cursor: page.next,
