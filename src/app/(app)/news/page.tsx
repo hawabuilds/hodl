@@ -2,20 +2,25 @@
 
 import {useEffect, useMemo, useState} from "react";
 import Link from "next/link";
-import {useQuery} from "@tanstack/react-query";
 import {AssetLink} from "@/components/AssetLink";
 import {StickyPageHeader} from "@/components/AppShell";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
 import {Avatar} from "@/components/ui/Avatar";
 import {VerifiedTick} from "@/components/ui/Badges";
 import {ArrowUpRightIcon, NewsIcon} from "@/components/ui/Icons";
+import {useNewsFeed} from "@/hooks/useNewsFeed";
 import {cn} from "@/lib/cn";
 import {newsTime} from "@/lib/format";
-import {NEWS_FEED_QUERY_KEY, selectTodayStories} from "@/lib/newsWindow";
+import {
+  NEWS_DEFAULT_TOPIC,
+  NEWS_DEFAULT_WINDOW,
+  selectTodayStories,
+} from "@/lib/newsWindow";
 import {newsArticlePath} from "@/lib/routes";
 import type {FeedItem, NewsTopic, NewsWindow} from "@/lib/types";
 
 const WINDOWS: FilterOption<NewsWindow>[] = [
+  {value: "latest", label: "Latest"},
   {value: "24h", label: "Today"},
   {value: "7d", label: "This week"},
   {value: "30d", label: "This month"},
@@ -29,25 +34,11 @@ const TOPICS: FilterOption<NewsTopic>[] = [
   {value: "posts", label: "Robinhood socials"},
 ];
 
-interface FeedResponse {
-  items: FeedItem[];
-  seeded: boolean;
-}
-
 export default function NewsPage() {
-  const [window, setWindow] = useState<NewsWindow>("24h");
-  const [topic, setTopic] = useState<NewsTopic>("all");
+  const [window, setWindow] = useState<NewsWindow>(NEWS_DEFAULT_WINDOW);
+  const [topic, setTopic] = useState<NewsTopic>(NEWS_DEFAULT_TOPIC);
 
-  const feed = useQuery({
-    queryKey: [NEWS_FEED_QUERY_KEY, window, topic],
-    staleTime: 60_000,
-    refetchInterval: 5 * 60_000,
-    queryFn: async () => {
-      const res = await fetch(`/api/news?window=${window}&topic=${topic}`);
-      if (!res.ok) throw new Error("Could not load the news feed.");
-      return (await res.json()) as FeedResponse;
-    },
-  });
+  const feed = useNewsFeed(window, topic);
 
   const items = useMemo(() => {
     const raw = feed.data?.items ?? [];

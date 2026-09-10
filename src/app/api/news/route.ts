@@ -1,9 +1,20 @@
 import {unstable_cache} from "next/cache";
 import type {NextRequest} from "next/server";
-import {NEWS_BUILD_FRESH_MS, NEWS_WINDOW_MS} from "@/lib/newsWindow";
+import {
+  NEWS_BUILD_FRESH_MS,
+  NEWS_WIRE_STALE_MS,
+  NEWS_WINDOW_MS,
+} from "@/lib/newsWindow";
 import {json, publicJson} from "@/lib/server/http";
+import {newestAgeMs} from "@/lib/server/live/news";
 import {fetchFeed} from "@/lib/server/sources";
-import {NEWS_TOPICS, NEWS_WINDOWS, type NewsTopic, type NewsWindow} from "@/lib/types";
+import {
+  NEWS_TOPICS,
+  NEWS_WINDOWS,
+  type FeedItem,
+  type NewsTopic,
+  type NewsWindow,
+} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -34,9 +45,23 @@ function cachedFeed(bucket: string) {
       }
       return {...result, builtAt: Date.now()};
     },
-    ["news-feed-v10", bucket],
+    ["news-feed-v11", bucket],
     {revalidate: 60},
   );
+}
+
+/** True when the cached build is too old or its newest article is hours behind the wire. */
+function feedNeedsLiveRefresh(
+  data: FeedItem[],
+  builtAt: number,
+  now: number = Date.now(),
+): boolean {
+  if (now - builtAt > NEWS_BUILD_FRESH_MS) return true;
+  const articles = data.filter((item) => item.kind === "article");
+  if (articles.length === 0) return true;
+  // Trust a build that just finished; only inspect content once it has settled.
+  if (now - builtAt < 30_000) return false;
+  return newestAgeMs(articles, now) > NEWS_WIRE_STALE_MS;
 }
 
 async function loadFeed(): Promise<{
@@ -47,7 +72,7 @@ async function loadFeed(): Promise<{
   const bucket = String(Math.floor(Date.now() / 60_000));
   try {
     const result = await cachedFeed(bucket)();
-    if (Date.now() - result.builtAt > NEWS_BUILD_FRESH_MS) {
+    if (feedNeedsLiveRefresh(result.data, result.builtAt)) {
       const live = await fetchFeed({window: "all", topic: "all"});
       return {...live, builtAt: Date.now()};
     }
@@ -61,7 +86,8 @@ async function loadFeed(): Promise<{
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const window =
-    (NEWS_WINDOWS.find((w) => w === params.get("window")) as NewsWindow) ?? "24h";
+    (NEWS_WINDOWS.find((w) => w === params.get("window")) as NewsWindow) ??
+    "latest";
   const topic =
     (NEWS_TOPICS.find((t) => t === params.get("topic")) as NewsTopic) ?? "all";
 
@@ -78,7 +104,7 @@ export async function GET(request: NextRequest) {
     .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
 
   // Empty or a stuck Data Cache build must not sit on the CDN.
-  if (items.length === 0 || Date.now() - builtAt > NEWS_BUILD_FRESH_MS) {
+  if (items.length === 0 || feedNeedsLiveRefresh(data, builtAt)) {
     return json({items, window, topic, seeded});
   }
   return publicJson({items, window, topic, seeded}, {maxAge: 45, swr: 60});

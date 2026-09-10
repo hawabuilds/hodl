@@ -77,7 +77,8 @@ const OUTLETS = [
 
 /** Milliseconds each window reaches back. `all` is capped at a year. */
 const WINDOW_MS: Record<NewsWindow, number> = {
-  "24h": 24 * 3_600_000,
+  latest: 24 * 3_600_000,
+  "24h": 48 * 3_600_000,
   "7d": 7 * 24 * 3_600_000,
   "30d": 30 * 24 * 3_600_000,
   all: 365 * 24 * 3_600_000,

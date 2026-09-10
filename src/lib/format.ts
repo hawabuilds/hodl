@@ -102,7 +102,7 @@ export function startOfLocalDay(now: number = Date.now()): number {
 
 export function newsTime(
   iso: string,
-  window: "24h" | "7d" | "30d" | "all",
+  window: "latest" | "24h" | "7d" | "30d" | "all",
   now: number = Date.now(),
 ): string {
   const date = new Date(iso);

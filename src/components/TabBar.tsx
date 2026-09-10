@@ -1,9 +1,10 @@
 "use client";
 
+import {useEffect, useState} from "react";
 import Link from "next/link";
 import {usePathname} from "next/navigation";
 import {TABS, type TabKey} from "@/config/app";
-import {usePrefetchNews} from "@/hooks/usePrefetchNews";
+import {usePrefetchNews} from "@/hooks/useNewsFeed";
 import {cn} from "@/lib/cn";
 import {HomeIcon, NewsIcon, SearchIcon, UserIcon} from "./ui/Icons";
 
@@ -29,6 +30,20 @@ export function TabBar() {
   const pathname = usePathname();
   const prefetchNews = usePrefetchNews();
 
+  /**
+   * Which tab to paint as current.
+   *
+   * `usePathname` only moves once the navigation commits, and these tabs are
+   * client pages that fetch on mount — so the highlight used to sit on the old
+   * tab for as long as the route took to resolve. The tap read as dropped, and
+   * a second tap was the usual response. Paint the pressed tab immediately and
+   * let the real pathname take over when it lands.
+   */
+  const [pressed, setPressed] = useState<string | null>(null);
+  useEffect(() => setPressed(null), [pathname]);
+
+  const current = pressed ?? pathname;
+
   return (
     <nav
       aria-label="Primary"
@@ -44,18 +59,27 @@ export function TabBar() {
         {TABS.map((tab) => {
           const Icon = ICONS[tab.key];
           const active =
-            pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+            current === tab.href || current.startsWith(`${tab.href}/`);
+          const warm = tab.key === "news" ? prefetchNews : undefined;
           return (
             <Link
               key={tab.key}
               href={tab.href}
+              // Every tab is one press away, so keep all four route payloads
+              // warm rather than paying an RSC round trip on tap.
+              prefetch
               aria-label={tab.label}
               aria-current={active ? "page" : undefined}
-              onPointerDown={tab.key === "news" ? prefetchNews : undefined}
-              onMouseEnter={tab.key === "news" ? prefetchNews : undefined}
+              onPointerDown={() => {
+                setPressed(tab.href);
+                warm?.();
+              }}
+              onMouseEnter={warm}
               className={cn(
                 "grid h-[46px] w-[54px] place-items-center rounded-full",
-                "transition-[background-color,color,box-shadow] duration-200",
+                // Snap the highlight on instead of easing it: at 200ms the fade
+                // was itself most of the delay people were feeling on tap.
+                "transition-[background-color,color,box-shadow] duration-100",
                 active
                   ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
                   : "text-faint hover:bg-[var(--overlay-wash)] hover:text-muted",

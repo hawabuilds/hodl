@@ -1,6 +1,7 @@
 import {describe, it} from "node:test";
 import assert from "node:assert/strict";
 import {
+  canServeWithoutWire,
   classifyWireCopy,
   finnhubDate,
   mapFinnhubToFeedItem,
@@ -9,6 +10,7 @@ import {
   WIRE_SHARED_TTL_SECONDS,
   WIRE_TTL_MS,
 } from "../src/lib/server/live/news.ts";
+import type {FeedItem} from "../src/lib/types";
 
 describe("classifyWireCopy", () => {
   it("drops geopolitics that never mention markets or a covered stock", () => {
@@ -175,5 +177,42 @@ describe("wire cache freshness", () => {
     assert.ok(newestAgeMs([evening], now) < 60 * 60_000);
     assert.ok(newestAgeMs([stuck], now) > 2 * 60 * 60_000);
     assert.equal(newestAgeMs([], now), Infinity);
+  });
+});
+
+describe("canServeWithoutWire", () => {
+  const article = (id: string): FeedItem => ({
+    id,
+    kind: "article",
+    body: "Headline",
+    url: `https://example.com/${id}`,
+    source: "Wire",
+    handle: null,
+    publishedAt: "2026-09-10T20:00:00.000Z",
+    tickers: [],
+    topic: "market",
+    imageUrl: null,
+    avatarUrl: null,
+    sample: false,
+    summary: null,
+  });
+  const post = (id: string): FeedItem => ({...article(id), kind: "account"});
+
+  it("serves from the archive alone, so a cold wire rebuilds behind", () => {
+    assert.equal(canServeWithoutWire([article("fh-1")], []), true);
+  });
+
+  it("serves from a wire already on hand even with no archive", () => {
+    assert.equal(canServeWithoutWire([], [article("fh-2")]), true);
+  });
+
+  // Both empty is the one case worth blocking for: there is nothing to send.
+  it("waits when neither source has an article", () => {
+    assert.equal(canServeWithoutWire([], []), false);
+  });
+
+  // Posts are not articles; a feed of only X posts is the empty-wire case.
+  it("does not count account posts as something to serve", () => {
+    assert.equal(canServeWithoutWire([], [post("x-1")]), false);
   });
 });

@@ -29,9 +29,13 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at       timestamptz NOT NULL DEFAULT now()
 );
 
--- Existing DBs: column may exist with DEFAULT false — run the migration in the
--- deploy notes to SET DEFAULT true and backfill rows to public.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS portfolio_public boolean NOT NULL DEFAULT true;
+ALTER TABLE users ALTER COLUMN portfolio_public SET DEFAULT true;
+
+-- One-time backfill for DBs created before the default flipped to true. NOT run
+-- from this file: re-running schema.sql would silently un-private every user who
+-- has since opted out in Settings. Run it by hand once, if ever:
+--   UPDATE users SET portfolio_public = true WHERE portfolio_public = false;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_handle_unique
   ON users (lower(handle))
@@ -245,6 +249,32 @@ CREATE TRIGGER indexer_state_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION set_updated_at();
 
+-- ── news_articles ──────────────────────────────────────────────────
+-- Finnhub wire metadata. Upserted on each wire build; longer feed windows
+-- read from here. Metadata + summary only — no publisher HTML.
+-- Retention: optional cron later —
+-- DELETE FROM news_articles WHERE published_at < now() - interval '90 days';
+
+CREATE TABLE IF NOT EXISTS news_articles (
+  id            text PRIMARY KEY,
+  finnhub_id    bigint,
+  headline      text NOT NULL,
+  summary       text,
+  url           text NOT NULL,
+  source        text NOT NULL,
+  image_url     text,
+  published_at  timestamptz NOT NULL,
+  topic         text NOT NULL CHECK (topic IN ('rwa', 'robinhood', 'market')),
+  tickers       text[] NOT NULL DEFAULT '{}',
+  fetched_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS news_articles_published_at
+  ON news_articles (published_at DESC);
+
+CREATE INDEX IF NOT EXISTS news_articles_topic_published
+  ON news_articles (topic, published_at DESC);
+
 -- ── portfolio value over time ──────────────────────────────────────
 -- One row per wallet per UTC hour. Written on portfolio load, not on
 -- every refetch. The chart is this series, not a reconstructed token tape.
@@ -272,3 +302,4 @@ ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE follows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE portfolio_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE news_articles ENABLE ROW LEVEL SECURITY;

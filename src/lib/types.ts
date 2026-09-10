@@ -286,7 +286,7 @@ export interface NewsItem {
 // The news feed
 // ---------------------------------------------------------------------------
 
-export const NEWS_WINDOWS = ["24h", "7d", "30d", "all"] as const;
+export const NEWS_WINDOWS = ["latest", "24h", "7d", "30d", "all"] as const;
 export type NewsWindow = (typeof NEWS_WINDOWS)[number];
 
 export const NEWS_TOPICS = ["all", "rwa", "robinhood", "posts"] as const;

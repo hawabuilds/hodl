@@ -78,7 +78,10 @@ export async function ensureUser(id: string): Promise<void> {
   if (!hasDatabase || !id) return;
   const existing = await userById(id);
   if (existing) return;
-  await db().from("users").insert({id});
+  // Public by default; Settings is where it gets turned off. Stated here as
+  // well as in the column default so a stub is public even against a database
+  // whose default was never migrated.
+  await db().from("users").insert({id, portfolio_public: true});
 }
 
 /** The caller's own users row. One indexed read. */

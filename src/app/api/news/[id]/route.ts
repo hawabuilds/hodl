@@ -3,7 +3,7 @@ import {notFound, publicJson} from "@/lib/server/http";
 
 export const dynamic = "force-dynamic";
 
-/** One wire article from the cached feed, for the in-app reader. */
+/** One wire article — Supabase first, then the live cache. */
 export async function GET(
   _request: Request,
   {params}: {params: {id: string}},

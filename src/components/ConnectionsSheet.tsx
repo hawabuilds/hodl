@@ -97,7 +97,12 @@ export function ConnectionsSheet({
         className={cn(
           "z-[55] max-h-[min(360px,50vh)] overflow-y-auto rounded-2xl bg-surface-popup shadow-panel",
           "origin-top transition-[opacity,transform,visibility] duration-150",
-          pos ? "visible scale-100 opacity-100" : "invisible pointer-events-none opacity-0",
+          // The overlay root is pointer-events:none so the frame stays clickable
+          // through it; every panel portaled in has to take events back or it
+          // renders perfectly and ignores every click, this one included.
+          pos
+            ? "visible pointer-events-auto scale-100 opacity-100"
+            : "invisible pointer-events-none opacity-0",
         )}
       >
         <div className="sticky top-0 z-[1] flex items-center justify-between bg-surface-popup px-4 pb-1 pt-3">

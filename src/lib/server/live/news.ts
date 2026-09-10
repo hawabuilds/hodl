@@ -1,6 +1,12 @@
 import {NEWS_WINDOW_MS} from "@/lib/newsWindow";
 import type {FeedItem, NewsWindow, NewsTopic} from "@/lib/types";
 import {cached, getJson, stale} from "./cache";
+import {
+  getArchivedArticle,
+  mergeFeedItems,
+  queryArticles,
+  upsertArticles,
+} from "./newsArchive";
 import {RWA_REGISTRY} from "./robinhood";
 import {posts} from "./x";
 import {ogImages} from "./og";
@@ -305,7 +311,7 @@ async function marketNews(): Promise<FeedItem[]> {
       return item ? [item] : [];
     })
     .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
-    .slice(0, 40);
+    .slice(0, 60);
 }
 
 function stripOutletLogos(items: FeedItem[]): FeedItem[] {
@@ -347,13 +353,13 @@ async function wireNews(): Promise<FeedItem[][]> {
     // Index tape so Today still has Markets stories when the general wire
     // is politics-heavy or the datetime field comes back unusable.
     companyNews("SPY", "market", [], "S&P 500")
-      .then((items) => items.slice(0, 12))
+      .then((items) => items.slice(0, 16))
       .catch((error) => logWireMiss("SPY", error)),
   ]);
   const rest = await Promise.all(
     RWA_REGISTRY.slice(0, COVERED).map((entry) =>
       companyNews(entry.ticker, "rwa", [entry.ticker], entry.name)
-        .then((items) => items.slice(0, 4))
+        .then((items) => items.slice(0, 8))
         .catch((error) => logWireMiss(entry.ticker, error)),
     ),
   );
@@ -377,10 +383,23 @@ async function buildWire(): Promise<FeedItem[]> {
 
   const wanted = items.slice(0, OG_LOOKUPS).map((item) => item.url);
   const images = await ogImages(wanted);
-  if (images.size === 0) return items;
-  return items.map((item) =>
-    images.has(item.url) ? {...item, imageUrl: images.get(item.url)!} : item,
-  );
+  const enriched =
+    images.size === 0
+      ? items
+      : items.map((item) =>
+          images.has(item.url)
+            ? {...item, imageUrl: images.get(item.url)!}
+            : item,
+        );
+  try {
+    await upsertArticles(enriched);
+  } catch (error) {
+    console.warn(
+      "news archive upsert failed",
+      error instanceof Error ? error.message : error,
+    );
+  }
+  return enriched;
 }
 
 export function hasArticles(items: FeedItem[]): boolean {
@@ -416,20 +435,63 @@ async function loadWire(): Promise<FeedItem[]> {
   return wire;
 }
 
-async function buildFeed(): Promise<FeedItem[]> {
-  const [wire, accountPosts] = await Promise.all([
-    loadWire(),
+/**
+ * The wire this instance already holds, at any age, without fetching.
+ *
+ * Distinct from `loadWire`, which will happily block for a full rebuild. This
+ * is only ever the "do we already have one" question.
+ */
+function wireOnHand(): FeedItem[] {
+  return stale<FeedItem[]>(WIRE_CACHE_KEY) ?? [];
+}
+
+/**
+ * Whether a response can go out now, leaving the wire to rebuild behind it.
+ *
+ * Either source alone is a feed worth serving. Only when both are empty —
+ * a cold instance with no archive to read — does a caller have to wait.
+ */
+export function canServeWithoutWire(
+  archived: FeedItem[],
+  onHand: FeedItem[],
+): boolean {
+  return hasArticles(archived) || hasArticles(onHand);
+}
+
+async function buildFeed(
+  window: NewsWindow = "all",
+  topic: NewsTopic = "all",
+): Promise<FeedItem[]> {
+  // The posts tab reads none of the wire, so it should never wait on one.
+  if (topic === "posts") return posts().catch(() => [] as FeedItem[]);
+
+  const [accountPosts, archived] = await Promise.all([
     posts().catch(() => [] as FeedItem[]),
+    queryArticles({window, topic}).catch(() => [] as FeedItem[]),
   ]);
 
-  const seen = new Map<string, FeedItem>();
-  for (const item of [...wire, ...accountPosts]) {
-    if (!seen.has(item.id)) seen.set(item.id, item);
+  /**
+   * Rebuild behind the request whenever we have something to answer with.
+   *
+   * A cold wire is roughly fifty Finnhub pages plus up to ninety publisher
+   * fetches for artwork, and `cached` only absorbs that for three minutes past
+   * an expiry — so on a quiet app most arrivals were the unlucky one paying
+   * for it in full. The archive is a single indexed read of the same articles,
+   * including their images, which is precisely what it was added for. Serve
+   * that, refresh the wire behind, and let the next request have the newer
+   * copy. `cached` dedupes the in-flight rebuild, so this cannot stampede.
+   */
+  const onHand = wireOnHand();
+  if (canServeWithoutWire(archived, onHand)) {
+    void loadWire().catch(() => {
+      // Background refresh; the served response does not depend on it.
+    });
+    return mergeFeedItems(onHand, accountPosts, archived);
   }
 
-  return [...seen.values()].sort(
-    (a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt),
-  );
+  // Nothing cached and nothing archived — this caller does have to wait.
+  const wire = await loadWire();
+  return mergeFeedItems(wire, accountPosts, archived);
 }
 
 export async function feed(
@@ -439,7 +501,7 @@ export async function feed(
 ): Promise<FeedItem[]> {
   // Wire and X posts are cached separately. A combined key used to persist
   // an X-only list after Finnhub 429'd, which hid every article for an hour.
-  const all = await buildFeed();
+  const all = await buildFeed(window, topic);
 
   const cutoff = now - NEWS_WINDOW_MS[window];
 
@@ -455,6 +517,8 @@ export async function feed(
 /** Headlines for one ticker, for the RWA chart page's News tab. */
 /** One cached wire article, for the in-app reader. */
 export async function articleById(id: string): Promise<FeedItem | null> {
+  const archived = await getArchivedArticle(id);
+  if (archived) return archived;
   const all = await buildFeed();
   const item = all.find((entry) => entry.id === id);
   if (!item || item.kind !== "article") return null;

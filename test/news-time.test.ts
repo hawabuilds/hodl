@@ -1,12 +1,18 @@
 import {describe, it} from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+import {join} from "node:path";
 import {newsTime, relativeTime, startOfLocalDay} from "../src/lib/format";
 import {
   NEWS_BUILD_FRESH_MS,
+  NEWS_DEFAULT_TOPIC,
+  NEWS_DEFAULT_WINDOW,
   NEWS_FEED_QUERY_KEY,
+  NEWS_WIRE_STALE_MS,
   NEWS_WINDOW_MS,
   selectTodayStories,
 } from "../src/lib/newsWindow";
+import {NEWS_TOPICS, NEWS_WINDOWS} from "../src/lib/types";
 
 describe("newsTime", () => {
   const nowDate = new Date(2026, 8, 8, 16, 30, 0);
@@ -66,6 +72,10 @@ describe("selectTodayStories", () => {
     assert.equal(NEWS_WINDOW_MS["24h"], 48 * 3_600_000);
   });
 
+  it("Latest is a true rolling 24h with no calendar clip", () => {
+    assert.equal(NEWS_WINDOW_MS.latest, 24 * 3_600_000);
+  });
+
   it("keeps this evening's wire on Today instead of falling back to last night", () => {
     const evening = {publishedAt: new Date(start + 20 * 3_600_000).toISOString()};
     const afternoon = {publishedAt: new Date(start + 19 * 3_600_000).toISOString()};
@@ -77,7 +87,33 @@ describe("selectTodayStories", () => {
   });
 
   it("busts the client cache key with the wire refresh", () => {
-    assert.equal(NEWS_FEED_QUERY_KEY, "news-feed-v10");
+    assert.equal(NEWS_FEED_QUERY_KEY, "news-feed-v11");
     assert.ok(NEWS_BUILD_FRESH_MS <= 2 * 60_000);
+    assert.equal(NEWS_WIRE_STALE_MS, 2 * 60 * 60_000);
+  });
+
+  // The tab-bar warm primes exactly one cache key. If it is not the key the
+  // tab opens on, the warm is wasted and every News tap pays the wire build.
+  it("warms the window the News tab actually lands on", () => {
+    assert.ok(NEWS_WINDOWS.includes(NEWS_DEFAULT_WINDOW));
+    assert.ok(NEWS_TOPICS.includes(NEWS_DEFAULT_TOPIC));
+    assert.equal(NEWS_DEFAULT_WINDOW, "latest");
+  });
+
+  // The warm only saves a round trip if React Query can dedupe the page's
+  // request onto it, and that needs one shared key and queryFn. When the page
+  // held its own inline fetch, a press started two identical requests and
+  // waited on the second.
+  it("keeps one definition of the News request", () => {
+    const page = readFileSync(
+      join(process.cwd(), "src/app/(app)/news/page.tsx"),
+      "utf8",
+    );
+    assert.match(page, /useNewsFeed/);
+    assert.doesNotMatch(
+      page,
+      /fetch\(`\/api\/news\?/,
+      "the News page refetches inline instead of sharing newsFeedQuery",
+    );
   });
 });
