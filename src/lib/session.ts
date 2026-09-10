@@ -68,6 +68,41 @@ export function useSession(): Session {
   return session;
 }
 
+/**
+ * Whether this browser looks like it has ever signed in.
+ *
+ * Used to decide if Privy has to load before first paint. Deliberately broad:
+ * a false positive only means loading Privy as eagerly as we always did, while
+ * a false negative would treat a signed-in visitor as a stranger and bounce
+ * them to the landing page. Any `privy:` key counts, because the access token
+ * expires while the refresh token and connection list outlive it.
+ */
+export function hasPrivySessionHint(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      if (isPrivySessionKey(window.localStorage.key(i))) return true;
+    }
+  } catch {
+    // Private mode can throw on access; fall through to the cookie.
+  }
+  return document.cookie.includes("privy-token");
+}
+
+/**
+ * Keys that mean a session, as opposed to a device.
+ *
+ * Only the credentials count. Privy writes `privy:caid`, `privy:sent:…` and
+ * `privy:connections` whenever it boots, signed in or not, so anything broader
+ * than this makes every visit after the first one eager — which is exactly the
+ * visitor the deferral is for. Match token-shaped keys, so a rename to
+ * something like `privy:access_token` still counts, and nothing else.
+ */
+export function isPrivySessionKey(key: string | null): boolean {
+  if (!key?.startsWith("privy:")) return false;
+  return key.includes("token");
+}
+
 /** True while Privy is finishing an X OAuth redirect on this page. */
 export function isPrivyOAuthReturn(): boolean {
   if (typeof window === "undefined") return false;

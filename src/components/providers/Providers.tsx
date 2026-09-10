@@ -4,7 +4,7 @@ import {useState, type ReactNode} from "react";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
 import {isPrivyConfigured} from "@/lib/env";
 import {DemoSessionProvider} from "./DemoSession";
-import {PrivySessionProvider} from "./PrivySession";
+import {SessionGate} from "./SessionGate";
 import {ThemeProvider} from "./ThemeProvider";
 import {WalletProvider} from "./WalletProvider";
 
@@ -32,14 +32,18 @@ export function Providers({children}: {children: ReactNode}) {
       }),
   );
 
-  const Session = isPrivyConfigured ? PrivySessionProvider : DemoSessionProvider;
-
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        <WalletProvider>
-          <Session>{children}</Session>
-        </WalletProvider>
+        {isPrivyConfigured ? (
+          // wagmi rides along inside the gate — see SessionGate for why the
+          // wallet stack is not mounted until something actually needs it.
+          <SessionGate>{children}</SessionGate>
+        ) : (
+          <WalletProvider>
+            <DemoSessionProvider>{children}</DemoSessionProvider>
+          </WalletProvider>
+        )}
       </QueryClientProvider>
     </ThemeProvider>
   );

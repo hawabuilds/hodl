@@ -8,7 +8,20 @@ import {RH_MAINNET_ID, robinhoodMainnet} from "@/config/chain";
 import {PRIVY_APP_ID} from "@/lib/env";
 import {SessionContext, type AppUser, type EmbeddedSendTx, type Session} from "@/lib/session";
 
-export function PrivySessionProvider({children}: {children: ReactNode}) {
+export function PrivySessionProvider({
+  children,
+  autoLogin = false,
+}: {
+  children: ReactNode;
+  /**
+   * Open the login flow as soon as Privy is ready.
+   *
+   * Set when the provider was mounted *by* a press on "Continue with X": the
+   * press happened before Privy existed, so the intent has to be carried
+   * across the load rather than lost with it.
+   */
+  autoLogin?: boolean;
+}) {
   const {theme} = useTheme();
 
   // Never key this provider on theme. A remount mid-OAuth drops the callback
@@ -35,12 +48,18 @@ export function PrivySessionProvider({children}: {children: ReactNode}) {
         },
       }}
     >
-      <PrivyBridge>{children}</PrivyBridge>
+      <PrivyBridge autoLogin={autoLogin}>{children}</PrivyBridge>
     </PrivyProvider>
   );
 }
 
-function PrivyBridge({children}: {children: ReactNode}) {
+function PrivyBridge({
+  children,
+  autoLogin,
+}: {
+  children: ReactNode;
+  autoLogin: boolean;
+}) {
   const {
     ready,
     authenticated,
@@ -59,6 +78,16 @@ function PrivyBridge({children}: {children: ReactNode}) {
     user?.wallet?.address ??
     wallets.find((w) => w.walletClientType === "privy")?.address ??
     null;
+
+  // Resume the press that mounted this provider. Guarded by a ref because
+  // `login` opens a redirect and must not be called twice on a re-render.
+  const autoLoginFired = useRef(false);
+  useEffect(() => {
+    if (!autoLogin || autoLoginFired.current) return;
+    if (!ready || authenticated) return;
+    autoLoginFired.current = true;
+    login({loginMethods: ["twitter"]});
+  }, [autoLogin, ready, authenticated, login]);
 
   const appUser: AppUser | null = useMemo(() => {
     if (!user) return null;
