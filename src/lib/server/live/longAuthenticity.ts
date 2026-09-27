@@ -5,6 +5,7 @@ import {
   longAuthenticityFromSignals,
   type LongAuthenticity,
 } from "@/lib/longAuthenticity";
+import {launchedByHodl} from "./launchProvenance";
 
 const tokenUriAbi = parseAbi(["function tokenURI() view returns (string)"]);
 
@@ -58,6 +59,13 @@ export async function resolveLongAuthenticity(
 ): Promise<LongAuthenticity> {
   const denied = longAuthenticityFromSignals({address});
   if (denied === false) return false;
+
+  // A launch hodl made itself and verified on chain. Asked before the URI is
+  // fetched: the question that check answers — "did app.long.xyz make this" —
+  // is the wrong one for a token we created, and the answer would be no.
+  if (await launchedByHodl(address)) {
+    return longAuthenticityFromSignals({address, launchedByHodl: true});
+  }
 
   try {
     const uri = await rpc().readContract({

@@ -12,7 +12,7 @@ import {
 } from "@/components/FeedFilters";
 import {StickyPageHeader} from "@/components/AppShell";
 import {HomeTabs, type HomeTab} from "@/components/HomeTabs";
-import {StarIcon} from "@/components/ui/Icons";
+import {RocketIcon, StarIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
 import {useNewTokens} from "@/hooks/useNewTokens";
 import {useTheme} from "@/hooks/useTheme";
@@ -26,6 +26,16 @@ import {
   type WatchFilter,
 } from "@/lib/homeState";
 import {SECTORS, type SectorId} from "@/lib/sectors";
+
+/**
+ * Deferred like the order ticket: the launch form pulls in the whole write
+ * path, and most visits to Home never open it.
+ */
+const CreateSheet = dynamic(
+  () => import("@/components/CreateSheet").then((m) => ({default: m.CreateSheet})),
+  {ssr: false},
+);
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import {APP_NAME} from "@/config/app";
 import type {Asset} from "@/lib/types";
@@ -73,6 +83,15 @@ function HomeFeed() {
   const initial = parseHomeView(searchParams);
 
   const [tab, setTab] = useState<HomeTab>(initial.tab);
+  // `/create` redirects here with `?create=1`, so a link to the launch form
+  // keeps working even though it is a pop-up rather than a page.
+  const [createOpen, setCreateOpen] = useState(() => searchParams.get("create") === "1");
+
+  // Drop the flag once it has been read, so closing the sheet and reloading
+  // does not reopen it, and a shared link is the feed rather than the form.
+  useEffect(() => {
+    if (searchParams.get("create")) router.replace(pathname, {scroll: false});
+  }, [pathname, router, searchParams]);
   const [tokenSort, setTokenSort] = useState<TokenSort>(initial.tokenSort);
   const [rwaSort, setRwaSort] = useState<RwaSort>(initial.rwaSort);
   const [sector, setSector] = useState<SectorId | "all">(initial.sector);
@@ -242,7 +261,7 @@ function HomeFeed() {
   return (
     <div>
       <StickyPageHeader>
-        <div className="mb-4">
+        <div className="mb-4 flex items-center justify-between">
           <Image
             src={theme === "light" ? "/brand/logo.svg" : "/brand/logo-white-text.svg"}
             alt={APP_NAME}
@@ -251,6 +270,19 @@ function HomeFeed() {
             priority
             className="h-8 w-auto"
           />
+
+          {/*
+            Launching is the one thing a person comes here to *do* rather than
+            read, so it gets the only filled brand control on the screen.
+          */}
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-full bg-brand-500 px-3.5 text-[12.5px] font-extrabold text-white shadow-brand transition-transform duration-150 hover:-translate-y-0.5"
+          >
+            <RocketIcon className="h-[15px] w-[15px]" />
+            Create
+          </button>
         </div>
 
         <HomeTabs value={tab} onChange={setTab} />
@@ -328,6 +360,8 @@ function HomeFeed() {
           reason={tab === "tokens" ? tokenSort : undefined}
         />
       )}
+
+      <CreateSheet open={createOpen} onClose={() => setCreateOpen(false)} />
     </div>
   );
 }

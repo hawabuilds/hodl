@@ -13,7 +13,7 @@ export interface StoredTokenImage {
 
 let bucketReady: Promise<void> | null = null;
 
-async function ensureBucket(): Promise<void> {
+export async function ensureBucket(): Promise<void> {
   if (!hasDatabase) return;
   const {data, error} = await db().storage.listBuckets();
   if (error) {

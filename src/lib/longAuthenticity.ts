@@ -63,10 +63,27 @@ export function longAuthenticityFromSignals(input: {
   address: string;
   metadata?: unknown | null;
   metadataResolved?: boolean;
+  /**
+   * hodl launched this token itself, and proved it on chain before recording
+   * it — the proxy implementation and `owner()` both checked out.
+   *
+   * The URI check below asks "did app.long.xyz make this", which is the right
+   * question for a token we found and the wrong one for a token we made. A
+   * hodl launch goes through the real Airlock and is a genuine Long launch;
+   * it simply came from a different front end, so it lacks that app's fields
+   * and would be marked a fake by a check it was never in scope for.
+   *
+   * Provenance rather than imitation. Writing app.long.xyz's signature fields
+   * to slip past the heuristic would be forging their mark, and it would blind
+   * the check to the clones it exists to catch.
+   */
+  launchedByHodl?: boolean;
 }): LongAuthenticity {
   if (isDeniedFakeLong(input.address) || hasCloneLongVanity(input.address)) {
     return false;
   }
+  // After the deny list, so an address explicitly marked fake stays fake.
+  if (input.launchedByHodl) return true;
   if (input.metadataResolved) {
     return isLongAppMetadata(input.metadata);
   }
