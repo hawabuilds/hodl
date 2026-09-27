@@ -109,6 +109,9 @@ export function commentsFor(asset: Asset, now: number = Date.now()): AssetCommen
       },
       body: pick(next, ROOT_TEMPLATES).replaceAll("{paired}", paired),
       createdAt: new Date(Math.round(at)).toISOString(),
+      likes: 0,
+      liked: false,
+      position: null,
     });
 
     const replies = next() < 0.55 ? 1 + Math.floor(next() * 2) : 0;
@@ -128,6 +131,9 @@ export function commentsFor(asset: Asset, now: number = Date.now()): AssetCommen
         },
         body: pick(next, REPLY_TEMPLATES),
         createdAt: new Date(Math.round(replyAt)).toISOString(),
+        likes: 0,
+        liked: false,
+        position: null,
       });
     }
 

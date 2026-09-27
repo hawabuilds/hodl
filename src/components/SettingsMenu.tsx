@@ -2,19 +2,11 @@
 
 import {useEffect, useRef, useState} from "react";
 import {useMe} from "@/hooks/useMe";
-import {useTheme} from "@/hooks/useTheme";
 import {useUser} from "@/hooks/useUser";
 import {cn} from "@/lib/cn";
-import type {ThemePreference} from "@/lib/theme";
 import {SettingsIcon} from "./ui/Icons";
 import {WalletControls} from "./WalletControls";
 import {NotificationSettings} from "./NotificationSettings";
-
-const THEME_OPTIONS: {value: ThemePreference; label: string}[] = [
-  {value: "system", label: "System"},
-  {value: "light", label: "Light"},
-  {value: "dark", label: "Dark"},
-];
 
 /**
  * Account settings, anchored to the gear that opens them.
@@ -26,7 +18,6 @@ export function SettingsMenu() {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
-  const {preference, setPreference} = useTheme();
   const user = useUser();
   const me = useMe();
 
@@ -82,38 +73,6 @@ export function SettingsMenu() {
         )}
       >
         <WalletControls onNavigate={() => setOpen(false)} />
-
-        <div className="mt-1 px-2.5 py-1.5">
-          <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
-            Appearance
-          </p>
-          <div
-            role="group"
-            aria-label="Theme"
-            className="grid grid-cols-3 gap-1 rounded-2xl bg-[var(--segment-track)] p-1 shadow-inset-soft"
-          >
-            {THEME_OPTIONS.map((option) => {
-              const active = preference === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={active}
-                  onClick={() => setPreference(option.value)}
-                  className={cn(
-                    "rounded-xl px-2 py-1.5 text-[12px] font-bold transition-[background-color,color,box-shadow]",
-                    active
-                      ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
-                      : "text-faint hover:bg-[var(--overlay-wash)] hover:text-muted",
-                  )}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
 
         {user.authenticated ? (
           <button

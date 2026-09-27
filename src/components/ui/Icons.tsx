@@ -498,3 +498,24 @@ export function AppleIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function HeartIcon({filled, ...props}: IconProps & {filled?: boolean}) {
+  return (
+    <Icon {...props}>
+      <path
+        d="M12 20s-7-4.35-7-10a4 4 0 017-2.65A4 4 0 0119 10c0 5.65-7 10-7 10z"
+        {...stroke}
+        fill={filled ? "currentColor" : "none"}
+      />
+    </Icon>
+  );
+}
+
+export function ReplyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10 7L5 12l5 5" {...stroke} />
+      <path d="M5 12h9a5 5 0 015 5v1" {...stroke} />
+    </Icon>
+  );
+}

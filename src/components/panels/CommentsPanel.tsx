@@ -2,37 +2,60 @@
 
 import {useEffect, useRef, useState, type KeyboardEvent} from "react";
 import Link from "next/link";
+
 import {useComments} from "@/hooks/useComments";
-import {stamp} from "@/lib/format";
+import {cn} from "@/lib/cn";
+import {compactMoney, stamp} from "@/lib/format";
 import {profilePath} from "@/lib/routes";
 import type {AssetComment, AssetKind, CommentThread} from "@/lib/types";
 import {Avatar} from "../ui/Avatar";
-import {CloseIcon} from "../ui/Icons";
+import {CloseIcon, HeartIcon, ReplyIcon} from "../ui/Icons";
 import {PanelError, PanelNote} from "./TradesPanel";
 
 /**
- * Time-and-date stamped theses, one level of replies deep.
+ * Comments, each carrying what its author actually did in this asset.
  *
- * Timestamps are absolute rather than relative: a comment here is a call, and
- * "3d ago" stops meaning anything the moment someone scrolls back through a
- * month of them.
+ * Laid out like a trading terminal's thesis feed: the author and a badge for
+ * whether they still hold, then — on a line hanging off their avatar — the
+ * asset, their return and how much they put in, then what they said, then
+ * likes and replies.
+ *
+ * The position line is the point of the design. A take reads very differently
+ * from someone up 60% than from someone who sold at a loss, and every figure
+ * on it is derived from the position hodl already tracks. There is nowhere to
+ * type it, so there is no way to fake it. Holding is also what earns a say at
+ * all: the composer is closed to anyone without one.
+ *
+ * Timestamps stay absolute: a comment here is a call, and "3d ago" stops
+ * meaning anything the moment someone scrolls back through a month of them.
  */
 export function CommentsPanel({
   kind,
   assetId,
   symbol,
+  imageUrl,
 }: {
   kind: AssetKind;
   assetId: string;
   symbol: string;
+  /** The asset's art, for the position line. Stocks fall back to initials. */
+  imageUrl?: string | null;
 }) {
   const [draft, setDraft] = useState("");
-  const [replyTo, setReplyTo] = useState<{rootId: string; label: string} | null>(
-    null,
-  );
+  const [replyTo, setReplyTo] = useState<{rootId: string; label: string} | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
-  const {threads, isLoading, error, retry, canPost, post} = useComments(kind, assetId);
+  const {
+    threads,
+    isLoading,
+    error,
+    retry,
+    canPost,
+    canLike,
+    needsPosition,
+    post,
+    toggleLike,
+  } = useComments(kind, assetId);
 
   useEffect(() => {
     setDraft("");
@@ -64,18 +87,31 @@ export function CommentsPanel({
     composerRef.current?.focus();
   }
 
+  // Newest first: a call made an hour ago is worth more than one made a month
+  // ago, and the composer sits at the bottom either way.
+  const ordered = [...threads].reverse();
+
   return (
     <div>
       {isLoading ? (
         <PanelNote>Loading comments</PanelNote>
       ) : error ? (
         <PanelError message={error} onRetry={retry} />
-      ) : threads.length === 0 ? (
-        <PanelNote>No reads on {symbol} yet. Post the first one.</PanelNote>
+      ) : ordered.length === 0 ? (
+        <PanelNote>No takes on {symbol} yet. Post the first one.</PanelNote>
       ) : (
-        <ul className="flex flex-col gap-4">
-          {threads.map((thread) => (
-            <Thread key={thread.root.id} thread={thread} onReply={startReply} />
+        <ul className="-mx-[22px]">
+          {ordered.map((thread) => (
+            <Thread
+              key={thread.root.id}
+              thread={thread}
+              symbol={symbol}
+              imageUrl={imageUrl ?? null}
+              onReply={startReply}
+              onLike={toggleLike}
+              canLike={canLike}
+              canReply={canPost}
+            />
           ))}
         </ul>
       )}
@@ -98,7 +134,7 @@ export function CommentsPanel({
         ) : null}
 
         <label htmlFor={`comment-${assetId}`} className="sr-only">
-          {replyTo ? `Reply to ${replyTo.label}` : `Share your read on ${symbol}`}
+          {replyTo ? `Reply to ${replyTo.label}` : `Share your take on ${symbol}`}
         </label>
         <div className="flex items-end gap-2">
           <textarea
@@ -113,8 +149,10 @@ export function CommentsPanel({
               canPost
                 ? replyTo
                   ? `Reply to ${replyTo.label}…`
-                  : `Your thesis on ${symbol}…`
-                : "Sign in to post"
+                  : `Your take on ${symbol}…`
+                : needsPosition
+                  ? `Hold ${symbol} to comment`
+                  : "Sign in to post"
             }
             className="max-h-[64px] min-h-[38px] flex-1 resize-none rounded-2xl bg-[var(--bg-input)] px-3 py-2.5 text-[13px] leading-[1.4] text-ink shadow-inset-soft outline-none transition-[box-shadow,background-color] placeholder:text-faint focus:shadow-inset-focus disabled:cursor-not-allowed disabled:opacity-55"
           />
@@ -129,18 +167,14 @@ export function CommentsPanel({
         </div>
         {draft.length > 0 ? (
           <p
-            className={
-              remaining <= 0
-                ? "mt-1.5 text-right text-[11px] font-semibold text-error"
-                : "mt-1.5 text-right text-[11px] font-semibold text-faint"
-            }
+            className={cn(
+              "mt-1.5 text-right text-[11px] font-semibold",
+              remaining <= 0 ? "text-error" : "text-faint",
+            )}
           >
             {remaining}
           </p>
         ) : null}
-        <p className="mt-1.5 text-[11px] font-medium leading-[1.45] text-faint">
-          Posts are saved in this browser until the comment database is connected.
-        </p>
       </div>
     </div>
   );
@@ -148,25 +182,52 @@ export function CommentsPanel({
 
 function Thread({
   thread,
+  symbol,
+  imageUrl,
   onReply,
+  onLike,
+  canLike,
+  canReply,
 }: {
   thread: CommentThread;
+  symbol: string;
+  imageUrl: string | null;
   onReply: (comment: AssetComment, rootId: string) => void;
+  onLike: (commentId: string) => void;
+  canLike: boolean;
+  canReply: boolean;
 }) {
+  // Replies collapsed by default, so a long argument does not bury the calls.
+  const [open, setOpen] = useState(false);
+  const replies = thread.replies;
+
   return (
-    <li>
+    <li className="border-b border-[var(--overlay-wash)] last:border-b-0">
       <CommentRow
         comment={thread.root}
+        symbol={symbol}
+        imageUrl={imageUrl}
+        replyCount={replies.length}
+        repliesOpen={open}
+        onToggleReplies={() => setOpen((value) => !value)}
         onReply={(comment) => onReply(comment, thread.root.id)}
+        onLike={onLike}
+        canLike={canLike}
+        canReply={canReply}
       />
-      {thread.replies.length > 0 ? (
-        <ul className="ml-[15px] mt-3 flex flex-col gap-3 border-l-2 border-[var(--overlay-wash-hover)] pl-[15px]">
-          {thread.replies.map((reply) => (
+      {open && replies.length > 0 ? (
+        <ul className="ml-[44px] border-l-2 border-[var(--overlay-wash-hover)]">
+          {replies.map((reply) => (
             <li key={reply.id}>
               <CommentRow
                 comment={reply}
+                symbol={symbol}
+                imageUrl={imageUrl}
                 compact
                 onReply={(comment) => onReply(comment, thread.root.id)}
+                onLike={onLike}
+                canLike={canLike}
+                canReply={canReply}
               />
             </li>
           ))}
@@ -178,49 +239,155 @@ function Thread({
 
 function CommentRow({
   comment,
+  symbol,
+  imageUrl,
   compact,
+  replyCount = 0,
+  repliesOpen,
+  onToggleReplies,
   onReply,
+  onLike,
+  canLike,
+  canReply,
 }: {
   comment: AssetComment;
+  symbol: string;
+  imageUrl: string | null;
   compact?: boolean;
+  replyCount?: number;
+  repliesOpen?: boolean;
+  onToggleReplies?: () => void;
   onReply: (comment: AssetComment) => void;
+  onLike: (commentId: string) => void;
+  canLike: boolean;
+  /** Replying is commenting, so it needs a holding too. */
+  canReply: boolean;
 }) {
+  const position = comment.position ?? null;
+
   return (
-    <div className="flex gap-2.5">
-      <Link href={profilePath(comment.author.handle)} className="shrink-0">
-        <Avatar
-          name={comment.author.displayName}
-          src={comment.author.pfpUrl}
-          size={compact ? 24 : 30}
-          className="mt-0.5"
-        />
-      </Link>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <Link
-            href={profilePath(comment.author.handle)}
-            className="text-[13px] font-extrabold tracking-[-0.01em] transition-colors hover:text-accent-link"
-          >
-            @{comment.author.handle}
-          </Link>
-          <time
-            dateTime={comment.createdAt}
-            className="text-[11px] font-medium text-faint"
-          >
-            {stamp(comment.createdAt)}
-          </time>
+    <div className={cn("px-[22px]", compact ? "py-3" : "py-3.5")}>
+      <div className="flex items-start gap-2.5">
+        <Link href={profilePath(comment.author.handle)} className="shrink-0">
+          <Avatar
+            name={comment.author.displayName}
+            src={comment.author.pfpUrl}
+            size={compact ? 26 : 32}
+          />
+        </Link>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <Link
+              href={profilePath(comment.author.handle)}
+              className="truncate text-[13.5px] font-extrabold tracking-[-0.01em] transition-colors hover:text-accent-link"
+            >
+              @{comment.author.handle}
+            </Link>
+            {position ? <StatusBadge status={position.status} /> : null}
+            <time
+              dateTime={comment.createdAt}
+              className="ml-auto shrink-0 pl-2 text-[11px] font-medium text-faint"
+            >
+              {stamp(comment.createdAt)}
+            </time>
+          </div>
+
+          {/*
+            The position line, hanging off the avatar. Omitted rather than
+            filled with zeros when there is nothing to say: an author whose
+            cost basis we never captured is not someone who is up 0%.
+          */}
+          {position && (position.gainPct !== null || position.boughtUsd > 0) ? (
+            <div className="relative mt-1.5 flex items-center gap-1.5 pl-3.5">
+              <span
+                aria-hidden="true"
+                className="absolute left-0 top-[-6px] h-[14px] w-2.5 rounded-bl-[6px] border-b-2 border-l-2 border-[var(--overlay-wash-hover)]"
+              />
+              <Avatar name={symbol} src={imageUrl} size={16} />
+              {position.gainPct !== null ? (
+                <span
+                  className={cn(
+                    "tabular-nums text-[12px] font-extrabold",
+                    position.gainPct >= 0 ? "text-price-up" : "text-price-down",
+                  )}
+                >
+                  {position.gainPct >= 0 ? "▲" : "▼"}{" "}
+                  {position.gainPct >= 0 ? "+" : ""}
+                  {position.gainPct.toFixed(2)}%
+                </span>
+              ) : null}
+              {position.boughtUsd > 0 ? (
+                <span className="tabular-nums text-[12px] font-semibold text-faint">
+                  {position.gainPct !== null ? "· " : ""}
+                  {compactMoney(position.boughtUsd)} bought
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+
+          <p className="mt-1.5 whitespace-pre-wrap break-words text-[13.5px] leading-[1.5] text-ink">
+            {comment.body}
+          </p>
+
+          <div className="mt-2 flex items-center gap-4 text-[12px] font-bold text-faint">
+            <button
+              type="button"
+              onClick={() => onLike(comment.id)}
+              disabled={!canLike}
+              aria-pressed={comment.liked}
+              aria-label={comment.liked ? "Unlike" : "Like"}
+              className={cn(
+                "flex items-center gap-1.5 tabular-nums transition-colors disabled:cursor-default",
+                comment.liked ? "text-price-down" : "hover:text-muted",
+              )}
+            >
+              <HeartIcon filled={comment.liked} className="h-[15px] w-[15px]" />
+              {comment.likes}
+            </button>
+
+            {canReply ? (
+              <button
+                type="button"
+                onClick={() => onReply(comment)}
+                className="flex items-center gap-1.5 transition-colors hover:text-accent-link"
+              >
+                <ReplyIcon className="h-[15px] w-[15px]" />
+                Reply
+              </button>
+            ) : null}
+
+            {replyCount > 0 && onToggleReplies ? (
+              <button
+                type="button"
+                onClick={onToggleReplies}
+                aria-expanded={repliesOpen}
+                className="transition-colors hover:text-muted"
+              >
+                {repliesOpen
+                  ? "Hide replies"
+                  : `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`}
+              </button>
+            ) : null}
+          </div>
         </div>
-        <p className="mt-0.5 whitespace-pre-wrap text-[13px] leading-[1.5] text-muted">
-          {comment.body}
-        </p>
-        <button
-          type="button"
-          onClick={() => onReply(comment)}
-          className="mt-1 text-[11.5px] font-bold text-faint transition-colors hover:text-accent-link"
-        >
-          Reply
-        </button>
       </div>
     </div>
+  );
+}
+
+/** "Holding" or "Sold" — whether the author still has money on this. */
+function StatusBadge({status}: {status: "holding" | "sold"}) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-[5px] px-1.5 py-[3px] text-[10px] font-extrabold leading-none",
+        status === "holding"
+          ? "bg-[var(--price-up-wash)] text-price-up"
+          : "bg-[var(--price-down-wash)] text-price-down",
+      )}
+    >
+      {status === "holding" ? "Holding" : "Sold"}
+    </span>
   );
 }

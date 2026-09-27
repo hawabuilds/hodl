@@ -1,6 +1,8 @@
-import type {AssetComment, Profile} from "@/lib/types";
+import type {AssetComment, CommentPositionView, Profile} from "@/lib/types";
 import {fallbackHandle, handleIlike, normalizeHandle} from "@/lib/handle";
+import {isAddress, normalizeAddress} from "@/lib/address";
 import {db, hasDatabase} from "./db";
+import {commentPosition, positionCanComment} from "@/lib/commentPosition";
 
 /** People returned for one query. Twenty was a silent ceiling on the tab. */
 const SEARCH_USER_LIMIT = 40;
@@ -170,22 +172,48 @@ export async function saveProfile(
     .eq("id", id);
 }
 
-export async function commentsFor(assetId: string): Promise<AssetComment[]> {
+/**
+ * Comments for an asset, each with its like count and its author's position.
+ *
+ * Three reads rather than one, because PostgREST cannot aggregate a child
+ * table and join a second one keyed on a different column in the same query.
+ * They are issued together and all three are scoped to the comments actually
+ * being returned, so the cost does not grow with the size of either table.
+ *
+ * `viewerId` only decides whether each comment comes back as liked by *you*.
+ * It never filters what is returned.
+ */
+export async function commentsFor(
+  assetId: string,
+  viewerId?: string | null,
+): Promise<AssetComment[]> {
   if (!hasDatabase) return [];
 
   const {data, error} = await db()
     .from("comments")
-    .select("id, asset_id, parent_id, body, created_at, users(handle, display_name, pfp_url)")
+    .select(
+      "id, asset_id, parent_id, body, created_at, user_id, users!comments_user_id_fkey(handle, display_name, pfp_url)",
+    )
     .eq("asset_id", assetId)
     .order("created_at", {ascending: true})
     .limit(200);
 
   if (error || !data) return [];
 
+  const ids = data.map((row) => String(row.id));
+  const authorIds = [...new Set(data.map((row) => String(row.user_id)))];
+
+  const [likes, positions] = await Promise.all([
+    likeCounts(ids, viewerId ?? null),
+    positionsForAuthors(authorIds, assetId),
+  ]);
+
   return data.map((row) => {
     const user = one((row as {users?: CommentAuthor | CommentAuthor[]}).users);
+    const id = String(row.id);
+    const tally = likes.get(id);
     return {
-      id: String(row.id),
+      id,
       assetId: String(row.asset_id),
       parentId: row.parent_id ? String(row.parent_id) : null,
       author: {
@@ -195,8 +223,184 @@ export async function commentsFor(assetId: string): Promise<AssetComment[]> {
       },
       body: String(row.body),
       createdAt: String(row.created_at),
+      likes: tally?.count ?? 0,
+      liked: tally?.liked ?? false,
+      position: positions.get(String(row.user_id)) ?? null,
     };
   });
+}
+
+/** Like tallies for a set of comments, and whether the viewer is among them. */
+async function likeCounts(
+  commentIds: string[],
+  viewerId: string | null,
+): Promise<Map<string, {count: number; liked: boolean}>> {
+  const out = new Map<string, {count: number; liked: boolean}>();
+  if (!hasDatabase || commentIds.length === 0) return out;
+
+  const {data, error} = await db()
+    .from("comment_likes")
+    .select("comment_id, user_id")
+    .in("comment_id", commentIds);
+
+  // A missing table or a failed read means no likes shown, never a crash that
+  // costs the page its comments.
+  if (error || !data) return out;
+
+  for (const row of data) {
+    const id = String((row as {comment_id: string}).comment_id);
+    const entry = out.get(id) ?? {count: 0, liked: false};
+    entry.count += 1;
+    if (viewerId && String((row as {user_id: string}).user_id) === viewerId) {
+      entry.liked = true;
+    }
+    out.set(id, entry);
+  }
+  return out;
+}
+
+/** Each author's position in this one asset. */
+async function positionsForAuthors(
+  userIds: string[],
+  assetId: string,
+): Promise<Map<string, CommentPositionView>> {
+  const out = new Map<string, CommentPositionView>();
+  if (!hasDatabase || userIds.length === 0) return out;
+
+  const {data, error} = await db()
+    .from("user_positions")
+    .select("user_id, amount, value_usd, cost_usd")
+    .eq("asset_id", assetId)
+    .in("user_id", userIds);
+
+  if (error || !data) return out;
+
+  for (const row of data) {
+    const entry = row as {
+      user_id: string;
+      amount: number;
+      value_usd: number;
+      cost_usd: number | null;
+    };
+    const view = commentPosition({
+      amount: Number(entry.amount),
+      valueUsd: Number(entry.value_usd),
+      costUsd: entry.cost_usd === null ? null : Number(entry.cost_usd),
+    });
+    if (view) out.set(String(entry.user_id), view);
+  }
+  return out;
+}
+
+/**
+ * Whether this person may comment on this asset.
+ *
+ * Speaking about an asset requires holding it. A read that fails is not a
+ * refusal — it returns false, so the composer says "hold X to comment"
+ * rather than letting a post through that the POST route would then reject.
+ */
+export async function holdsAsset(userId: string, assetId: string): Promise<boolean> {
+  if (!hasDatabase) return false;
+
+  const {data} = await db()
+    .from("user_positions")
+    .select("amount, value_usd, cost_usd")
+    .eq("user_id", userId)
+    .eq("asset_id", assetId)
+    .maybeSingle();
+
+  if (data) {
+    const row = data as {amount: number; value_usd: number; cost_usd: number | null};
+    if (
+      positionCanComment({
+        amount: Number(row.amount),
+        valueUsd: Number(row.value_usd),
+        costUsd: row.cost_usd === null ? null : Number(row.cost_usd),
+      })
+    ) {
+      return true;
+    }
+  }
+
+  /*
+   * No row, or a row that says they are out. Ask the chain before refusing.
+   *
+   * `user_positions` is written when someone opens their portfolio, so it is a
+   * cache of who has visited that page — not a record of who holds what. A
+   * holder who has never opened it has no row at all, and telling them to
+   * "hold X to comment" while they hold X is the worst version of this
+   * feature. The balance is one `balanceOf`, and it is the actual question.
+   *
+   * A read that throws returns false: that is a refusal to confirm, and the
+   * POST route treats it as "not holding" rather than letting a post through
+   * on an RPC hiccup. It costs a real holder a retry, not their position.
+   */
+  return balanceHolds(userId, assetId);
+}
+
+async function balanceHolds(userId: string, assetId: string): Promise<boolean> {
+  if (!isAddress(assetId)) return false;
+
+  const {data} = await db()
+    .from("users")
+    .select("wallet")
+    .eq("id", userId)
+    .maybeSingle();
+
+  const wallet = (data as {wallet?: string} | null)?.wallet;
+  if (!wallet || !isAddress(wallet)) return false;
+
+  try {
+    const {rpc, erc20Abi} = await import("./live/chain");
+    const balance = await rpc().readContract({
+      address: normalizeAddress(assetId) as `0x${string}`,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [normalizeAddress(wallet) as `0x${string}`],
+    });
+    return typeof balance === "bigint" && balance > 0n;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Like or unlike, returning the new tally.
+ *
+ * The primary key does the deduplicating, so a double-tap cannot inflate a
+ * count, and the tally is re-counted from the table rather than adjusted
+ * locally — two devices liking at once should not be able to disagree.
+ */
+export async function setCommentLike(input: {
+  commentId: string;
+  userId: string;
+  liked: boolean;
+}): Promise<{likes: number; liked: boolean} | null> {
+  if (!hasDatabase) return null;
+
+  if (input.liked) {
+    const {error} = await db()
+      .from("comment_likes")
+      .upsert(
+        {comment_id: input.commentId, user_id: input.userId},
+        {onConflict: "comment_id,user_id"},
+      );
+    if (error) return null;
+  } else {
+    const {error} = await db()
+      .from("comment_likes")
+      .delete()
+      .eq("comment_id", input.commentId)
+      .eq("user_id", input.userId);
+    if (error) return null;
+  }
+
+  const {count} = await db()
+    .from("comment_likes")
+    .select("*", {count: "exact", head: true})
+    .eq("comment_id", input.commentId);
+
+  return {likes: count ?? 0, liked: input.liked};
 }
 
 export async function addComment(input: {
@@ -215,7 +419,7 @@ export async function addComment(input: {
       parent_id: input.parentId,
       body: input.body.slice(0, 500),
     })
-    .select("id, asset_id, parent_id, body, created_at, users(handle, display_name, pfp_url)")
+    .select("id, asset_id, parent_id, body, created_at, users!comments_user_id_fkey(handle, display_name, pfp_url)")
     .single();
 
   if (error || !data) return null;
@@ -232,6 +436,11 @@ export async function addComment(input: {
     },
     body: String(data.body),
     createdAt: String(data.created_at),
+    likes: 0,
+    liked: false,
+    // Filled by the next fetch. Guessing it here would mean reading the
+    // position a second time to tell someone what they already know.
+    position: null,
   };
 }
 

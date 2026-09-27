@@ -15,7 +15,6 @@ import {HomeTabs, type HomeTab} from "@/components/HomeTabs";
 import {RocketIcon, StarIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
 import {useNewTokens} from "@/hooks/useNewTokens";
-import {useTheme} from "@/hooks/useTheme";
 import {useWatchlistAssets} from "@/hooks/useWatchlist";
 import {
   homeQuery,
@@ -76,7 +75,6 @@ export default function HomePage() {
 }
 
 function HomeFeed() {
-  const {theme} = useTheme();
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
@@ -263,7 +261,7 @@ function HomeFeed() {
       <StickyPageHeader>
         <div className="mb-4 flex items-center justify-between">
           <Image
-            src={theme === "light" ? "/brand/logo.svg" : "/brand/logo-white-text.svg"}
+            src="/brand/logo-white-text.svg"
             alt={APP_NAME}
             width={112}
             height={32}

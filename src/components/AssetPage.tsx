@@ -385,7 +385,12 @@ export function AssetPage({
             onRetry={trades.retry}
           />
         ) : panel === "comments" ? (
-          <CommentsPanel kind={asset.kind} assetId={asset.id} symbol={symbol} />
+          <CommentsPanel
+            kind={asset.kind}
+            assetId={asset.id}
+            symbol={symbol}
+            imageUrl={tokenArt?.imageUrl ?? null}
+          />
         ) : asset.kind === "token" ? (
           <InfoPanel token={asset} />
         ) : (

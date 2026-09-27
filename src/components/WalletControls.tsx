@@ -1,7 +1,6 @@
 "use client";
 
 import {useState, type ReactNode} from "react";
-import {useTheme} from "@/hooks/useTheme";
 import {useUser} from "@/hooks/useUser";
 import {useWallet} from "@/hooks/useWallet";
 import {cn} from "@/lib/cn";
@@ -20,7 +19,6 @@ import {
 } from "./ui/Icons";
 import {SegmentedToggle} from "./ui/SegmentedToggle";
 import {Sheet, SheetTitle} from "./ui/Sheet";
-import type {Theme} from "@/lib/theme";
 
 /**
  * Wallet and account controls in the profile settings menu.
@@ -32,7 +30,6 @@ export function WalletControls({onNavigate}: {onNavigate?: () => void}) {
   const {displayName, handle, embeddedWallet, logout} = useUser();
   const {exportEmbeddedWallet} = useSession();
   const wallet = useWallet();
-  const {theme, setTheme} = useTheme();
 
   const [connectOpen, setConnectOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
@@ -75,23 +72,6 @@ export function WalletControls({onNavigate}: {onNavigate?: () => void}) {
             {handle ? `@${handle}` : "Signed in"}
           </div>
         </div>
-        <SegmentedToggle<Theme>
-          value={theme}
-          onChange={setTheme}
-          className="shrink-0"
-          options={[
-            {
-              value: "light",
-              label: "Light mode",
-              icon: <SunIcon className="h-[15px] w-[15px]" />,
-            },
-            {
-              value: "dark",
-              label: "Dark mode",
-              icon: <MoonIcon className="h-[15px] w-[15px]" />,
-            },
-          ]}
-        />
       </div>
 
       <div className="mx-1 mt-2 flex flex-col gap-2">

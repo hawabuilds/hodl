@@ -56,13 +56,25 @@ export function useComments(kind: AssetKind, assetId: string) {
   const queryClient = useQueryClient();
 
   const remote = useQuery({
-    queryKey: ["comments", kind, assetId],
+    queryKey: ["comments", kind, assetId, authenticated],
     queryFn: async () => {
-      const res = await fetch(`/api/asset/${kind}/${assetId}/comments`);
+      // Signed in, the token decides two things the anonymous view cannot
+      // know: which comments you have liked, and whether you may post.
+      const token = authenticated ? await session.getAccessToken() : null;
+      const res = await fetch(`/api/asset/${kind}/${assetId}/comments`, {
+        headers: token ? {authorization: `Bearer ${token}`} : undefined,
+      });
       if (!res.ok) throw new Error("Could not load comments.");
-      return (await res.json()) as {comments: AssetComment[]; localOnly: boolean};
+      return (await res.json()) as {
+        comments: AssetComment[];
+        localOnly: boolean;
+        /** Whether the caller holds this asset, which is what posting needs. */
+        canPost?: boolean;
+      };
     },
     retry: false,
+    // Comments are a conversation: new ones should arrive without a reload.
+    refetchInterval: 20_000,
   });
 
   const readLocal = useCallback(
@@ -97,7 +109,7 @@ export function useComments(kind: AssetKind, assetId: string) {
             },
             body: JSON.stringify({body: trimmed.slice(0, 500), parentId}),
           });
-          await queryClient.invalidateQueries({queryKey: ["comments", kind, assetId]});
+          await queryClient.invalidateQueries({queryKey: ["comments", kind, assetId, authenticated]});
         });
         return;
       }
@@ -112,9 +124,76 @@ export function useComments(kind: AssetKind, assetId: string) {
         },
         body: trimmed.slice(0, 500),
         createdAt: new Date().toISOString(),
+        likes: 0,
+        liked: false,
+        position: null,
       });
     },
     [assetId, authenticated, handle, displayName, pfpUrl, kind, queryClient, remote.data?.localOnly, session],
+  );
+
+  /**
+   * Like or unlike, applied locally first.
+   *
+   * A heart that waits on a round trip feels broken, so the cache is updated
+   * immediately and reconciled with the server's count when it answers. On a
+   * failure the list is refetched rather than rolled back by hand — the
+   * server's tally is the truth, and re-reading it is simpler than trying to
+   * reconstruct what it was.
+   */
+  const toggleLike = useCallback(
+    (commentId: string) => {
+      if (!authenticated || remote.data?.localOnly !== false) return;
+
+      const key = ["comments", kind, assetId, authenticated];
+      let next = true;
+      queryClient.setQueryData(key, (current: typeof remote.data) => {
+        if (!current) return current;
+        return {
+          ...current,
+          comments: current.comments.map((comment) => {
+            if (comment.id !== commentId) return comment;
+            next = !comment.liked;
+            return {
+              ...comment,
+              liked: next,
+              likes: Math.max(0, comment.likes + (next ? 1 : -1)),
+            };
+          }),
+        };
+      });
+
+      void (async () => {
+        try {
+          const token = await session.getAccessToken();
+          if (!token) return;
+          const res = await fetch(`/api/comments/${commentId}/like`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({liked: next}),
+          });
+          if (!res.ok) throw new Error("like failed");
+          const result = (await res.json()) as {likes: number; liked: boolean};
+          queryClient.setQueryData(key, (current: typeof remote.data) => {
+            if (!current) return current;
+            return {
+              ...current,
+              comments: current.comments.map((comment) =>
+                comment.id === commentId
+                  ? {...comment, likes: result.likes, liked: result.liked}
+                  : comment,
+              ),
+            };
+          });
+        } catch {
+          await queryClient.invalidateQueries({queryKey: key});
+        }
+      })();
+    },
+    [assetId, authenticated, kind, queryClient, remote.data?.localOnly, session],
   );
 
   return {
@@ -123,8 +202,21 @@ export function useComments(kind: AssetKind, assetId: string) {
     isLoading: remote.isLoading,
     error: remote.error ? (remote.error as Error).message : null,
     retry: () => void remote.refetch(),
-    canPost: authenticated,
+    /**
+     * Posting needs a holding once the database is live. Against the seeded
+     * cast anyone signed in may post, because those posts never leave the
+     * browser anyway.
+     */
+    canPost:
+      authenticated &&
+      (remote.data?.localOnly === false ? Boolean(remote.data.canPost) : true),
+    /** Liking is open to anyone signed in; only speaking needs a position. */
+    canLike: authenticated && remote.data?.localOnly === false,
+    /** Signed in but not holding — the composer says so rather than just greying out. */
+    needsPosition:
+      authenticated && remote.data?.localOnly === false && !remote.data.canPost,
     localOnly: remote.data?.localOnly ?? true,
     post,
+    toggleLike,
   };
 }

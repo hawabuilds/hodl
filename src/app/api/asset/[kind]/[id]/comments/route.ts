@@ -1,15 +1,15 @@
 import {badRequest, json, notFound, parseKind} from "@/lib/server/http";
 import {fetchAsset} from "@/lib/server/sources";
 import {commentsFor as seededComments} from "@/lib/server/social";
-import {addComment, commentsFor} from "@/lib/server/social-live";
-import {requireCaller} from "@/lib/server/auth";
+import {addComment, commentsFor, holdsAsset} from "@/lib/server/social-live";
+import {callerId, requireCaller} from "@/lib/server/auth";
 import {hasDatabase} from "@/lib/server/db";
 
 export const dynamic = "force-dynamic";
 
 /** Threads for an asset, oldest first. */
 export async function GET(
-  _request: Request,
+  request: Request,
   {params}: {params: {kind: string; id: string}},
 ) {
   const kind = parseKind(params.kind);
@@ -19,10 +19,16 @@ export async function GET(
   if (!asset) return notFound("No asset with that id.");
 
   if (hasDatabase) {
-    const rows = await commentsFor(asset.id);
+    // Anonymous is fine here: it only decides whether each comment comes back
+    // marked as liked by you, and whether the composer is open.
+    const viewer = await callerId(request);
+    const [rows, canPost] = await Promise.all([
+      commentsFor(asset.id, viewer),
+      viewer ? holdsAsset(viewer, asset.id) : Promise.resolve(false),
+    ]);
     // An empty thread is a real answer, so it is returned rather than falling
     // back to the seeded conversation and inventing one.
-    return json({comments: rows, localOnly: false});
+    return json({comments: rows, localOnly: false, canPost});
   }
 
   return json({comments: seededComments(asset), localOnly: true});
@@ -48,6 +54,18 @@ export async function POST(
   };
   const text = (body.body ?? "").trim();
   if (!text) return badRequest("Write something first.");
+
+  /*
+   * Holding is what earns a say.
+   *
+   * Checked here and not only in the composer: the composer is a courtesy,
+   * this is the rule. A position read that fails counts as not holding, so a
+   * post is refused rather than let through on a database hiccup.
+   */
+  if (!(await holdsAsset(caller.userId, asset.id))) {
+    const ticker = asset.kind === "rwa" ? asset.ticker : asset.symbol;
+    return json({error: `Hold ${ticker} to comment on it.`}, 403);
+  }
 
   const comment = await addComment({
     userId: caller.userId,

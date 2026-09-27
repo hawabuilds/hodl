@@ -55,10 +55,9 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: [
-    {media: "(prefers-color-scheme: light)", color: "#F5F5FF"},
-    {media: "(prefers-color-scheme: dark)", color: "#0D0F18"},
-  ],
+  // One colour: the status bar should not go pale because the phone is in
+  // light mode when the page behind it never is.
+  themeColor: "#0D0F18",
 };
 
 export default function RootLayout({
@@ -73,7 +72,7 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var root=document.documentElement;var pref=null;try{pref=localStorage.getItem("rwa.theme");}catch(e){}var sys=window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";var theme=(pref==="light"||pref==="dark")?pref:(pref==="system"?sys:sys);root.classList.toggle("dark",theme==="dark");root.classList.toggle("light",theme==="light");root.style.colorScheme=theme;root.dataset.theme=theme;var q=new URLSearchParams(location.search).get("palette");var p=(q==="legacy"||q==="terminal")?q:null;if(!p){try{p=localStorage.getItem("rwa.palette");}catch(e){}}if(p==="legacy"&&theme==="dark"){root.setAttribute("data-palette","legacy");}else{root.removeAttribute("data-palette");}if(q==="legacy"||q==="terminal"){try{localStorage.setItem("rwa.palette",q);}catch(e){}}var tc=theme==="light"?"#F5F5FF":(p==="legacy"?"#161A40":"#0D0F18");var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content",tc);}catch(e){document.documentElement.classList.add("dark");}})();`,
+            __html: `(function(){try{var root=document.documentElement;root.classList.add("dark");root.classList.remove("light");root.style.colorScheme="dark";root.dataset.theme="dark";try{var old=localStorage.getItem("rwa.theme");if(old&&old!=="dark")localStorage.removeItem("rwa.theme");}catch(e){}var q=new URLSearchParams(location.search).get("palette");var p=(q==="legacy"||q==="terminal")?q:null;if(!p){try{p=localStorage.getItem("rwa.palette");}catch(e){}}if(p==="legacy"){root.setAttribute("data-palette","legacy");}else{root.removeAttribute("data-palette");}if(q==="legacy"||q==="terminal"){try{localStorage.setItem("rwa.palette",q);}catch(e){}}var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content",p==="legacy"?"#161A40":"#0D0F18");}catch(e){document.documentElement.classList.add("dark");}})();`,
           }}
         />
       </head>

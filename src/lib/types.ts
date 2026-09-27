@@ -258,6 +258,20 @@ export interface CommentAuthor {
   pfpUrl: string | null;
 }
 
+/**
+ * What a commenter did in the asset they are commenting on.
+ *
+ * Derived from the position hodl already tracks for them, never typed. There
+ * is no field to claim a holding in, so there is no way to claim one.
+ */
+export interface CommentPositionView {
+  /** Dollars put in, when the cost basis is known. */
+  boughtUsd: number;
+  status: "holding" | "sold";
+  /** Total return on what went in, or null when it cannot be said honestly. */
+  gainPct: number | null;
+}
+
 export interface AssetComment {
   id: string;
   assetId: string;
@@ -265,6 +279,12 @@ export interface AssetComment {
   author: CommentAuthor;
   body: string;
   createdAt: string;
+  /** How many people liked it. */
+  likes: number;
+  /** Whether the caller did. */
+  liked: boolean;
+  /** The author's position in this asset, when they have one. */
+  position: CommentPositionView | null;
 }
 
 export interface CommentThread {

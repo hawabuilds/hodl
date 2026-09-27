@@ -3,7 +3,6 @@
 import {useEffect, useState} from "react";
 import Image from "next/image";
 import {useRouter} from "next/navigation";
-import {useTheme} from "@/hooks/useTheme";
 import {useUser} from "@/hooks/useUser";
 import {Button} from "./ui/Button";
 import {AppleIcon, ArrowRightIcon, XIcon} from "./ui/Icons";
@@ -17,7 +16,6 @@ import {Modal} from "./ui/Modal";
  */
 export function LoginScreen() {
   const router = useRouter();
-  const {theme} = useTheme();
   const {ready, authenticated, login, isDemo} = useUser();
   const [modalOpen, setModalOpen] = useState(false);
 
@@ -33,7 +31,7 @@ export function LoginScreen() {
   return (
     <div className="flex h-full flex-col justify-center bg-surface-base px-8 pb-[max(48px,env(safe-area-inset-bottom))]">
       <Image
-        src={theme === "light" ? "/brand/logo.svg" : "/brand/logo-white-text.svg"}
+        src="/brand/logo-white-text.svg"
         alt="HODL"
         width={140}
         height={40}
