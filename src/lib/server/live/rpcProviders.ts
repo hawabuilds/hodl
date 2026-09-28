@@ -37,6 +37,28 @@ export function isRpcRateLimitError(text: string): boolean {
   );
 }
 
+/**
+ * Credentials the endpoint rejected: a key that was rotated, expired or
+ * revoked, or a URL that lost its key.
+ *
+ * This is a failover signal, not a retry signal, and it has to be classified
+ * as one. A dead Alchemy key answers `eth_getLogs` with HTTP 401 and the body
+ * `Must be authenticated!`, which viem surfaces as `InvalidRequestRpcError`.
+ * That text matched none of the log-scan retry rules, so the live tip scan
+ * halved its window against the same dead endpoint until it hit the floor and
+ * reported the pass incomplete — every minute, for four days — while
+ * Chainstack and the public RPC sat untried behind it in the provider list.
+ * The cursor never advanced and the feed never gained a row.
+ *
+ * 403 is deliberately absent: the log scan treats it as a Cloudflare
+ * challenge on the public RPC and retries the same provider.
+ */
+export function isRpcAuthError(text: string): boolean {
+  return /\b401\b|must be authenticated|unauthorized|invalid api key|invalid key|api key is required|authentication failed/i.test(
+    text,
+  );
+}
+
 const READ_HTTP_OPTS: HttpTransportConfig = {
   batch: true,
   timeout: 12_000,

@@ -50,7 +50,7 @@ import {asAddress as parseAddress, normalizeAddress} from "@/lib/address";
 import {longWriteEligible} from "@/lib/longAuthenticity";
 import {resolveLongAuthenticity} from "./longAuthenticity";
 import {hasDatabase} from "../db";
-import {isRpcRateLimitError, PUBLIC_MAINNET_RPC} from "./rpcProviders";
+import {isRpcAuthError, isRpcRateLimitError, PUBLIC_MAINNET_RPC} from "./rpcProviders";
 
 const PUBLIC_RPC = PUBLIC_MAINNET_RPC;
 const REORG = CATCHUP_REORG;
@@ -308,6 +308,29 @@ async function logsUnlocked(
   let cursor = cursorStart;
   let scannedTo: bigint | null = null;
   let challenged = 0;
+
+  /**
+   * Hand the rest of this scan to the next provider in the list.
+   *
+   * Returns false once the list is exhausted, which is the only point at
+   * which a failing scan may give up. Each call strictly advances the index,
+   * so a caller that loops on it is bounded by the number of providers.
+   */
+  const advanceProvider = (): boolean => {
+    if (providerIndex + 1 >= providers.length) return false;
+    providerIndex += 1;
+    client = providers[providerIndex].client;
+    usingProvider = providers[providerIndex].provider;
+    startWindow = getLogsStartWindow({
+      caughtUp: Boolean(opts.caughtUp),
+      alchemy: logsProviderKind(usingProvider),
+      live: Boolean(opts.live),
+      span,
+    });
+    window = startWindow;
+    return true;
+  };
+
   while (cursor <= to) {
     if (opts.deadline != null && Date.now() > opts.deadline) {
       return {logs: out, scannedTo, complete: false};
@@ -349,21 +372,12 @@ async function logsUnlocked(
       }
       if (
         isRpcRateLimitError(text) ||
+        isRpcAuthError(text) ||
         /Archive, Debug and Trace|not available on your current plan|ResourceUnavailableRpcError|-32002/i.test(
           text,
         )
       ) {
-        if (providerIndex + 1 < providers.length) {
-          providerIndex += 1;
-          client = providers[providerIndex].client;
-          usingProvider = providers[providerIndex].provider;
-          startWindow = getLogsStartWindow({
-            caughtUp: Boolean(opts.caughtUp),
-            alchemy: logsProviderKind(usingProvider),
-            live: Boolean(opts.live),
-            span,
-          });
-          window = startWindow;
+        if (advanceProvider()) {
           console.error(
             `getLogs ${text.slice(0, 80)}; retrying on ${usingProvider}`,
             cursor.toString(),
@@ -384,6 +398,20 @@ async function logsUnlocked(
           text,
         );
       if (!capped || window <= MIN_LOG_WINDOW) {
+        // Either shrinking cannot fix this error, or there is nothing left to
+        // shrink. Try the next provider before giving up: an endpoint that is
+        // down, or a key that has been revoked, must not freeze the cursor
+        // while a working provider sits untried behind it. Only the failover
+        // branch above knows *why* a provider is being skipped; this is the
+        // net under every error it does not recognise.
+        if (advanceProvider()) {
+          console.error(
+            `getLogs ${text.slice(0, 80)}; retrying on ${usingProvider}`,
+            cursor.toString(),
+            end.toString(),
+          );
+          continue;
+        }
         console.error("token indexer logs failed", address, cursor, end, error);
         if (window <= MIN_LOG_WINDOW) {
           return {logs: out, scannedTo, complete: false};

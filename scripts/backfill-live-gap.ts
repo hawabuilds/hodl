@@ -6,6 +6,7 @@
  *
  *   node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-live-gap.ts
  *   node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-live-gap.ts --once
+ *   node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-live-gap.ts --concurrency=6
  */
 import dns from "node:dns";
 import pg from "pg";
@@ -17,7 +18,50 @@ import type {TokenWrite} from "../src/lib/server/live/universeStore";
 dns.setDefaultResultOrder("ipv4first");
 
 const PUBLIC_RPC = "https://rpc.mainnet.chain.robinhood.com";
-const WINDOW = 4_000n;
+
+/**
+ * Blocks per drain window.
+ *
+ * 4,000 is the safe default and stays the default. It is also slow: a parked
+ * gap of 15.7M blocks drains at roughly 8k blocks a round, which is days of
+ * wall clock. The public RPC serves getLogs over far wider spans than this
+ * (50k tested), and `writeCap` truncates the cursor to the last block it
+ * actually wrote, so a wide window in a dense region simply checkpoints early
+ * rather than losing launches. Widen it with `--window=N` when draining a
+ * long outage, and leave it alone for an ordinary top-up.
+ */
+function windowArg(): bigint {
+  const flag = process.argv.find((arg) => arg.startsWith("--window="));
+  if (!flag) return 4_000n;
+  const parsed = Number(flag.slice("--window=".length));
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error(`--window must be a positive number, got ${flag}`);
+  }
+  return BigInt(Math.floor(parsed));
+}
+
+const WINDOW = windowArg();
+
+/**
+ * Token writes in flight per pass.
+ *
+ * `indexLiveGaps` pins this to 1 so the minute cron cannot stampede the RPC;
+ * `indexFactory` itself defaults to 8. Serial writes are what make a long
+ * drain crawl — each token costs a round of metadata and pool reads, so a
+ * dense window spends minutes writing a few dozen rows. This is an admin job
+ * with the chain to itself, so it can afford more. Default stays 1.
+ */
+function concurrencyArg(): number {
+  const flag = process.argv.find((arg) => arg.startsWith("--concurrency="));
+  if (!flag) return 1;
+  const parsed = Number(flag.slice("--concurrency=".length));
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error(`--concurrency must be a positive number, got ${flag}`);
+  }
+  return Math.floor(parsed);
+}
+
+const WRITE_CONCURRENCY = concurrencyArg();
 const WRITE_CAP = 128;
 const PASS_BUDGET_MS = 90_000;
 const REORG = 30n;
@@ -220,6 +264,7 @@ async function snapshot(label: string) {
 }
 
 async function main() {
+  console.warn(`drain window ${WINDOW} blocks, write cap ${WRITE_CAP}, concurrency ${WRITE_CONCURRENCY}`);
   const {cursors: cursors0} = await snapshot("before");
   const gaps0 = factoryGaps(cursors0);
   if (remainingOf(gaps0) === 0n) {
@@ -247,6 +292,7 @@ async function main() {
         refreshStats: false,
         skipImages: true,
         writeCap: WRITE_CAP,
+        writeConcurrency: WRITE_CONCURRENCY,
         maxBlocks: WINDOW,
         budgetMs: PASS_BUDGET_MS,
         heldCursors: held,

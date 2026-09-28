@@ -536,7 +536,14 @@ export async function searchUsers(
     .or(`handle.ilike.%${q}%,display_name.ilike.%${q}%`)
     .limit(limit);
 
-  return (data ?? []).map((row) => toProfile(row as UserRow));
+  const rows = (data ?? []) as UserRow[];
+  // Search results carry a follower count on the card, so they have to be
+  // counted like every other list of profiles. Leaving them to `toProfile`'s
+  // default published "0 followers" next to every person in the tab —
+  // a wrong number reads as a real one, where a missing number would not.
+  const counts = await followerCountsFor(rows.map((row) => row.id));
+
+  return rows.map((row) => toProfile(row, counts.get(row.id) ?? 0));
 }
 
 export async function profileByHandle(handle: string): Promise<Profile | null> {

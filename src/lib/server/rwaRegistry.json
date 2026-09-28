@@ -1620,6 +1620,18 @@
     "description": "Mobile modems and chips, expanding into automotive and PCs."
   },
   {
+    "ticker": "QNT",
+    "name": "Quantinuum",
+    "address": "0xB7EDfE2F33C1aC06830a971dFb559bDe8A2a3d76",
+    "decimals": 18,
+    "multiplier": "1.000000000000000000",
+    "logoUrl": "https://cdn.robinhood.com/ncw_assets/logos/0xb7edfe2f33c1ac06830a971dfb559bde8a2a3d76.png",
+    "isin": "US74768A1043",
+    "sector": "quantum",
+    "stockType": "stock",
+    "description": "Trapped-ion quantum computing, spun out of Honeywell."
+  },
+  {
     "ticker": "QQQ",
     "name": "Invesco QQQ",
     "address": "0xD5f3879160bc7c32ebb4dC785F8a4F505888de68",

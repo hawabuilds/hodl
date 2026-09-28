@@ -14,6 +14,8 @@
     "backfill:images": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-images.ts",
     "backfill:image-cdn": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-image-cdn.ts",
     "verify:chain": "node --import ./test/resolver.mjs --env-file=.env.local scripts/verify-chain.ts",
+    "rwa:check": "node --import ./test/resolver.mjs scripts/sync-rwa-registry.ts",
+    "rwa:sync": "node --import ./test/resolver.mjs scripts/sync-rwa-registry.ts --write",
     "forge:test": "forge test --root contracts --no-match-contract HodlRouterFork",
     "forge:test:fork": "forge test --root contracts --match-contract HodlRouterFork",
     "forge:coverage": "forge coverage --root contracts --no-match-contract HodlRouterFork",
