@@ -9,7 +9,7 @@ import {SECTORS, type SectorId} from "@/lib/sectors";
 
 export const HOME_STATE_KEY = "rwa:home";
 
-export type TokenSort = "new" | "trending" | "marketCap" | "rewards";
+export type TokenSort = "new" | "trending" | "marketCap";
 export type RwaSort = "marketCap" | "movers";
 export type WatchFilter = "all" | "token" | "rwa";
 
@@ -41,7 +41,8 @@ export const DEFAULT_HOME_VIEW: HomeViewState = {
 };
 
 const TABS: HomeTab[] = ["watchlist", "tokens", "rwas"];
-const TOKEN_SORTS: TokenSort[] = ["new", "trending", "marketCap", "rewards"];
+// An old link to the removed Rewards sort parses to the default.
+const TOKEN_SORTS: TokenSort[] = ["new", "trending", "marketCap"];
 const RWA_SORTS: RwaSort[] = ["marketCap", "movers"];
 const WATCH: WatchFilter[] = ["all", "token", "rwa"];
 const SECTOR_VALUES = new Set<string>(["all", ...SECTORS.map((entry) => entry.id)]);

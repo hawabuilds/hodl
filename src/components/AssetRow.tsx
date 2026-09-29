@@ -11,7 +11,7 @@ import {formatMarketCapAt, formatPriceUsd, formatVolumeUsd, isPriced} from "@/li
 import {cn} from "@/lib/cn";
 import {tokenAge} from "@/lib/format";
 import {SECTORS} from "@/lib/sectors";
-import {assetHref} from "@/lib/routes";
+import {assetHref, assetPath} from "@/lib/routes";
 import type {Asset, Timeframe} from "@/lib/types";
 import {Sparkline} from "./Sparkline";
 import {Avatar} from "./ui/Avatar";
@@ -37,12 +37,22 @@ export function AssetRow({
   fresh,
   eager = false,
   chartTimeframe,
+  dense = false,
+  active = false,
 }: {
   asset: Asset;
   fresh?: boolean;
   eager?: boolean;
+  /** This is the asset open beside the list, in the desktop terminal. */
+  active?: boolean;
   /** Opens the chart on this interval. New rows pass `1m`. */
   chartTimeframe?: Timeframe;
+  /**
+   * A 14px side gutter instead of the phone's 22px, for rows inside a desktop
+   * column. Only the padding changes — the row itself is the same design on
+   * every screen, so a token never reads differently on desktop than on a phone.
+   */
+  dense?: boolean;
 }) {
   const prefetch = usePrefetchAsset();
   // The same shared price the chart page publishes into, so a row and the page
@@ -65,8 +75,11 @@ export function AssetRow({
       // which has even longer to work with.
       onPointerDown={warm}
       onMouseEnter={warm}
+      aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-3 px-[22px] py-[13px] transition-colors duration-150 hover:bg-[var(--overlay-wash)]",
+        "flex items-center gap-3 py-[13px] transition-colors duration-150 hover:bg-[var(--overlay-wash)]",
+        dense ? "px-3.5" : "px-[22px]",
+        active && "bg-[var(--overlay-wash)]",
         fresh && "trade-in",
       )}
     >
@@ -161,11 +174,25 @@ export function AssetList({
   assets,
   markArrivals = false,
   chartTimeframe,
+  flush = false,
+  dense = false,
+  activePath,
 }: {
   assets: Asset[];
   markArrivals?: boolean;
   chartTimeframe?: Timeframe;
+  /**
+   * Sit inside a bounded container rather than bleeding to the edges of the
+   * phone gutter. The feed on a phone undoes `px-[22px]` with `-mx-[22px]`;
+   * inside a desktop column that negative margin would spill into the next one.
+   */
+  flush?: boolean;
+  /** Pass-through to each row. See `AssetRow`. */
+  dense?: boolean;
+  /** The current route, so the row for the asset on screen can say so. */
+  activePath?: string;
 }) {
+  const current = activePath?.split("?")[0].toLowerCase();
   const tokens = assets.filter((asset): asset is Extract<Asset, {kind: "token"}> => asset.kind === "token");
   const logoKey = tokens
     .map((token) => `${token.address}:${token.imageUrl ?? ""}:${token.imageUrl64 ?? ""}`)
@@ -185,7 +212,7 @@ export function AssetList({
   useFeedLogos(logos);
 
   return (
-    <ul className="-mx-[22px]">
+    <ul className={flush ? undefined : "-mx-[22px]"}>
       {assets.map((asset, i) => (
         <li key={ids[i]}>
           <AssetRow
@@ -193,6 +220,8 @@ export function AssetList({
             fresh={arrivals.has(ids[i])}
             eager={i < 15}
             chartTimeframe={chartTimeframe}
+            dense={dense}
+            active={current === assetPath(asset.kind, asset.id).toLowerCase()}
           />
         </li>
       ))}

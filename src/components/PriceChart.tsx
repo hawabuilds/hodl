@@ -20,12 +20,14 @@ import {
   isHistoryPrepend,
   isLiveEdgeUpdate,
   isLwcWhitespace,
+  LWC_RIGHT_OFFSET_PIXELS,
   launchInLogicalView,
   lwcCandleStyleOptions,
   lwcLayoutOptions,
   lwcTimeScaleOptions,
   lwcVisibleTimeRange,
   shouldAutoFitVisibleRange,
+  normalizeLwcPoints,
   toCandleData,
   toLineData,
   toUtcSeconds,
@@ -37,7 +39,12 @@ import type {ChartPoint, ChartStyle} from "@/lib/types";
 
 interface PriceChartProps {
   points: ChartPoint[];
-  height?: number;
+  /**
+   * Pixels, or any CSS length. The chart sizes itself to its host, so a CSS
+   * length such as `clamp(240px, 36vh, 400px)` follows the window without the
+   * chart being torn down and rebuilt.
+   */
+  height?: number | string;
   /** Overrides the up / down colour, e.g. for a portfolio line. */
   positive?: boolean;
   /** Dashed rule at the window open, the way a brokerage marks previous close. */
@@ -172,12 +179,15 @@ export function PriceChart({
   const color = up ? "var(--green)" : "var(--red)";
 
   const seriesData = useMemo(() => {
-    const times = points.map((point) => point.t);
+    // Cleaned once so the bars and their real times stay the same length, and
+    // so LWC never sees two points in one second — see `normalizeLwcPoints`.
+    const clean = normalizeLwcPoints(points);
+    const times = clean.map((point) => point.t);
     const gapMs = gapBreakMsForWindow(windowMs);
     if (style === "candles") {
-      return withCompressedSessionBreaks(toCandleData(points), times, gapMs);
+      return withCompressedSessionBreaks(toCandleData(clean), times, gapMs);
     }
-    return withCompressedSessionBreaks(toLineData(points), times, gapMs);
+    return withCompressedSessionBreaks(toLineData(clean), times, gapMs);
   }, [points, style, windowMs]);
 
   const bucketMs =
@@ -192,14 +202,37 @@ export function PriceChart({
     chart.timeScale().applyOptions(scaleOptsFor(pointsRef.current.length));
     const range = lwcVisibleTimeRange(pointsRef.current);
     if (range) {
-      chart.timeScale().setVisibleRange({
-        from: asTime(range.from),
-        to: asTime(range.to),
-      });
+      const timeScale = chart.timeScale();
+      // A fitted time range centres the last bar half a bar in from the edge.
+      // A candle needs that half bar for its body; a line does not, and zoomed
+      // in on a wide pane the half bar was 30-40px of nothing between the line
+      // and the price axis. So a line is fitted by bar index instead, running
+      // on to the same small pad as everything else.
+      const first = timeScale.timeToIndex(asTime(range.from), true);
+      const last = timeScale.timeToIndex(asTime(range.to), true);
+      const width = timeScale.width();
+      if (
+        style === "line" &&
+        first !== null &&
+        last !== null &&
+        last > first &&
+        width > 0
+      ) {
+        const spacing = width / (last - first + 1);
+        timeScale.setVisibleLogicalRange({
+          from: first,
+          to: last - 0.5 + LWC_RIGHT_OFFSET_PIXELS / spacing,
+        });
+      } else {
+        timeScale.setVisibleRange({
+          from: asTime(range.from),
+          to: asTime(range.to),
+        });
+      }
     } else {
       chart.timeScale().fitContent();
     }
-  }, [intraday]);
+  }, [intraday, style]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -208,7 +241,7 @@ export function PriceChart({
     const colors = readColors(host);
     const chart = createChart(host, {
       autoSize: true,
-      height,
+      ...(typeof height === "number" ? {height} : {}),
       layout: {
         background: {type: ColorType.Solid, color: "transparent"},
         textColor: colors.faint,

@@ -49,17 +49,26 @@ export function ConnectionsSheet({
       setPos(null);
       return;
     }
-    const anchor = anchorRef.current.getBoundingClientRect();
-    const host = document.getElementById(OVERLAY_ROOT_ID);
-    const hostRect = host?.getBoundingClientRect() ?? {top: 0, left: 0, width: window.innerWidth};
-    const width = Math.min(320, hostRect.width - 24);
-    const maxLeft = hostRect.width - width - 12;
-    const left = Math.max(12, Math.min(anchor.left - hostRect.left, maxLeft));
-    setPos({
-      top: anchor.bottom - hostRect.top + 8,
-      left,
-      width,
-    });
+    const place = () => {
+      if (!anchorRef.current) return;
+      const anchor = anchorRef.current.getBoundingClientRect();
+      const host = document.getElementById(OVERLAY_ROOT_ID);
+      const hostRect = host?.getBoundingClientRect() ?? {top: 0, left: 0, width: window.innerWidth};
+      const width = Math.min(320, hostRect.width - 24);
+      const maxLeft = hostRect.width - width - 12;
+      const left = Math.max(12, Math.min(anchor.left - hostRect.left, maxLeft));
+      setPos({
+        top: anchor.bottom - hostRect.top + 8,
+        left,
+        width,
+      });
+    };
+    place();
+    // Positioned in coordinates measured once. A phone never resizes under an
+    // open popover; a desktop window does, and without this the list stayed
+    // where the old layout put it while its anchor moved away.
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
   }, [open, anchorRef, people.length, loading]);
 
   useEffect(() => {

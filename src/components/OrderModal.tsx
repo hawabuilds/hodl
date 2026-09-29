@@ -94,6 +94,40 @@ export function OrderModal({
   side: "buy" | "sell";
   onClose: () => void;
 }) {
+  return (
+    <Modal
+      open={asset !== null}
+      onClose={onClose}
+      surface="popup"
+      className="max-w-[352px] p-5 pt-5"
+    >
+      <OrderTicket asset={asset} side={side} />
+    </Modal>
+  );
+}
+
+/**
+ * The ticket itself, without the pop-up around it.
+ *
+ * A phone opens it in `OrderModal`; the desktop terminal sets it permanently
+ * in its right-hand pane. It is one implementation for both — the quote loop,
+ * the approve-then-swap steps and the revert handling are the live trading
+ * path, and two copies of that would be two chances to get it wrong.
+ *
+ * It stays mounted when the modal closes, exactly as the body did before it
+ * was lifted out: `Modal` renders its children unconditionally and animates
+ * them in and out, so nothing about when these hooks run has changed.
+ */
+export function OrderTicket({
+  asset,
+  side,
+  inline = false,
+}: {
+  asset: Asset | null;
+  side: "buy" | "sell";
+  /** Set in a pane rather than a pop-up: no room kept for a close button. */
+  inline?: boolean;
+}) {
   const {ethUsd} = useEthPrice();
   const session = useSession();
   const swap = useSwap();
@@ -738,16 +772,15 @@ export function OrderModal({
     return `${buying ? "Buy" : "Sell"} ${symbol}`;
   })();
 
-  return (
-    <Modal
-      open={asset !== null}
-      onClose={onClose}
-      surface="popup"
-      className="max-w-[352px] p-5 pt-5"
-    >
-      {asset ? (
+  return asset ? (
         <>
-          <div className="mb-4 flex items-center justify-between gap-2 pr-9">
+          <div
+            className={cn(
+              "mb-4 flex items-center justify-between gap-2",
+              // The modal's close button sits in this corner; a pane has none.
+              !inline && "pr-9",
+            )}
+          >
             <h2 className="truncate text-[17px] font-extrabold tracking-[-0.025em]">
               {buying ? "Buy" : "Sell"} {symbol}
             </h2>
@@ -1070,9 +1103,7 @@ export function OrderModal({
             Max slippage {settings.slippagePct}% · {idleSignHint(walletKind)}
           </p>
         </>
-      ) : null}
-    </Modal>
-  );
+      ) : null;
 }
 
 function TicketBreakdown({

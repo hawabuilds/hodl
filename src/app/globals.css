@@ -42,7 +42,18 @@ body {
   overflow: hidden;
 }
 
-@media (min-width: 600px) and (min-height: 700px) {
+/*
+ * The phone card, for tablets and narrow windows only.
+ *
+ * Above 1024px the app is a terminal and fills the window, which needs no rule
+ * of its own: the base `.app-frame` above is already `100%` × `100dvh`. And
+ * because `#app-overlays` is `inset: 0` of the frame, every sheet and modal
+ * covers the whole window there too, without being re-anchored.
+ *
+ * The upper bound is 1023.98px rather than 1023px so there is no width at which
+ * neither this nor Tailwind's `lg` (min-width: 1024px) applies.
+ */
+@media (min-width: 600px) and (max-width: 1023.98px) and (min-height: 700px) {
   body {
     background: radial-gradient(
         1100px 620px at 50% -8%,

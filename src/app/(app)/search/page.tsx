@@ -1,20 +1,17 @@
 "use client";
 
-import {useEffect, useMemo, useState} from "react";
-import Link from "next/link";
-import {keepPreviousData, useQuery} from "@tanstack/react-query";
+import {useMemo, useState} from "react";
 import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
 import {AssetList} from "@/components/AssetRow";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
-import {Avatar} from "@/components/ui/Avatar";
+import {PersonRow} from "@/components/PersonRow";
 import {SectionLabel} from "@/components/ui/Card";
 import {SearchBar} from "@/components/ui/SearchBar";
 import {SearchIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
-import {compact, compactMoney} from "@/lib/format";
-import {profilePath} from "@/lib/routes";
-import {applyCachedAssets, rememberTokens} from "@/lib/tokenCache";
-import type {Asset, Profile, TokenAsset} from "@/lib/types";
+import {useSearch} from "@/hooks/useSearch";
+import {applyCachedAssets} from "@/lib/tokenCache";
+import type {Asset} from "@/lib/types";
 
 type Scope = "all" | "token" | "rwa" | "people";
 
@@ -25,53 +22,10 @@ const SCOPES: FilterOption<Scope>[] = [
   {value: "people", label: "People"},
 ];
 
-interface SearchResponse {
-  results: Asset[];
-  rwas?: Asset[];
-  tokens?: Asset[];
-  people: Profile[];
-  ineligible?: boolean;
-}
-
 export default function SearchPage() {
   const [query, setQuery] = useState("");
-  const [debounced, setDebounced] = useState("");
   const [scope, setScope] = useState<Scope>("all");
-
-  // Debounced rather than fired per keystroke: a pasted address arrives as one
-  // change, but a typed ticker arrives as four, and three of those responses
-  // are answers nobody reads.
-  useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(query), 180);
-    return () => window.clearTimeout(id);
-  }, [query]);
-
-  const trimmed = debounced.trim();
-  const active = trimmed.length > 0;
-
-  const search = useQuery({
-    queryKey: ["search-all", trimmed],
-    enabled: active,
-    staleTime: 60_000,
-    placeholderData: keepPreviousData,
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/search?people=1&q=${encodeURIComponent(trimmed)}`,
-      );
-      if (!res.ok) throw new Error("Search failed.");
-      const data = (await res.json()) as SearchResponse;
-      const tokens = (data.tokens ?? data.results ?? []).filter(
-        (asset): asset is TokenAsset => asset.kind === "token",
-      );
-      rememberTokens(tokens);
-      return {
-        ...data,
-        results: applyCachedAssets(data.results ?? []),
-        tokens: applyCachedAssets(data.tokens ?? []),
-        rwas: data.rwas ?? [],
-      };
-    },
-  });
+  const {search, trimmed, active} = useSearch(query);
 
   // Only loaded to fill the empty state, so it is never in the way of a query.
   const market = useMarket();
@@ -172,37 +126,6 @@ export default function SearchPage() {
         </>
       )}
     </div>
-  );
-}
-
-function PersonRow({person}: {person: Profile}) {
-  const value = person.holdings.reduce((sum, h) => sum + h.valueUsd, 0);
-
-  return (
-    <li>
-      <Link
-        href={profilePath(person.handle)}
-        className="flex items-center gap-3 px-[22px] py-[13px] transition-colors hover:bg-[var(--overlay-wash)]"
-      >
-        <Avatar name={person.displayName} src={person.pfpUrl} size={40} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[14.5px] font-extrabold tracking-[-0.015em]">
-            {person.displayName}
-          </div>
-          <div className="truncate text-[12.5px] font-semibold text-faint">
-            @{person.handle}
-          </div>
-        </div>
-        <div className="shrink-0 text-right">
-          <div className="tabular-nums text-[13.5px] font-extrabold tracking-[-0.015em]">
-            {compactMoney(value)}
-          </div>
-          <div className="tabular-nums text-[11.5px] font-semibold text-faint">
-            {compact(person.followers)} followers
-          </div>
-        </div>
-      </Link>
-    </li>
   );
 }
 

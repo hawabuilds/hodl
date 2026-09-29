@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect, useRef, useState} from "react";
+import {useEffect, useRef, useState, type ReactNode} from "react";
 import {useMe} from "@/hooks/useMe";
 import {useUser} from "@/hooks/useUser";
 import {cn} from "@/lib/cn";
@@ -8,13 +8,25 @@ import {SettingsIcon} from "./ui/Icons";
 import {WalletControls} from "./WalletControls";
 import {NotificationSettings} from "./NotificationSettings";
 
+interface TriggerProps {
+  open: boolean;
+  toggle: () => void;
+}
+
 /**
  * Account settings, anchored to the gear that opens them.
  *
  * A panel that grows out of its own control keeps the connection between the
  * two, where a sheet rising from the opposite edge of the screen breaks it.
+ *
+ * `trigger` swaps the gear for another control: the desktop top bar opens the
+ * same menu from its account pill.
  */
-export function SettingsMenu() {
+export function SettingsMenu({
+  trigger,
+}: {
+  trigger?: (props: TriggerProps) => ReactNode;
+} = {}) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
@@ -40,24 +52,28 @@ export function SettingsMenu() {
 
   return (
     <div ref={rootRef} className="relative shrink-0">
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          setOpen((prev) => !prev);
-        }}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        aria-label="Settings"
-        className={cn(
-          "-mr-1 grid h-9 w-9 place-items-center rounded-full transition-colors",
-          open
-            ? "bg-[var(--overlay-wash-hover)] text-ink"
-            : "text-muted hover:bg-[var(--overlay-wash)] hover:text-ink",
-        )}
-      >
-        <SettingsIcon className="h-[19px] w-[19px]" />
-      </button>
+      {trigger ? (
+        trigger({open, toggle: () => setOpen((prev) => !prev)})
+      ) : (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            setOpen((prev) => !prev);
+          }}
+          aria-expanded={open}
+          aria-haspopup="menu"
+          aria-label="Settings"
+          className={cn(
+            "-mr-1 grid h-9 w-9 place-items-center rounded-full transition-colors",
+            open
+              ? "bg-[var(--overlay-wash-hover)] text-ink"
+              : "text-muted hover:bg-[var(--overlay-wash)] hover:text-ink",
+          )}
+        >
+          <SettingsIcon className="h-[19px] w-[19px]" />
+        </button>
+      )}
 
       <div
         role="menu"

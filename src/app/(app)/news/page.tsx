@@ -5,12 +5,17 @@ import Link from "next/link";
 import {AssetLink} from "@/components/AssetLink";
 import {StickyPageHeader} from "@/components/AppShell";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
+import {ColumnSegments} from "@/components/desktop/BoardColumn";
 import {Avatar} from "@/components/ui/Avatar";
 import {VerifiedTick} from "@/components/ui/Badges";
+import {PriceDelta} from "@/components/ui/PriceDelta";
 import {ArrowUpRightIcon, NewsIcon} from "@/components/ui/Icons";
+import {useIsDesktop} from "@/hooks/useBreakpoint";
+import {useMarket} from "@/hooks/useMarket";
 import {useNewsFeed} from "@/hooks/useNewsFeed";
 import {cn} from "@/lib/cn";
 import {newsTime} from "@/lib/format";
+import {formatPriceUsd} from "@/lib/priceState";
 import {
   NEWS_DEFAULT_TOPIC,
   NEWS_DEFAULT_WINDOW,
@@ -39,6 +44,7 @@ export default function NewsPage() {
   const [topic, setTopic] = useState<NewsTopic>(NEWS_DEFAULT_TOPIC);
 
   const feed = useNewsFeed(window, topic);
+  const desktop = useIsDesktop();
 
   const items = useMemo(() => {
     const raw = feed.data?.items ?? [];
@@ -48,6 +54,21 @@ export default function NewsPage() {
   const accounts = items.filter((item) => item.kind === "account");
   const articles = items.filter((item) => item.kind === "article");
   const [lead, ...rest] = articles;
+
+  if (desktop) {
+    return (
+      <DesktopNews
+        topic={topic}
+        onTopic={setTopic}
+        window={window}
+        onWindow={setWindow}
+        isLoading={feed.isLoading}
+        error={feed.error as Error | null}
+        articles={articles}
+        accounts={accounts}
+      />
+    );
+  }
 
   return (
     <div>
@@ -135,7 +156,7 @@ export default function NewsPage() {
  * Set after mount: a server render in one timezone and a client render in
  * another disagree on what day it is, and hydration would flag it.
  */
-function Masthead() {
+function Masthead({className = "mb-4"}: {className?: string}) {
   const [today, setToday] = useState("");
 
   useEffect(() => {
@@ -149,7 +170,7 @@ function Masthead() {
   }, []);
 
   return (
-    <div className="mb-4">
+    <div className={className}>
       <div className="h-[15px] text-[11px] font-bold uppercase tracking-[0.1em] text-faint">
         {today}
       </div>
@@ -367,14 +388,15 @@ function TickerChips({
  * real accounts belonging to real people, so the card shows what was actually
  * said or it shows nothing at all.
  */
-function SourceCard({item}: {item: FeedItem}) {
+function SourceCard({item, fill = false}: {item: FeedItem; fill?: boolean}) {
   return (
     <a
       href={item.url}
       target="_blank"
       rel="noopener noreferrer"
       className={cn(
-        "group flex w-[210px] shrink-0 flex-col gap-2.5 rounded-[14px] p-3.5",
+        "group flex shrink-0 flex-col gap-2.5 rounded-[14px] p-3.5",
+        fill ? "w-full" : "w-[210px]",
         "bg-input shadow-card",
         "transition-[background-color,box-shadow] duration-150",
         "hover:bg-[var(--overlay-wash)] hover:shadow-lift",
@@ -400,6 +422,223 @@ function SourceCard({item}: {item: FeedItem}) {
         {item.body}
       </p>
     </a>
+  );
+}
+
+/**
+ * News on a desktop: a front page rather than a feed.
+ *
+ * The phone stacks one story under another because it has one column. With
+ * the width of a monitor the lead story gets its picture beside it, the rest
+ * sit three across, and a side column carries what a trader reads news for —
+ * which stocks the stories are about, and what those stocks are doing.
+ */
+function DesktopNews({
+  topic,
+  onTopic,
+  window,
+  onWindow,
+  isLoading,
+  error,
+  articles,
+  accounts,
+}: {
+  topic: NewsTopic;
+  onTopic: (topic: NewsTopic) => void;
+  window: NewsWindow;
+  onWindow: (window: NewsWindow) => void;
+  isLoading: boolean;
+  error: Error | null;
+  articles: FeedItem[];
+  accounts: FeedItem[];
+}) {
+  const [lead, ...rest] = articles;
+
+  return (
+    <div className="mx-auto w-full max-w-[1320px] px-6 pb-12 pt-[22px]">
+      {/* Title, then the filters under it on one row, reading left to right
+          the way the phone stacks them. Beside the title they floated at the
+          far edge of the page, away from what they filter. */}
+      <div className="mb-5">
+        <Masthead className="mb-4" />
+        <div className="flex flex-wrap items-center gap-2.5">
+          <ColumnSegments
+            label="Filter by topic"
+            options={TOPICS}
+            value={topic}
+            onChange={onTopic}
+            size="md"
+          />
+          <ColumnSegments
+            label="Filter by time"
+            options={WINDOWS}
+            value={window}
+            onChange={onWindow}
+            size="md"
+          />
+        </div>
+      </div>
+
+      {isLoading ? (
+        <FeedSkeleton />
+      ) : error ? (
+        <p className="py-10 text-center text-[13.5px] text-muted">{error.message}</p>
+      ) : articles.length === 0 && accounts.length === 0 ? (
+        <EmptyFeed />
+      ) : (
+        <div className="grid grid-cols-[minmax(0,1fr)_340px] items-start gap-[22px]">
+          <div className="min-w-0">
+            {lead ? <DesktopLead item={lead} window={window} /> : null}
+
+            {rest.length > 0 ? (
+              <section className="mt-5">
+                <SectionHead
+                  title={lead ? "More stories" : "Stories"}
+                  note={`${articles.length} in view`}
+                />
+                <ul className="grid grid-cols-2 gap-3.5 xl:grid-cols-3">
+                  {rest.map((item, i) => (
+                    <StoryCard
+                      key={item.id}
+                      item={item}
+                      window={window}
+                      priority={i < 3}
+                    />
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </div>
+
+          <aside className="sticky top-4 flex flex-col gap-3.5">
+            <InTheNews articles={articles} />
+
+            {accounts.length > 0 ? (
+              <section className="rounded-[14px] border border-[var(--overlay-wash)] bg-surface-base p-3.5">
+                <SectionHead title="Robinhood socials" note="Straight from Robinhood" />
+                <div className="flex flex-col gap-2.5">
+                  {accounts.map((item) => (
+                    <SourceCard key={item.id} item={item} fill />
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </aside>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The lead story, its picture beside the headline rather than above it. */
+function DesktopLead({item, window}: {item: FeedItem; window: NewsWindow}) {
+  return (
+    <Link
+      href={newsArticlePath(item.id)}
+      className={cn(
+        "flex overflow-hidden rounded-2xl bg-input shadow-card transition-[background-color,box-shadow] hover:bg-[var(--overlay-wash)] hover:shadow-lift",
+        // Tall enough to show a photo properly; a headline alone needs no more
+        // room than it takes.
+        item.imageUrl && "min-h-[280px]",
+      )}
+    >
+      <StoryImage item={item} className="w-[53%] shrink-0" priority />
+      <div className="flex min-w-0 flex-1 flex-col items-start p-[22px]">
+        <TopicChip topic={item.topic} />
+        <h3 className="mb-3.5 mt-3 text-[24px] font-extrabold leading-[1.2] tracking-[-0.03em]">
+          {item.body}
+        </h3>
+        <ByLine item={item} window={window} />
+        <TickerChips tickers={item.tickers} className="mt-3" />
+      </div>
+    </Link>
+  );
+}
+
+function StoryCard({
+  item,
+  window,
+  priority = false,
+}: {
+  item: FeedItem;
+  window: NewsWindow;
+  priority?: boolean;
+}) {
+  return (
+    <li>
+      <Link
+        href={newsArticlePath(item.id)}
+        className="flex h-full flex-col overflow-hidden rounded-[14px] bg-input shadow-card transition-[background-color,box-shadow] hover:bg-[var(--overlay-wash)] hover:shadow-lift"
+      >
+        <StoryImage item={item} className="h-[112px] w-full shrink-0" priority={priority} />
+        <div className="flex flex-1 flex-col items-start px-3.5 pb-3.5 pt-3">
+          <TopicChip topic={item.topic} />
+          <h3 className="mb-2.5 mt-2 line-clamp-3 text-[14px] font-bold leading-[1.34] tracking-[-0.015em]">
+            {item.body}
+          </h3>
+          <ByLine item={item} window={window} className="mt-auto" />
+        </div>
+      </Link>
+    </li>
+  );
+}
+
+/**
+ * The stocks the stories in view are about, most-mentioned first, at their
+ * live price. News moves prices, so the list is the bridge from reading to
+ * the chart.
+ */
+function InTheNews({articles}: {articles: FeedItem[]}) {
+  const market = useMarket();
+
+  const rows = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const article of articles) {
+      for (const ticker of article.tickers) {
+        counts.set(ticker, (counts.get(ticker) ?? 0) + 1);
+      }
+    }
+    const byTicker = new Map(market.rwas.map((rwa) => [rwa.ticker, rwa]));
+    return [...counts.entries()]
+      .map(([ticker, stories]) => ({ticker, stories, rwa: byTicker.get(ticker)}))
+      .filter((row) => row.rwa)
+      .sort((a, b) => b.stories - a.stories)
+      .slice(0, 6);
+  }, [articles, market.rwas]);
+
+  if (rows.length === 0) return null;
+
+  return (
+    <section className="rounded-[14px] border border-[var(--overlay-wash)] bg-surface-base px-3.5 pb-1.5 pt-3.5">
+      <SectionHead title="In the news" note="Stocks named in stories" />
+      <ul>
+        {rows.map(({ticker, stories, rwa}) => (
+          <li key={ticker} className="border-t border-[var(--overlay-wash)] first:border-t-0">
+            <AssetLink
+              kind="rwa"
+              id={ticker}
+              className="-mx-2 flex items-center gap-2.5 rounded-[10px] px-2 py-2.5 transition-colors hover:bg-[var(--overlay-wash)]"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1 text-[13.5px] font-extrabold">
+                  {ticker}
+                  <VerifiedTick size={12} />
+                </div>
+                <div className="text-[11px] font-semibold text-faint">
+                  {stories} {stories === 1 ? "story" : "stories"}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="tabular-nums text-[13px] font-extrabold">
+                  {formatPriceUsd(rwa?.priceUsd ?? null)}
+                </div>
+                <PriceDelta value={rwa?.changePct ?? 0} className="text-[11.5px] font-bold" />
+              </div>
+            </AssetLink>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

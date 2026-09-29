@@ -38,7 +38,10 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import {APP_NAME} from "@/config/app";
 import type {Asset} from "@/lib/types";
-import {compareTrendingMomentum} from "@/lib/trendingScore";
+import {sortRwas, sortTokens} from "@/lib/feedSorts";
+import {requestCreate} from "@/lib/createIntent";
+import {useIsDesktop} from "@/hooks/useBreakpoint";
+import {DiscoverBoard} from "@/components/desktop/DiscoverBoard";
 
 const TOKEN_SORTS: FilterOption<TokenSort>[] = [
   {value: "trending", label: "Trending"},
@@ -48,11 +51,6 @@ const TOKEN_SORTS: FilterOption<TokenSort>[] = [
     title: "Newest migrations — RWA-paired tokens and rewarded quote pairs",
   },
   {value: "marketCap", label: "Market cap"},
-  {
-    value: "rewards",
-    label: "Rewards",
-    title: "Tokens with indexed 24h RWA holder payouts",
-  },
 ];
 
 const RWA_SORTS: FilterOption<RwaSort>[] = [
@@ -67,11 +65,40 @@ const WATCH_FILTERS: FilterOption<WatchFilter>[] = [
 ];
 
 export default function HomePage() {
+  // Two different screens rather than one screen at two sizes, so the choice
+  // is made here and each tree only runs its own hooks.
+  const desktop = useIsDesktop();
+  if (desktop) {
+    return (
+      <Suspense fallback={null}>
+        <DesktopHome />
+      </Suspense>
+    );
+  }
   return (
     <Suspense fallback={<FeedSkeleton />}>
       <HomeFeed />
     </Suspense>
   );
+}
+
+/**
+ * Home on a monitor. The launch sheet belongs to the desktop shell there — the
+ * Create button lives in its top bar and has to work from any page — so
+ * `/create`'s `?create=1` is handed to the shell rather than opened here.
+ */
+function DesktopHome() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (searchParams.get("create") !== "1") return;
+    requestCreate();
+    router.replace(pathname, {scroll: false});
+  }, [pathname, router, searchParams]);
+
+  return <DiscoverBoard />;
 }
 
 function HomeFeed() {
@@ -131,11 +158,7 @@ function HomeFeed() {
   }, [tab, tokenSort, rwaSort, sector, watchFilter, filters.minMarketCap, filters.maxMarketCap, filters.minLiquidity, filters.maxLiquidity, filters.minVolume, filters.maxVolume, filters.minAgeHours, filters.maxAgeHours, pathname, router, searchParams]);
 
   const market = useMarket(
-    tokenSort === "marketCap"
-      ? "marketCap"
-      : tokenSort === "rewards"
-        ? "rewards"
-        : "trending",
+    tokenSort === "marketCap" ? "marketCap" : "trending",
     {
     minLiq: filters.minLiquidity ?? initial.minLiq,
     maxLiq: filters.maxLiquidity ?? initial.maxLiq,
@@ -206,36 +229,18 @@ function HomeFeed() {
     if (tokenSort === "new") {
       return newFeed.tokens.filter((token) => passesFilters(token, filters));
     }
-    const list = market.tokens.filter((token) => passesFilters(token, filters));
-
-    switch (tokenSort) {
-      case "marketCap":
-        return list.sort((a, b) => (b.marketCapUsd ?? 0) - (a.marketCapUsd ?? 0));
-      case "rewards":
-        return list
-          .filter((token) => token.rewards24hUsd > 0)
-          .sort((a, b) => b.rewards24hUsd - a.rewards24hUsd);
-      case "trending":
-        return list.sort(compareTrendingMomentum);
-      default:
-        return list.sort(
-          (a, b) =>
-            b.windows[filters.window].volumeUsd -
-            a.windows[filters.window].volumeUsd,
-        );
-    }
+    return sortTokens(
+      market.tokens.filter((token) => passesFilters(token, filters)),
+      tokenSort,
+    );
   }, [market.tokens, tokenSort, filters, newFeed.tokens]);
 
   const rwas = useMemo(() => {
     const list =
       sector === "all"
-        ? [...market.rwas]
+        ? market.rwas
         : market.rwas.filter((asset) => asset.sector === sector);
-    // Movers ranks by the size of the move, not its direction — a stock down
-    // nine percent is as much of a mover as one up nine.
-    return rwaSort === "movers"
-      ? list.sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
-      : list.sort((a, b) => b.marketCapUsd - a.marketCapUsd);
+    return sortRwas(list, rwaSort);
   }, [market.rwas, sector, rwaSort]);
 
   const watched = useMemo(
@@ -382,17 +387,6 @@ function EmptyFeed({
         <p className="mt-4 text-[14px] font-bold">Nothing watched yet</p>
         <p className="mx-auto mt-1.5 max-w-[30ch] text-[13px] leading-[1.5] text-muted">
           Tap the star on any ticker or token to keep it here.
-        </p>
-      </div>
-    );
-  }
-
-  if (reason === "rewards") {
-    return (
-      <div className="px-6 py-12 text-center">
-        <p className="text-[14px] font-bold">No 24h RWA payouts yet</p>
-        <p className="mx-auto mt-1.5 max-w-[34ch] text-[13px] leading-[1.5] text-muted">
-          The indexer has not recorded a holder payout in the last day.
         </p>
       </div>
     );

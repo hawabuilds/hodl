@@ -83,6 +83,53 @@ export function candleFromPoint(
   };
 }
 
+/**
+ * Points Lightweight Charts will accept: valid, ascending, one per second.
+ *
+ * LWC asserts that data is strictly ascending by time and throws otherwise —
+ * and its time is whole seconds, so two points a few hundred milliseconds
+ * apart, or a live trade merged into the bucket the history already has, are
+ * the same time to it. That throw happened inside a React effect with no error
+ * boundary above it, so a single duplicate second blanked the entire app: tap
+ * a new token on its 1m chart and the screen went empty. On phone and desktop.
+ *
+ * Two points in the same second become one bar rather than one being dropped:
+ * open from the first, close from the last, the extremes of both. The later
+ * price is the newer print, so it is the one the line should end on.
+ *
+ * Filtering happens here, once, so the list handed to the converters and the
+ * list of real times handed to `withCompressedSessionBreaks` are the same
+ * length. Previously the converters dropped bad points on their own and the
+ * two lists could fall out of step by one.
+ */
+export function normalizeLwcPoints(points: readonly ChartPoint[]): ChartPoint[] {
+  const valid = points
+    .filter(
+      (point) =>
+        Number.isFinite(point.t) && Number.isFinite(point.price) && point.price > 0,
+    )
+    .slice()
+    .sort((a, b) => a.t - b.t);
+
+  const out: ChartPoint[] = [];
+  for (const point of valid) {
+    const last = out[out.length - 1];
+    if (!last || toUtcSeconds(last.t) !== toUtcSeconds(point.t)) {
+      out.push(point);
+      continue;
+    }
+    const open = last.open ?? last.price;
+    out[out.length - 1] = {
+      t: last.t,
+      price: point.price,
+      open,
+      high: Math.max(last.high ?? last.price, point.high ?? point.price, open),
+      low: Math.min(last.low ?? last.price, point.low ?? point.price, open),
+    };
+  }
+  return out;
+}
+
 export function toLineData(points: ChartPoint[]): LwcLinePoint[] {
   return points
     .filter(
@@ -190,8 +237,13 @@ export const LWC_ATTRIBUTION_LOGO = false;
 /** Small empty strip after the last real bar. Never a pad-to-now. */
 export const LWC_RIGHT_OFFSET_BARS = 3;
 
-/** Pixel inset after the last bar. Wins over a growing bar-count offset. */
-export const LWC_RIGHT_OFFSET_PIXELS = 24;
+/**
+ * Pixel inset after the last bar. Wins over a growing bar-count offset.
+ *
+ * Just enough for half a candle body and the line's end marker. It was 24px,
+ * which read as the chart stopping short of the price axis.
+ */
+export const LWC_RIGHT_OFFSET_PIXELS = 8;
 
 const LWC_RIGHT_OFFSET_MAX_BARS = 8;
 

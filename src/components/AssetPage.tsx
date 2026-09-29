@@ -10,6 +10,7 @@ import {publishPrice} from "@/lib/livePrice";
 import {useLivePrice} from "@/hooks/useLivePrice";
 import dynamic from "next/dynamic";
 import {useRouter} from "next/navigation";
+import {useIsDesktop} from "@/hooks/useBreakpoint";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
 import {useAsset, useChart, useNews, useTrades} from "@/hooks/useAsset";
 import {cn} from "@/lib/cn";
@@ -43,6 +44,10 @@ import {
 
 const OrderModal = dynamic(
   () => import("./OrderModal").then((m) => ({default: m.OrderModal})),
+  {ssr: false},
+);
+const OrderTicket = dynamic(
+  () => import("./OrderModal").then((m) => ({default: m.OrderTicket})),
   {ssr: false},
 );
 const CommentsPanel = dynamic(() =>
@@ -85,6 +90,7 @@ export function AssetPage({
   requestedTimeframe?: string | null;
 }) {
   const router = useRouter();
+  const desktop = useIsDesktop();
   const {asset, isLoading, error} = useAsset(kind, id);
   const listedAt = asset?.kind === "token" ? asset.listedAt : null;
   const autoTimeframe = defaultChartTimeframe({
@@ -149,14 +155,20 @@ export function AssetPage({
     0;
   const positive = liveChange >= 0;
 
+  // On desktop a token's Info sits permanently beside the ticket, so it is not
+  // also a tab; a stock's News has no such home and stays one.
+  const infoInPane = desktop && kind === "token";
   const tabs: PanelTab<PanelKey>[] = useMemo(
     () => [
       {value: "trades", label: "Trades"},
       {value: "comments", label: "Comments"},
-      {value: "detail", label: kind === "rwa" ? "News" : "Info"},
+      ...(infoInPane
+        ? []
+        : [{value: "detail" as const, label: kind === "rwa" ? "News" : "Info"}]),
     ],
-    [kind],
+    [kind, infoInPane],
   );
+  const shownPanel: PanelKey = infoInPane && panel === "detail" ? "trades" : panel;
 
   if (!asset) {
     if (isLoading) return <AssetSkeleton />;
@@ -195,10 +207,156 @@ export function AssetPage({
     bucketMs: TIMEFRAME_MS[chart.resolvedTimeframe],
   });
 
-  return (
-    <div className={cn(APP_SCROLL_PAD_TOP, "pb-[calc(84px+env(safe-area-inset-bottom))]")}>
-      <BackButton onClick={() => router.back()} />
+  const chipItems = (
+    <>
+      {asset.kind === "rwa" ? (
+        sectorFor(asset.ticker) ? (
+          <span
+            title={sectorFor(asset.ticker)?.description}
+            className="rounded-[8px] bg-[var(--overlay-wash)] px-2 py-1 text-[11.5px] font-extrabold text-muted"
+          >
+            {sectorFor(asset.ticker)?.label}
+          </span>
+        ) : null
+      ) : (
+        <>
+          <PairMarket base={asset.symbol} quote={asset.pairedTicker} />
+          <TaxChip buyPct={asset.buyTaxPct} sellPct={asset.sellTaxPct} />
+          {asset.launchpad ? (
+            <a
+              href={asset.launchpad.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Launched on ${asset.launchpad.name}`}
+              className="flex items-center gap-1.5 rounded-[8px] bg-[var(--overlay-wash)] py-1 pl-1 pr-2 text-[11.5px] font-extrabold transition-colors hover:bg-[var(--overlay-wash-hover)]"
+            >
+              <LaunchpadMark launchpad={asset.launchpad} size={16} />
+              {asset.launchpad.name}
+            </a>
+          ) : null}
+        </>
+      )}
+      {asset.kind === "token" ? (
+        <SocialRow socials={asset.socials} className="-my-1" />
+      ) : null}
+    </>
+  );
 
+  const priceFigure = (
+    <div className={desktop ? "text-right" : undefined}>
+      <div className="tabular-nums text-[32px] font-extrabold leading-none tracking-[-0.035em]">
+        {formatPriceUsd(shownPrice)}
+      </div>
+      <div
+        className={cn(
+          "mt-1.5 flex flex-wrap items-center gap-1.5 text-[13.5px] font-bold",
+          desktop && "justify-end",
+        )}
+      >
+        {asset.kind === "token" && shownMarketCap === "—" ? (
+          <span className="tabular-nums text-faint">—</span>
+        ) : (
+          <PriceDelta value={shownChange} />
+        )}
+        <span className="font-semibold text-faint">
+          {scrubbed
+            ? clock(scrubbed.t)
+            : timeframeLabel(timeframe, chart.resolvedTimeframe)}
+        </span>
+      </div>
+    </div>
+  );
+
+  const capFigure = (
+    <div className="text-right">
+      <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
+        Market cap
+      </div>
+      <div className="tabular-nums text-[15px] font-extrabold tracking-[-0.02em]">
+        {shownMarketCap}
+      </div>
+      {asset.kind === "token" ? (
+        <div className="tabular-nums mt-0.5 inline-flex items-center gap-1 rounded-[6px] bg-[var(--overlay-wash)] px-1.5 py-[3px] text-[11px] font-bold">
+          <span className="text-faint">Liq</span>
+          <span className="text-muted">
+            {formatLiquidityUsd(asset.liquidityUsd)}
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  // A phone stacks the name, the chips, the contract and the price, because it
+  // has the height and not the width. A desktop pane is the other way round:
+  // stacked, those rows pushed the chart and the trades under it off the
+  // screen, so the name, price and cap share a row and the chips share another.
+  const header = desktop ? (
+    <>
+      <div className="flex items-center gap-5">
+        {asset.kind === "rwa" ? (
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[12px] font-extrabold uppercase tracking-[0.06em] text-faint">
+                {asset.ticker}
+              </span>
+              <VerifiedTick size={14} />
+              <TypeBadge type={asset.stockType} />
+              <WatchStar
+                kind={asset.kind}
+                id={asset.id}
+                addPrice={asset.priceUsd}
+                className="-my-1"
+              />
+            </div>
+            <h1 className="mt-0.5 truncate text-[20px] font-extrabold leading-tight tracking-[-0.03em]">
+              {asset.name}
+            </h1>
+          </div>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <Avatar
+              name={symbol}
+              src={tokenArt?.imageUrl}
+              src64={tokenArt?.imageUrl64}
+              fallbacks={tokenArt?.imageFallbacks}
+              seed={asset.address}
+              color={tokenArt?.imageColor}
+              size={40}
+              eager
+            />
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-1">
+                <h1 className="truncate text-[19px] font-extrabold tracking-[-0.03em]">
+                  {symbol}
+                </h1>
+                <WatchStar kind={asset.kind} id={asset.id} addPrice={asset.priceUsd} />
+              </div>
+              <div className="-mt-0.5 truncate text-[13px] font-semibold text-faint">
+                {asset.name}
+              </div>
+            </div>
+          </div>
+        )}
+        {priceFigure}
+        {capFigure}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        {chipItems}
+        <ContractChip address={contractAddress} />
+      </div>
+
+      {asset.kind === "rwa" ? (
+        <p
+          title={asset.description}
+          className="mt-2.5 line-clamp-2 text-[13px] leading-[1.55] text-muted"
+        >
+          {asset.description}
+        </p>
+      ) : null}
+    </>
+  ) : (
+    <>
       {asset.kind === "rwa" ? (
         // Robinhood lists equities without artwork, so the name carries the
         // header on its own.
@@ -242,36 +400,7 @@ export function AssetPage({
       )}
 
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        {asset.kind === "rwa" ? (
-          sectorFor(asset.ticker) ? (
-            <span
-              title={sectorFor(asset.ticker)?.description}
-              className="rounded-[8px] bg-[var(--overlay-wash)] px-2 py-1 text-[11.5px] font-extrabold text-muted"
-            >
-              {sectorFor(asset.ticker)?.label}
-            </span>
-          ) : null
-        ) : (
-          <>
-            <PairMarket base={asset.symbol} quote={asset.pairedTicker} />
-            <TaxChip buyPct={asset.buyTaxPct} sellPct={asset.sellTaxPct} />
-            {asset.launchpad ? (
-              <a
-                href={asset.launchpad.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={`Launched on ${asset.launchpad.name}`}
-                className="flex items-center gap-1.5 rounded-[8px] bg-[var(--overlay-wash)] py-1 pl-1 pr-2 text-[11.5px] font-extrabold transition-colors hover:bg-[var(--overlay-wash-hover)]"
-              >
-                <LaunchpadMark launchpad={asset.launchpad} size={16} />
-                {asset.launchpad.name}
-              </a>
-            ) : null}
-          </>
-        )}
-        {asset.kind === "token" ? (
-          <SocialRow socials={asset.socials} className="-my-1" />
-        ) : null}
+        {chipItems}
       </div>
 
       {/*
@@ -291,41 +420,15 @@ export function AssetPage({
       ) : null}
 
       <div className="mt-4 flex items-end justify-between gap-3">
-        <div>
-          <div className="tabular-nums text-[32px] font-extrabold leading-none tracking-[-0.035em]">
-            {formatPriceUsd(shownPrice)}
-          </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[13.5px] font-bold">
-            {asset.kind === "token" && shownMarketCap === "—" ? (
-              <span className="tabular-nums text-faint">—</span>
-            ) : (
-              <PriceDelta value={shownChange} />
-            )}
-            <span className="font-semibold text-faint">
-              {scrubbed
-                ? clock(scrubbed.t)
-                : timeframeLabel(timeframe, chart.resolvedTimeframe)}
-            </span>
-          </div>
-        </div>
-
-        <div className="text-right">
-          <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
-            Market cap
-          </div>
-          <div className="tabular-nums text-[15px] font-extrabold tracking-[-0.02em]">
-            {shownMarketCap}
-          </div>
-          {asset.kind === "token" ? (
-            <div className="tabular-nums mt-0.5 inline-flex items-center gap-1 rounded-[6px] bg-[var(--overlay-wash)] px-1.5 py-[3px] text-[11px] font-bold">
-              <span className="text-faint">Liq</span>
-              <span className="text-muted">
-                {formatLiquidityUsd(asset.liquidityUsd)}
-              </span>
-            </div>
-          ) : null}
-        </div>
+        {priceFigure}
+        {capFigure}
       </div>
+    </>
+  );
+
+  const content = (
+    <>
+      {header}
 
       {chart.error && livePoints.length < 2 ? (
         <div className="mt-3 h-[220px] rounded-xl bg-wash">
@@ -342,6 +445,7 @@ export function AssetPage({
           floorPrice={launchContext?.price ?? livePoints[0]?.price}
           onNeedOlder={chart.hasMore ? chart.loadOlder : undefined}
           onScrub={setScrubbed}
+          height={desktop ? "clamp(220px, 32vh, 380px)" : undefined}
           className="mt-3"
         />
       )}
@@ -373,10 +477,10 @@ export function AssetPage({
         />
       </div>
 
-      <PanelTabs tabs={tabs} value={panel} onChange={setPanel} />
+      <PanelTabs tabs={tabs} value={shownPanel} onChange={setPanel} />
 
       <div className="pt-3">
-        {panel === "trades" ? (
+        {shownPanel === "trades" ? (
           <TradesPanel
             trades={trades.trades}
             symbol={symbol}
@@ -384,7 +488,7 @@ export function AssetPage({
             error={trades.error}
             onRetry={trades.retry}
           />
-        ) : panel === "comments" ? (
+        ) : shownPanel === "comments" ? (
           <CommentsPanel
             kind={asset.kind}
             assetId={asset.id}
@@ -403,6 +507,40 @@ export function AssetPage({
           />
         )}
       </div>
+    </>
+  );
+
+  if (desktop) {
+    // Chart and conversation in the middle, trading on the right. Both panes
+    // scroll on their own, so reading back through the tape never scrolls the
+    // ticket out of reach.
+    return (
+      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_360px] gap-2.5 p-2.5">
+        <section className="scroll-quiet min-h-0 min-w-0 overflow-y-auto rounded-[14px] border border-[var(--overlay-wash)] bg-surface-base px-[22px] pb-6 pt-4">
+          {content}
+        </section>
+        <aside
+          aria-label={`Trade ${symbol}`}
+          className="scroll-quiet flex min-h-0 flex-col gap-2.5 overflow-y-auto"
+        >
+          <div className="rounded-[14px] border border-[var(--overlay-wash)] bg-surface-base p-5">
+            <OrderTicket asset={asset} side="buy" inline />
+          </div>
+          {asset.kind === "token" ? (
+            <div className="rounded-[14px] border border-[var(--overlay-wash)] bg-surface-base px-[22px] py-4">
+              <InfoPanel token={asset} />
+            </div>
+          ) : null}
+        </aside>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn(APP_SCROLL_PAD_TOP, "pb-[calc(84px+env(safe-area-inset-bottom))]")}>
+      <BackButton onClick={() => router.back()} />
+
+      {content}
 
       <TradeBar
         symbol={symbol}

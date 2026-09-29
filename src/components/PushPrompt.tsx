@@ -113,7 +113,7 @@ export function PushPrompt() {
       {showBar ? (
         <div
           data-surface="popup"
-          className="pointer-events-auto absolute inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-[40] px-[22px]"
+          className="pointer-events-auto absolute inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-[40] px-[22px] lg:bottom-10 lg:left-auto lg:right-4 lg:w-[360px] lg:px-0"
         >
           <button
             type="button"

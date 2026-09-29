@@ -10,6 +10,7 @@ import {
 import {compactMoney} from "@/lib/format";
 import {FEED_WINDOWS} from "@/lib/types";
 import {FilterIcon} from "./ui/Icons";
+import {OverlayPortal} from "./ui/OverlayPortal";
 
 export {
   NO_FILTERS,
@@ -85,131 +86,137 @@ function FilterSheet({
     onChange(NO_FILTERS);
   };
 
+  // Portalled like every other overlay. It used to be `position: fixed` on its
+  // own, the one dialog that did not go through OverlayPortal — so on a tablet,
+  // where the app is a phone-shaped card in the middle of the screen, it
+  // escaped the card and covered the whole window.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-5">
-      <button
-        type="button"
-        aria-label="Close filters"
-        onClick={onClose}
-        className="absolute inset-0 bg-[var(--backdrop-scrim)] backdrop-blur-[2px]"
-      />
-
-      <div
-        role="dialog"
-        aria-label="Feed filters"
-        data-surface="popup"
-        className="relative w-full max-w-[380px] overflow-hidden rounded-2xl bg-surface-popup p-5 shadow-modal"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-[16px] font-extrabold tracking-[-0.02em]">
-            Filters
-          </h2>
-          <button
-            type="button"
-            onClick={clear}
-            className="text-[12px] font-bold text-faint transition-colors hover:text-ink"
-          >
-            Reset
-          </button>
-        </div>
-
-        <Section label="Time range">
-          <div className="flex gap-1 rounded-2xl bg-[var(--segment-track)] p-1 shadow-inset-soft">
-            {FEED_WINDOWS.map((window) => (
-              <button
-                key={window}
-                type="button"
-                onClick={() => set({window})}
-                aria-pressed={draft.window === window}
-                className={cn(
-                  "flex-1 rounded-xl py-2 text-[12.5px] font-extrabold transition-[background-color,color,box-shadow]",
-                  draft.window === window
-                    ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
-                    : "text-muted hover:bg-[var(--overlay-wash)] hover:text-ink",
-                )}
-              >
-                {window}
-              </button>
-            ))}
-          </div>
-          <p className="mt-1.5 text-[11px] leading-[1.45] text-faint">
-            Volume and price move are read over this window.
-          </p>
-        </Section>
-
-        <Section label="Market cap">
-          <RangeInputs
-            min={draft.minMarketCap}
-            max={draft.maxMarketCap}
-            onMin={(value) => set({minMarketCap: value})}
-            onMax={(value) => set({maxMarketCap: value})}
-            placeholderMin="No min"
-            placeholderMax="No max"
-            prefix="$"
-          />
-        </Section>
-
-        <Section label="Liquidity">
-          <RangeInputs
-            min={draft.minLiquidity}
-            max={draft.maxLiquidity}
-            onMin={(value) => set({minLiquidity: value})}
-            onMax={(value) => set({maxLiquidity: value})}
-            placeholderMin="No min"
-            placeholderMax="No max"
-            prefix="$"
-          />
-        </Section>
-
-        <Section label={`Volume (${draft.window})`}>
-          <RangeInputs
-            min={draft.minVolume}
-            max={draft.maxVolume}
-            onMin={(value) => set({minVolume: value})}
-            onMax={(value) => set({maxVolume: value})}
-            placeholderMin="No min"
-            placeholderMax="No max"
-            prefix="$"
-          />
-        </Section>
-
-        <Section label="Age">
-          <RangeInputs
-            min={draft.minAgeHours}
-            max={draft.maxAgeHours}
-            onMin={(value) => set({minAgeHours: value})}
-            onMax={(value) => set({maxAgeHours: value})}
-            placeholderMin="No min"
-            placeholderMax="No max"
-            suffix="h"
-          />
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {[
-              {label: "Under 1h", max: 1},
-              {label: "Under 24h", max: 24},
-              {label: "Under 7d", max: 24 * 7},
-            ].map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                onClick={() => set({minAgeHours: null, maxAgeHours: preset.max})}
-                className="rounded-[7px] bg-[var(--overlay-wash)] px-2.5 py-1.5 text-[11.5px] font-bold text-muted transition-colors hover:text-ink"
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        </Section>
-
+    <OverlayPortal>
+      <div className="pointer-events-auto absolute inset-0 z-50 flex items-center justify-center px-5">
         <button
           type="button"
-          onClick={apply}
-          className="mt-5 w-full rounded-[12px] bg-brand-500 py-3 text-[14px] font-bold text-white shadow-brand transition-opacity hover:bg-brand-600"
+          aria-label="Close filters"
+          onClick={onClose}
+          className="absolute inset-0 bg-[var(--backdrop-scrim)] backdrop-blur-[2px]"
+        />
+
+        <div
+          role="dialog"
+          aria-label="Feed filters"
+          data-surface="popup"
+          className="relative w-full max-w-[380px] overflow-hidden rounded-2xl bg-surface-popup p-5 shadow-modal"
         >
-          Show results
-        </button>
+          <div className="flex items-center justify-between">
+            <h2 className="text-[16px] font-extrabold tracking-[-0.02em]">
+              Filters
+            </h2>
+            <button
+              type="button"
+              onClick={clear}
+              className="text-[12px] font-bold text-faint transition-colors hover:text-ink"
+            >
+              Reset
+            </button>
+          </div>
+
+          <Section label="Time range">
+            <div className="flex gap-1 rounded-2xl bg-[var(--segment-track)] p-1 shadow-inset-soft">
+              {FEED_WINDOWS.map((window) => (
+                <button
+                  key={window}
+                  type="button"
+                  onClick={() => set({window})}
+                  aria-pressed={draft.window === window}
+                  className={cn(
+                    "flex-1 rounded-xl py-2 text-[12.5px] font-extrabold transition-[background-color,color,box-shadow]",
+                    draft.window === window
+                      ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
+                      : "text-muted hover:bg-[var(--overlay-wash)] hover:text-ink",
+                  )}
+                >
+                  {window}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] leading-[1.45] text-faint">
+              Volume and price move are read over this window.
+            </p>
+          </Section>
+
+          <Section label="Market cap">
+            <RangeInputs
+              min={draft.minMarketCap}
+              max={draft.maxMarketCap}
+              onMin={(value) => set({minMarketCap: value})}
+              onMax={(value) => set({maxMarketCap: value})}
+              placeholderMin="No min"
+              placeholderMax="No max"
+              prefix="$"
+            />
+          </Section>
+
+          <Section label="Liquidity">
+            <RangeInputs
+              min={draft.minLiquidity}
+              max={draft.maxLiquidity}
+              onMin={(value) => set({minLiquidity: value})}
+              onMax={(value) => set({maxLiquidity: value})}
+              placeholderMin="No min"
+              placeholderMax="No max"
+              prefix="$"
+            />
+          </Section>
+
+          <Section label={`Volume (${draft.window})`}>
+            <RangeInputs
+              min={draft.minVolume}
+              max={draft.maxVolume}
+              onMin={(value) => set({minVolume: value})}
+              onMax={(value) => set({maxVolume: value})}
+              placeholderMin="No min"
+              placeholderMax="No max"
+              prefix="$"
+            />
+          </Section>
+
+          <Section label="Age">
+            <RangeInputs
+              min={draft.minAgeHours}
+              max={draft.maxAgeHours}
+              onMin={(value) => set({minAgeHours: value})}
+              onMax={(value) => set({maxAgeHours: value})}
+              placeholderMin="No min"
+              placeholderMax="No max"
+              suffix="h"
+            />
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {[
+                {label: "Under 1h", max: 1},
+                {label: "Under 24h", max: 24},
+                {label: "Under 7d", max: 24 * 7},
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => set({minAgeHours: null, maxAgeHours: preset.max})}
+                  className="rounded-[7px] bg-[var(--overlay-wash)] px-2.5 py-1.5 text-[11.5px] font-bold text-muted transition-colors hover:text-ink"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </Section>
+
+          <button
+            type="button"
+            onClick={apply}
+            className="mt-5 w-full rounded-[12px] bg-brand-500 py-3 text-[14px] font-bold text-white shadow-brand transition-opacity hover:bg-brand-600"
+          >
+            Show results
+          </button>
+        </div>
       </div>
-    </div>
+    </OverlayPortal>
   );
 }
 

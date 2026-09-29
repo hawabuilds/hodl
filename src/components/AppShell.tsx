@@ -6,8 +6,10 @@ import {hasCachedMe} from "@/lib/localStore";
 import {isPrivyOAuthReturn} from "@/lib/session";
 import {useUser} from "@/hooks/useUser";
 import {cn} from "@/lib/cn";
+import {useIsDesktop} from "@/hooks/useBreakpoint";
 import {TabBar} from "./TabBar";
 import {PushPrompt} from "./PushPrompt";
+import {TerminalShell} from "./desktop/TerminalShell";
 
 /**
  * Status bar / Dynamic Island inset, plus a little extra so titles do not
@@ -49,6 +51,7 @@ export function AppShell({children}: {children: ReactNode}) {
   const router = useRouter();
   const {ready, authenticated} = useUser();
   const cached = hasCachedMe();
+  const desktop = useIsDesktop();
 
   useEffect(() => {
     if (isPrivyOAuthReturn()) return;
@@ -61,6 +64,9 @@ export function AppShell({children}: {children: ReactNode}) {
   if (!ready && !cached) {
     return <div className="h-full bg-surface-base" />;
   }
+
+  // Above 1024px the app is a terminal. Below it, exactly what it always was.
+  if (desktop) return <TerminalShell>{children}</TerminalShell>;
 
   return (
     <div className="flex h-full flex-col bg-surface-base">
