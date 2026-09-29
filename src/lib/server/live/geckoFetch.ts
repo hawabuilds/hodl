@@ -127,6 +127,14 @@ export async function geckoFetch<T>(opts: {
   host: GeckoFetchHost;
   headers?: Record<string, string>;
   timeoutMs?: number;
+  /**
+   * When the whole call must be over, attempts and waits included. Past it,
+   * no new attempt starts and a running one is cut short. Unset for
+   * background work that nobody is waiting on.
+   */
+  deadline?: number;
+  /** Attempts allowed, at most GECKO_MAX_ATTEMPTS. */
+  attempts?: number;
 }): Promise<GeckoFetchResult<T>> {
   const url = `${opts.base}${opts.path}`;
   const pending = inflight.get(url) as Promise<GeckoFetchResult<T>> | undefined;
@@ -147,6 +155,8 @@ async function fetchWithBackoff<T>(
     host: GeckoFetchHost;
     headers?: Record<string, string>;
     timeoutMs?: number;
+    deadline?: number;
+    attempts?: number;
   },
 ): Promise<GeckoFetchResult<T>> {
   const now = Date.now();
@@ -163,9 +173,20 @@ async function fetchWithBackoff<T>(
   }
 
   let lastRetryAfter: number | null = null;
+  const maxAttempts = Math.min(opts.attempts ?? GECKO_MAX_ATTEMPTS, GECKO_MAX_ATTEMPTS);
+  const left = () =>
+    opts.deadline == null ? Number.POSITIVE_INFINITY : opts.deadline - Date.now();
+  /** Sleep before a retry only if the retry would still start in time. */
+  const canRetry = async (wait: number): Promise<boolean> => {
+    if (left() - wait < 250) return false;
+    await sleepImpl(wait);
+    return true;
+  };
 
-  for (let attempt = 0; attempt < GECKO_MAX_ATTEMPTS; attempt++) {
-    const result = await fetchOnce<T>(url, opts.headers ?? {}, opts.timeoutMs);
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (left() <= 0) break;
+    const timeout = Math.min(opts.timeoutMs ?? GECKO_FETCH_MS, left());
+    const result = await fetchOnce<T>(url, opts.headers ?? {}, timeout);
     if (result.status === 200 && result.body != null) {
       rememberLastGood(url, result.body, Date.now());
       return {
@@ -183,10 +204,10 @@ async function fetchWithBackoff<T>(
       const cached = cachedBody<T>(url);
       if (cached) return {...cached, attempted: true, retryAfterMs: lastRetryAfter};
       if (
-        attempt + 1 < GECKO_MAX_ATTEMPTS &&
-        shouldRetryGecko429(lastRetryAfter)
+        attempt + 1 < maxAttempts &&
+        shouldRetryGecko429(lastRetryAfter) &&
+        (await canRetry(geckoBackoffMs(attempt, lastRetryAfter)))
       ) {
-        await sleepImpl(geckoBackoffMs(attempt, lastRetryAfter));
         continue;
       }
       return {
@@ -200,9 +221,9 @@ async function fetchWithBackoff<T>(
 
     if (
       (result.status === 0 || result.status >= 500) &&
-      attempt + 1 < GECKO_MAX_ATTEMPTS
+      attempt + 1 < maxAttempts &&
+      (await canRetry(geckoBackoffMs(attempt, null)))
     ) {
-      await sleepImpl(geckoBackoffMs(attempt, null));
       continue;
     }
 

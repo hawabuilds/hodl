@@ -10,6 +10,7 @@ import type {
   TokenAsset,
   Trade,
 } from "@/lib/types";
+import {tapePollMs} from "./live/rpcProviders";
 import * as live from "./live/market";
 import * as gecko from "./live/geckoterminal";
 import {historicalCandles} from "./live/robinhood";
@@ -30,11 +31,6 @@ import {searchPeople} from "./social";
 import {searchUsers as searchUsersLive} from "./social-live";
 
 const TRADES_LIMIT = 300;
-
-function geckoMissIsRetryable(error: string | null | undefined): boolean {
-  if (!error) return false;
-  return /rate-limited|Could not reach|network error|returned 5\d\d/i.test(error);
-}
 
 async function liveSwapsFor(
   target: {pool: string; token: string; quote: string},
@@ -64,8 +60,13 @@ async function fallbackTokenChart(
   target: {pool: string; token: string; quote: string} | null,
 ): Promise<ChartPoint[]> {
   if (!target) return [];
-  const trades = await liveSwapsFor(target, asset.priceUsd);
-  return tokenChartFromFills(trades);
+  try {
+    return tokenChartFromFills(await liveSwapsFor(target, asset.priceUsd));
+  } catch {
+    // The chart's last resort. Its own error, not this one, is what the page
+    // reports when there is nothing to draw.
+    return [];
+  }
 }
 
 /**
@@ -84,6 +85,11 @@ export interface SourceResult<T> {
   error?: string;
   /** Bucket the series was actually drawn from, when a ladder stepped down. */
   resolvedTimeframe?: Timeframe;
+  /**
+   * The tape's live on-chain read failed, so what is shown is the indexer's
+   * alone and may be minutes behind. Shown to the reader, not swallowed.
+   */
+  liveDown?: boolean;
 }
 
 async function liveOnly<T>(load: () => Promise<T>): Promise<SourceResult<T>> {
@@ -157,7 +163,12 @@ export async function fetchAssetPage(
       changePct: number;
       error?: string | null;
     };
-    trades: {trades: Trade[]; pollMs: number; error?: string | null};
+    trades: {
+      trades: Trade[];
+      pollMs: number;
+      error?: string | null;
+      liveDown?: boolean;
+    };
   } | null>
 > {
   const assetResult = await fetchAsset(kind, assetId(kind, id));
@@ -194,8 +205,9 @@ export async function fetchAssetPage(
       },
       trades: {
         trades: tradesResult.data,
-        pollMs: process.env.ALCHEMY_RPC_URL ? 2_000 : 12_000,
+        pollMs: tapePollMs(),
         error: tradesResult.error ?? null,
+        liveDown: tradesResult.liveDown ?? false,
       },
     },
     seeded: assetResult.seeded || chartResult.seeded || tradesResult.seeded,
@@ -304,8 +316,13 @@ export async function fetchChart(
    *
    * Swap-fill is the only fallback. Dex change buckets are not candles —
    * a Gecko 429 with no fills is empty + retry, not six fake points.
+   *
+   * Any provider failure is reported. Only 429s and 5xx used to be, so a 401,
+   * a 403 or a generic failure became a blank chart with nothing said. A 404
+   * is the one exception: the indexer does not track that pool, which is a
+   * chart with no data rather than an outage.
    */
-  if (geckoMissIsRetryable(geckoError)) {
+  if (geckoError && !/returned 404/.test(geckoError)) {
     return {
       data: [],
       seeded: false,
@@ -344,7 +361,16 @@ export async function fetchTrades(
         liveSettled.status === "fulfilled" ? liveSettled.value : [];
       const geckoDown =
         indexedSettled.status === "rejected" || Boolean(indexed?.error);
-      const alchemyDown = liveSettled.status === "rejected";
+      const liveDown = liveSettled.status === "rejected";
+      if (liveDown) {
+        console.warn("tape live read failed", {
+          asset: asset.id,
+          reason:
+            liveSettled.reason instanceof Error
+              ? liveSettled.reason.message
+              : String(liveSettled.reason),
+        });
+      }
 
       const byId = new Map<string, Trade>();
       for (const trade of indexed?.trades ?? []) {
@@ -357,20 +383,25 @@ export async function fetchTrades(
 
       const merged = [...byId.values()].sort(compareTradesNewestFirst);
       if (merged.length > 0) {
-        return {data: merged.slice(0, cap), seeded: false};
+        return {data: merged.slice(0, cap), seeded: false, liveDown};
       }
-      if (geckoDown && alchemyDown) {
-        return {data: [], seeded: false, error: "Could not load trades."};
+      if (geckoDown && liveDown) {
+        return {data: [], seeded: false, error: "Could not load trades.", liveDown};
       }
       const geckoError = indexed?.error ?? null;
-      if (geckoMissIsRetryable(geckoError) || indexedSettled.status === "rejected") {
+      // Any indexer failure with nothing to show is an error, as on the chart.
+      if (
+        (geckoError && !/returned 404/.test(geckoError)) ||
+        indexedSettled.status === "rejected"
+      ) {
         return {
           data: [],
           seeded: false,
           error: geckoError ?? "Could not load trades.",
+          liveDown,
         };
       }
-      return {data: [], seeded: false};
+      return {data: [], seeded: false, liveDown};
     }
   } catch (error) {
     console.error("live trades failed", error);

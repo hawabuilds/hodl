@@ -4,6 +4,19 @@ import {fallback, http, type HttpTransportConfig, type Transport} from "viem";
 export const PUBLIC_MAINNET_RPC = "https://rpc.mainnet.chain.robinhood.com";
 
 /** Primary HTTP: ALCHEMY_RPC_URL → CHAINSTACK_RPC_URL → public. */
+/**
+ * How often the tape should poll: every two seconds when a private RPC is
+ * configured to read the chain head from, otherwise at the indexer's pace.
+ *
+ * This keyed off ALCHEMY_RPC_URL alone, so dropping Alchemy for Chainstack
+ * would have slowed every tape to twelve seconds.
+ */
+export function tapePollMs(): number {
+  const privateRpc = [process.env.ALCHEMY_RPC_URL, process.env.CHAINSTACK_RPC_URL]
+    .some((url) => url?.trim().startsWith("https://"));
+  return privateRpc ? 2_000 : 12_000;
+}
+
 export function httpRpcUrls(): string[] {
   const urls: string[] = [];
   const alchemy = process.env.ALCHEMY_RPC_URL?.trim();

@@ -76,13 +76,25 @@ export interface GeckoGet<T> {
   host: "pro" | "free" | null;
 }
 
+/**
+ * The whole budget for a chart or tape request, both hosts included.
+ *
+ * Each attempt could run 8s, twice on Pro and twice on the free host: a panel
+ * could wait half a minute to learn it had failed. Pro gets one try and half
+ * the budget, so the free host always has time to answer after it.
+ */
+export const GECKO_PANEL_BUDGET_MS = 3_000;
+const GECKO_PRO_SHARE_MS = 1_500;
+const PANEL_CALLERS: ReadonlySet<GeckoCaller> = new Set(["chart", "tape"]);
+
 async function fetchOnce<T>(
   base: string,
   path: string,
   headers: Record<string, string>,
   host: "pro" | "free",
+  limits: {deadline?: number; attempts?: number} = {},
 ): Promise<{status: number; body: T | null; attempted: boolean}> {
-  const fetched = await geckoFetch<T>({base, path, headers, host});
+  const fetched = await geckoFetch<T>({base, path, headers, host, ...limits});
   return {status: fetched.status, body: fetched.body, attempted: fetched.attempted};
 }
 
@@ -117,10 +129,22 @@ async function get<T>(
   opts: {caller: GeckoCaller; tier?: "auto" | "free"},
 ): Promise<GeckoGet<T>> {
   const tryPro = opts.tier !== "free" && Boolean(API_KEY);
+  // Someone is waiting on a chart or a tape; background sweeps are not.
+  const deadline = PANEL_CALLERS.has(opts.caller)
+    ? Date.now() + GECKO_PANEL_BUDGET_MS
+    : undefined;
 
   if (tryPro) {
     void refreshKeyUsage();
-    const pro = await fetchOnce<T>(PRO_GECKO_BASE, path, authHeaders(), "pro");
+    const pro = await fetchOnce<T>(
+      PRO_GECKO_BASE,
+      path,
+      authHeaders(),
+      "pro",
+      deadline == null
+        ? {}
+        : {deadline: Math.min(deadline, Date.now() + GECKO_PRO_SHARE_MS), attempts: 1},
+    );
     if (pro.attempted) {
       recordGeckoCall(opts.caller, "pro");
       console.info("gecko pro", {
@@ -144,7 +168,7 @@ async function get<T>(
     }
   }
 
-  const free = await fetchOnce<T>(FREE_GECKO_BASE, path, {}, "free");
+  const free = await fetchOnce<T>(FREE_GECKO_BASE, path, {}, "free", {deadline});
   if (free.attempted) recordGeckoCall(opts.caller, "free");
   if (free.body) return {data: free.body, error: null, host: "free"};
   const status = free.status;
@@ -500,6 +524,30 @@ interface OhlcvResponse {
  */
 const BUCKET_LADDER: Timeframe[] = ["1D", "4h", "1h", "15m", "5m", "1m"];
 
+const BUCKET_MS: Record<Timeframe, number> = {
+  "1m": 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "1h": 60 * 60_000,
+  "4h": 4 * 60 * 60_000,
+  "1D": 24 * 60 * 60_000,
+};
+
+/**
+ * The coarsest bucket a token is old enough to have two of.
+ *
+ * A 1D chart for a token too young for two daily candles used to walk the
+ * ladder coarse to fine, one call per rung, until something could draw: up to
+ * six calls in a row for a token a few minutes old. Its age says where that
+ * walk would have stopped, so the chart can start there.
+ */
+export function bucketForAge(ageMs: number): Timeframe {
+  for (const bucket of BUCKET_LADDER) {
+    if (ageMs >= 2 * BUCKET_MS[bucket]) return bucket;
+  }
+  return "1m";
+}
+
 /** Extra Gecko pages on first load so launch prints can sit on the axis. */
 const MAX_ORIGIN_PAGES = 5;
 
@@ -565,7 +613,13 @@ export function realOhlcvCloses(list: number[][]): ChartPoint[] {
     .sort((a, b) => a.t - b.t);
 }
 
-/** One bucket's worth of closes, oldest first. Empty when the pool has none. */
+/**
+ * One bucket's worth of closes, oldest first.
+ *
+ * Empty only when a host answered and the pool has no candles. When both hosts
+ * fail and nothing is cached this throws: it used to return an empty list, so
+ * an exhausted plan drew a blank chart with no error for hours.
+ */
 async function candlesAt(
   pool: string,
   timeframe: Timeframe,
@@ -600,13 +654,17 @@ async function candlesAt(
     return realOhlcvCloses(list);
   };
 
+  let failure: unknown = null;
   try {
     const loaded = await cached(key, CANDLE_TTL_MS, load);
     if (loaded.length > 0) return loaded;
-  } catch {
-    // fall through
+  } catch (error) {
+    failure = error;
   }
-  return stale<ChartPoint[]>(key) ?? [];
+  const previous = stale<ChartPoint[]>(key);
+  if (previous && previous.length > 0) return previous;
+  if (failure) throw failure instanceof Error ? failure : new Error(String(failure));
+  return [];
 }
 
 async function candlesBackToOrigin(
@@ -635,7 +693,13 @@ async function candlesBackToOrigin(
     !isGeckoRateLimited()
   ) {
     pages += 1;
-    const older = await candlesAt(pool, timeframe, token, limit, points[0].t);
+    // Older pages are extra. A failure there keeps what has already loaded.
+    let older: ChartPoint[];
+    try {
+      older = await candlesAt(pool, timeframe, token, limit, points[0].t);
+    } catch {
+      break;
+    }
     if (older.length === 0) break;
     const merged = mergeChartPoints(older, points);
     if (merged.length === points.length) break;
@@ -666,7 +730,13 @@ export async function candles(
   error: string | null;
   resolvedTimeframe: Timeframe;
 }> {
-  const ladder = candleLadder(timeframe);
+  let ladder = candleLadder(timeframe);
+  if (timeframe === "1D" && originMs != null && Number.isFinite(originMs)) {
+    // The bucket its age allows, and one finer for a thin pool that has not
+    // traded in enough of them to draw. Two calls at most, not six.
+    const start = ladder.indexOf(bucketForAge(Date.now() - originMs));
+    ladder = ladder.slice(Math.max(0, start), Math.max(0, start) + 2);
+  }
   let lastError: string | null = null;
 
   for (const bucket of ladder) {
@@ -685,6 +755,9 @@ export async function candles(
     } catch (error) {
       lastError =
         error instanceof Error ? error.message : "Could not load candles.";
+      // A failure is not "this interval is empty". Walking on would only
+      // spend another request budget per rung on the same outage.
+      break;
     }
     // A 429 is not "this interval is empty" — do not walk 4h/1h/5m/1m next.
     if (isGeckoRateLimited()) {

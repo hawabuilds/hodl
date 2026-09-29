@@ -40,7 +40,12 @@ export function usePrefetchAsset() {
               error?: string | null;
               resolvedTimeframe?: Timeframe;
             };
-            trades: {trades: Trade[]; pollMs?: number; error?: string | null};
+            trades: {
+              trades: Trade[];
+              pollMs?: number;
+              error?: string | null;
+              liveDown?: boolean;
+            };
           };
 
           if (bundle.asset?.kind === "token") rememberTokens([bundle.asset]);
@@ -58,6 +63,7 @@ export function usePrefetchAsset() {
             trades: bundle.trades.trades,
             pollMs: bundle.trades.pollMs,
             error: bundle.trades.error ?? null,
+            liveDown: bundle.trades.liveDown ?? false,
           });
         } catch {
           // Best-effort: a failed warm just means the page loads the old way.

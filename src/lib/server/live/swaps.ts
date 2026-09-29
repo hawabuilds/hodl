@@ -7,8 +7,9 @@ import type {Trade} from "@/lib/types";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {cachedLocal} from "./cache";
 import {recordCalls} from "./rpcMeter";
-import {httpRpcUrls, isRpcRateLimitError} from "./rpcProviders";
+import {httpRpcUrls} from "./rpcProviders";
 import {QUOTE_ASSETS} from "./dexscreener";
+import {RWA_BY_ADDRESS} from "./robinhood";
 
 /**
  * The last few seconds of fills, read straight off the chain.
@@ -41,13 +42,49 @@ const V4_SWAP = toEventSelector(
 const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951";
 
 /**
- * How far back to look.
+ * How far back each read looks, in time.
  *
- * The RPC plan caps `eth_getLogs` at ten blocks. At roughly a second a block
- * that is about ten seconds of history, which comfortably covers the gap
- * between polls — the indexed tape supplies everything older.
+ * This was nine blocks, sized for "roughly a second a block". Robinhood Chain
+ * makes a block about every 100ms, so nine blocks was under a second of
+ * history against a two-second poll, and about half of all fills fell between
+ * reads. The window is now set in time and turned into blocks from the chain's
+ * measured block time, so it stays right if the block time changes.
  */
-const BLOCKS = 9n;
+export const TAPE_WINDOW_MS = 4_000;
+
+/** Robinhood Chain's measured block time, used until the first estimate lands. */
+const DEFAULT_BLOCK_MS = 100;
+/**
+ * Blocks sampled to estimate block time, and how long an estimate stands.
+ *
+ * Kept recent on purpose: the Chainstack plan treats anything much past the
+ * last ~128 blocks (about 13 seconds here) as an archive request and refuses
+ * it. A hundred blocks is ten seconds, enough at second-resolution timestamps.
+ */
+const BLOCK_SAMPLE = 100n;
+const BLOCK_MS_TTL_MS = 10 * 60_000;
+/** Ceiling on one read's range, whatever the block time says. */
+const MAX_WINDOW_BLOCKS = 200n;
+
+/**
+ * The whole budget for one chain read, across every provider.
+ *
+ * A provider that hangs must not hold the tape: each attempt gets at most
+ * half the budget, and once it is spent the read fails rather than waiting.
+ */
+export const TAPE_RPC_BUDGET_MS = 3_000;
+const TAPE_RPC_ATTEMPT_MS = 1_500;
+
+/** Blocks covering `windowMs` at `blockMs` a block, bounded both ways. */
+export function windowBlocks(
+  blockMs: number,
+  windowMs = TAPE_WINDOW_MS,
+): bigint {
+  const per = Number.isFinite(blockMs) && blockMs > 0 ? blockMs : DEFAULT_BLOCK_MS;
+  const blocks = BigInt(Math.ceil(windowMs / per));
+  if (blocks < 2n) return 2n;
+  return blocks > MAX_WINDOW_BLOCKS ? MAX_WINDOW_BLOCKS : blocks;
+}
 
 /**
  * How long one token's head-of-tape answer stands.
@@ -82,54 +119,194 @@ interface RawLog {
   logIndex: string;
 }
 
-async function rpc<T>(method: string, params: unknown[]): Promise<T> {
-  const urls = httpRpcUrls();
-  let lastError: unknown;
+/** A provider's host, for errors and logs. Never the URL: keys live in the path. */
+function providerName(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "rpc";
+  }
+}
 
-  for (const url of urls) {
+/**
+ * One JSON-RPC call, tried on each configured provider in turn.
+ *
+ * Any failure moves on to the next provider: an HTTP error, a JSON-RPC error,
+ * a timeout, a body that is not JSON. It used to move on only for rate limits,
+ * so a provider that rejected every `eth_getLogs` outright ("JSON is not a
+ * valid request object") ended the read on the first try, and the tape fell
+ * back to the indexer's two-minute-old fills without anyone being told.
+ *
+ * Throws only when every provider has failed or the budget is spent, with each
+ * provider's reason in the message.
+ */
+export async function rpc<T>(
+  method: string,
+  params: unknown[],
+  deadline = Date.now() + TAPE_RPC_BUDGET_MS,
+): Promise<T> {
+  const failures: string[] = [];
+
+  for (const url of httpRpcUrls()) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      failures.push("out of time");
+      break;
+    }
     recordCalls([method]);
+    const name = providerName(url);
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: {"content-type": "application/json"},
         cache: "no-store",
         body: JSON.stringify({jsonrpc: "2.0", id: 1, method, params}),
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(Math.min(TAPE_RPC_ATTEMPT_MS, remaining)),
       });
-
-      if (res.status === 429) {
-        lastError = new Error(`getLogs ${res.status}`);
+      if (!res.ok) {
+        failures.push(`${name}: HTTP ${res.status}`);
         continue;
       }
-
-      const body = (await res.json()) as {result?: T; error?: {message: string}};
+      const body = (await res.json()) as {result?: T; error?: {message?: string}};
       if (body.error) {
-        if (isRpcRateLimitError(body.error.message)) {
-          lastError = new Error(body.error.message);
-          continue;
-        }
-        throw new Error(body.error.message);
+        failures.push(`${name}: ${body.error.message ?? "error"}`);
+        continue;
       }
       return body.result as T;
     } catch (error) {
-      lastError = error;
-      if (isRpcRateLimitError(String(error))) continue;
-      throw error;
+      const reason =
+        error instanceof Error && error.name === "TimeoutError"
+          ? "timed out"
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      failures.push(`${name}: ${reason}`);
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error("no rpc configured");
+  throw new Error(
+    `${method} failed on every provider (${failures.join("; ") || "none configured"})`,
+  );
 }
 
 /** The chain head, read once a second for the whole process. */
-async function headBlock(): Promise<bigint> {
+async function headBlock(deadline?: number): Promise<bigint> {
   const hex = await cachedLocal("chain:head", HEAD_TTL_MS, () =>
-    rpc<string>("eth_blockNumber", []),
+    rpc<string>("eth_blockNumber", [], deadline),
   );
   return BigInt(hex);
 }
 
+/**
+ * Block timestamps, bounded.
+ *
+ * Every read in a four-second window asks about the same few dozen blocks, and
+ * a block's time never changes. Kept here rather than in the shared cache: a
+ * key per block at ten blocks a second would grow that store without limit.
+ */
+const BLOCK_TIMES_MAX = 2_048;
+const blockTimes = new Map<string, number>();
+
+async function blockTimeMs(blockHex: string, deadline?: number): Promise<number> {
+  const known = blockTimes.get(blockHex);
+  if (known != null) return known;
+  const block = await rpc<{timestamp: string}>(
+    "eth_getBlockByNumber",
+    [blockHex, false],
+    deadline,
+  );
+  const at = parseInt(block.timestamp, 16) * 1000;
+  if (blockTimes.size >= BLOCK_TIMES_MAX) {
+    const oldest = blockTimes.keys().next().value;
+    if (oldest != null) blockTimes.delete(oldest);
+  }
+  blockTimes.set(blockHex, at);
+  return at;
+}
+
+/**
+ * The chain's block time, estimated every ten minutes. Falls back to the
+ * measured 100ms when the estimate cannot be made — and caches that fallback
+ * too, so a provider that refuses the sample is not asked again on every read.
+ */
+async function blockMs(deadline?: number): Promise<number> {
+  return cachedLocal("chain:block-ms", BLOCK_MS_TTL_MS, async () => {
+    try {
+      const head = await headBlock(deadline);
+      const back = head > BLOCK_SAMPLE ? head - BLOCK_SAMPLE : 0n;
+      const [newest, oldest] = await Promise.all([
+        blockTimeMs("0x" + head.toString(16), deadline),
+        blockTimeMs("0x" + back.toString(16), deadline),
+      ]);
+      const per = (newest - oldest) / Number(head - back);
+      return per > 0 ? per : DEFAULT_BLOCK_MS;
+    } catch {
+      return DEFAULT_BLOCK_MS;
+    }
+  });
+}
+
 const isPoolId = (value: string) => /^0x[0-9a-fA-F]{64}$/.test(value);
+
+/**
+ * Decimals for the tokens a pool trades.
+ *
+ * Every amount used to be divided by 1e18. USDG has six decimals, so on every
+ * USDG pool — most of the stocks — the dollar leg came out a trillion times too
+ * small and a $1,000 fill printed as $0.00 at a price of $0.0000000002. It went
+ * unseen because this read was failing in production; fixing that would have
+ * put it on every tape.
+ */
+const KNOWN_DECIMALS = new Map<string, number>([
+  ["0x5fc5360d0400a0fd4f2af552add042d716f1d168", 6], // USDG
+  ["0x0bd7d308f8e1639fab988df18a8011f41eacad73", 18], // WETH
+  ["0x0000000000000000000000000000000000000000", 18], // ETH
+]);
+const DECIMALS_MAX = 1_024;
+const readDecimals = new Map<string, number>();
+
+/**
+ * A token's decimals, or null when they cannot be known right now.
+ *
+ * Never a guess. Assuming 18 when the read failed is the $0.00 bug again for
+ * any 6-decimal token whose first read was slow. Only a real answer is
+ * remembered, so an unknown token is asked again on the next read.
+ */
+export async function decimalsOf(
+  address: string,
+  deadline?: number,
+): Promise<number | null> {
+  const key = address.toLowerCase();
+  const known = KNOWN_DECIMALS.get(key) ?? RWA_BY_ADDRESS.get(key)?.decimals;
+  if (known != null) return known;
+  const read = readDecimals.get(key);
+  if (read != null) return read;
+  try {
+    const hex = await rpc<string>(
+      "eth_call",
+      [{to: key, data: "0x313ce567"}, "latest"],
+      deadline,
+    );
+    const value = parseInt(hex, 16);
+    // decimals() is a uint8; anything else is a contract that did not answer
+    // the question, not a number to price with.
+    if (!Number.isInteger(value) || value < 0 || value > 36) return null;
+    if (readDecimals.size >= DECIMALS_MAX) {
+      const oldest = readDecimals.keys().next().value;
+      if (oldest != null) readDecimals.delete(oldest);
+    }
+    readDecimals.set(key, value);
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+/** A raw integer amount in whole tokens. */
+export function scaled(raw: bigint, decimals: number): number {
+  const abs = raw < 0n ? -raw : raw;
+  return Number(abs) / 10 ** decimals;
+}
 
 /**
  * Recent fills for one pool.
@@ -156,8 +333,10 @@ export async function recentSwaps(
     // amounts is ours follows from comparing them — no need to ask the pool.
     const oursIsToken0 = ours < other;
 
-    const head = await headBlock();
-    const from = "0x" + (head - BLOCKS).toString(16);
+    const deadline = Date.now() + TAPE_RPC_BUDGET_MS;
+    const [head, perBlock] = await Promise.all([headBlock(deadline), blockMs(deadline)]);
+    const span = windowBlocks(perBlock);
+    const from = "0x" + (head > span ? head - span : 0n).toString(16);
     const to = "0x" + head.toString(16);
 
     const v4 = isPoolId(pool);
@@ -166,8 +345,22 @@ export async function recentSwaps(
       ? {fromBlock: from, toBlock: to, address: POOL_MANAGER, topics: [V4_SWAP, pool]}
       : {fromBlock: from, toBlock: to, address: pool, topics: [V3_SWAP]};
 
-    const logs = await rpc<RawLog[]>("eth_getLogs", [filter]);
+    const logs = await rpc<RawLog[]>("eth_getLogs", [filter], deadline);
     if (logs.length === 0) return [];
+
+    const [ourDecimals, quoteDecimals] = await Promise.all([
+      decimalsOf(ours, deadline),
+      decimalsOf(other, deadline),
+    ]);
+    // Without both, no fill from this read can be sized honestly. The read
+    // fails instead: the tape says the live feed is down and shows the
+    // indexer's fills, which carry their own amounts, until a later read
+    // learns the decimals.
+    if (ourDecimals == null || quoteDecimals == null) {
+      throw new Error(
+        `decimals unknown for ${ourDecimals == null ? ours : other}; fills not priced`,
+      );
+    }
 
     // One lookup per block rather than per fill: a busy pool puts a dozen
     // swaps in the same block.
@@ -177,11 +370,7 @@ export async function recentSwaps(
     await Promise.all(
       blocks.map(async (blockNumber) => {
         try {
-          const block = await rpc<{timestamp: string}>(
-            "eth_getBlockByNumber",
-            [blockNumber, false],
-          );
-          times.set(blockNumber, parseInt(block.timestamp, 16) * 1000);
+          times.set(blockNumber, await blockTimeMs(blockNumber, deadline));
         } catch {
           // A block we cannot time is a fill we cannot place.
         }
@@ -224,12 +413,11 @@ export async function recentSwaps(
       // put ten swaps in one transaction — so the hash identified a batch and
       // the comparison was picking an arbitrary member of it.
       const buy = v4 ? delta > 0n : delta < 0n;
-      const amount = Number(delta < 0n ? -delta : delta) / 1e18;
+      const amount = scaled(delta, ourDecimals);
       if (!Number.isFinite(amount) || amount <= 0) continue;
 
       const quoteDelta = oursIsToken0 ? amount1 : amount0;
-      const quoteAmount =
-        Number(quoteDelta < 0n ? -quoteDelta : quoteDelta) / 1e18;
+      const quoteAmount = scaled(quoteDelta, quoteDecimals);
 
       // Size the fill from the quote leg when we know that asset's USD price.
       // DexScreener and the indexer both do this; token spot × amount is wrong
@@ -266,10 +454,8 @@ export async function recentSwaps(
     return trades.sort(compareTradesNewestFirst);
   };
 
-  try {
-    return await cachedLocal(`swaps:${pool}:${ours}`, TTL_MS, load);
-  } catch {
-    // A tape that cannot be read costs freshness, never the page.
-    return [];
-  }
+  // A failed read throws. It used to return an empty list, which the tape
+  // could not tell apart from "no fills in the last few seconds", so a dead
+  // feed looked like a quiet market and nothing said the tape was stale.
+  return cachedLocal(`swaps:${pool}:${ours}`, TTL_MS, load);
 }

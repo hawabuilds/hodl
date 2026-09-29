@@ -14,12 +14,10 @@ export async function GET(
   const {data, seeded} = await fetchAssetPage(kind, params.id, timeframe);
   if (!data) return notFound("No asset with that id.");
 
-  const pollMs = process.env.ALCHEMY_RPC_URL ? 2_000 : 12_000;
-
   return json({
     asset: data.asset,
     seeded,
     chart: {...data.chart, seeded},
-    trades: {...data.trades, pollMs, seeded},
+    trades: {...data.trades, seeded},
   });
 }

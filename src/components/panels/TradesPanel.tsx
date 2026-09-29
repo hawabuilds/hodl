@@ -31,12 +31,15 @@ export function TradesPanel({
   symbol,
   isLoading,
   error,
+  liveDown = false,
   onRetry,
 }: {
   trades: Trade[];
   symbol: string;
   isLoading: boolean;
   error?: string | null;
+  /** The live chain read failed; what is shown may be minutes behind. */
+  liveDown?: boolean;
   onRetry?: () => void;
 }) {
   const arrivals = useArrivals(trades.map((trade) => trade.id));
@@ -48,11 +51,21 @@ export function TradesPanel({
     return <PanelError message={error} onRetry={onRetry} />;
   }
   if (trades.length === 0) {
-    return <PanelNote>No trades yet.</PanelNote>;
+    return (
+      <>
+        {liveDown ? <LiveFeedDown /> : null}
+        <PanelNote>No trades yet.</PanelNote>
+      </>
+    );
   }
 
   return (
     <div className="-mx-[22px]">
+      {liveDown ? (
+        <div className="px-[22px]">
+          <LiveFeedDown />
+        </div>
+      ) : null}
       <div
         className={cn(
           COLUMNS,
@@ -165,5 +178,22 @@ export function PanelError({
         </button>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Said out loud rather than left to be noticed. Without the live read the tape
+ * is the indexer's alone, which runs minutes behind the chain, and a tape
+ * that is quietly late looks exactly like a quiet market.
+ */
+function LiveFeedDown() {
+  return (
+    <p
+      role="status"
+      className="mb-2.5 flex items-center gap-2 rounded-[10px] bg-[var(--overlay-wash)] px-3 py-2 text-[12px] font-semibold leading-[1.4] text-warning"
+    >
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
+      Live feed down. Trades may be a few minutes behind.
+    </p>
   );
 }

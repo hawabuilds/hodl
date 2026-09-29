@@ -486,6 +486,7 @@ export function AssetPage({
             symbol={symbol}
             isLoading={trades.isLoading}
             error={trades.error}
+            liveDown={trades.liveDown}
             onRetry={trades.retry}
           />
         ) : shownPanel === "comments" ? (

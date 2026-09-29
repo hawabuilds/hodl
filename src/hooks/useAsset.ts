@@ -180,6 +180,7 @@ export function useTrades(kind: AssetKind, id: string, enabled: boolean) {
         trades: Trade[];
         pollMs?: number;
         error?: string | null;
+        liveDown?: boolean;
       };
     },
     retry: false,
@@ -196,6 +197,9 @@ export function useTrades(kind: AssetKind, id: string, enabled: boolean) {
     error:
       query.error?.message ??
       (trades.length === 0 ? query.data?.error ?? null : null),
+    // The chain read behind the newest fills failed, so the tape is the
+    // indexer's alone and can run minutes behind. Shown, not swallowed.
+    liveDown: query.data?.liveDown ?? false,
     retry: () => void query.refetch(),
   };
 }
