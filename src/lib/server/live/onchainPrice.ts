@@ -68,12 +68,47 @@ export interface OnchainPriceRow {
 
 /**
  * Whether a new reading moved from the last one. Pool prices do not drift on
- * their own — a change means a swap happened since the last refresh. The first
+ * their own — a change means a swap happened since the last reading. The first
  * reading of a token counts as a move, so a new listing starts out active.
+ *
+ * Differences under 0.1% are not counted: the stored price can come from
+ * DexScreener or another pool, and two sources disagree by that much without
+ * anyone trading.
  */
 export function priceMoved(previous: number | null | undefined, next: number): boolean {
   if (previous == null || !Number.isFinite(previous) || previous <= 0) return true;
-  return Math.abs(next - previous) / previous > 1e-9;
+  return Math.abs(next - previous) / previous > 1e-3;
+}
+
+/** A reading this recent pins a move to "since then", i.e. just now. */
+const RECENT_READING_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * When a token's pool last moved, as far as this reading can tell.
+ *
+ * A move only proves a swap between the previous reading and now. If that
+ * reading is recent, the swap is recent: stamp now. If it is weeks old, the
+ * swap could be any time since, so stamp the old reading's time — honest for
+ * the refresh job's seven-day tier, and never enough to call the token traded
+ * in the last day. No move keeps the mark it had.
+ */
+export function movedAt(input: {
+  previousPrice: number | null | undefined;
+  previousPricedAt: string | null | undefined;
+  previousMovedAt: string | null | undefined;
+  price: number;
+  now: number;
+}): string | null {
+  if (!priceMoved(input.previousPrice, input.price)) return input.previousMovedAt ?? null;
+  const readAt = input.previousPricedAt ? Date.parse(input.previousPricedAt) : NaN;
+  if (input.previousPrice == null || !Number.isFinite(readAt)) {
+    // First reading: a new listing is active.
+    return new Date(input.now).toISOString();
+  }
+  if (input.now - readAt <= RECENT_READING_MS) return new Date(input.now).toISOString();
+  const earlier = new Date(readAt).toISOString();
+  const kept = input.previousMovedAt;
+  return kept && Date.parse(kept) > readAt ? kept : earlier;
 }
 
 export interface PriceBatchResult {
@@ -391,9 +426,13 @@ export async function priceTokensBatch(
     rows.push(
       finish(address, "priced", {
         ...prior,
-        price_moved_at: priceMoved(prev?.last_price, priceUsd)
-          ? new Date().toISOString()
-          : (prev?.price_moved_at ?? null),
+        price_moved_at: movedAt({
+          previousPrice: prev?.last_price,
+          previousPricedAt: prev?.priced_at,
+          previousMovedAt: prev?.price_moved_at,
+          price: priceUsd,
+          now: Date.now(),
+        }),
         last_price: priceUsd,
         last_mcap: mcap != null && Number.isFinite(mcap) && mcap > 0 ? mcap : null,
         liquidity_usd: liq,

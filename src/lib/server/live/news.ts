@@ -30,8 +30,27 @@ export const WIRE_SHARED_TTL_SECONDS = 180;
 export const WIRE_MAX_STALE_MS = 3 * 60_000;
 export const WIRE_CACHE_KEY = "fh:wire:v10";
 
-/** Tickers to pull company news for. Cached two minutes, so 48 stays inside the free tier. */
-const COVERED = 48;
+/**
+ * Company news covers every RWA, a fifth of them per wire build.
+ *
+ * Finnhub's free tier allows 60 calls a minute. All 195 tickers every two
+ * minutes would be ~100 a minute, so each build fetches one slice of ~39 —
+ * about 42 calls per build with HOOD, SPY and the general wire — and each
+ * stock's news refreshes every ~10 minutes. Articles from earlier slices stay
+ * in the feed through the news archive, which every build writes to.
+ */
+const WIRE_SLICES = 5;
+
+/**
+ * The tickers one build fetches. Picked from the clock rather than a stored
+ * cursor, so every server instance building in the same window agrees, and
+ * consecutive windows walk the whole list.
+ */
+export function wireSlice<T>(all: readonly T[], now: number, slices = WIRE_SLICES, windowMs = WIRE_TTL_MS): T[] {
+  const index = Math.floor(now / windowMs) % slices;
+  const size = Math.ceil(all.length / slices);
+  return all.slice(index * size, index * size + size);
+}
 
 interface FinnhubArticle {
   id?: number;
@@ -357,7 +376,7 @@ async function wireNews(): Promise<FeedItem[][]> {
       .catch((error) => logWireMiss("SPY", error)),
   ]);
   const rest = await Promise.all(
-    RWA_REGISTRY.slice(0, COVERED).map((entry) =>
+    wireSlice(RWA_REGISTRY, Date.now()).map((entry) =>
       companyNews(entry.ticker, "rwa", [entry.ticker], entry.name)
         .then((items) => items.slice(0, 8))
         .catch((error) => logWireMiss(entry.ticker, error)),

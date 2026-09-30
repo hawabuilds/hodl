@@ -13,6 +13,7 @@
     "backfill:universe": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-universe.ts",
     "backfill:images": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-images.ts",
     "backfill:image-cdn": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-image-cdn.ts",
+    "backfill:rwa-logos": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-rwa-logos.ts",
     "verify:chain": "node --import ./test/resolver.mjs --env-file=.env.local scripts/verify-chain.ts",
     "rwa:check": "node --import ./test/resolver.mjs scripts/sync-rwa-registry.ts",
     "rwa:sync": "node --import ./test/resolver.mjs scripts/sync-rwa-registry.ts --write",

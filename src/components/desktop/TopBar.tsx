@@ -29,7 +29,8 @@ const NAV = [
   // A token or RWA page counts as the list it was opened from.
   {href: "/tokens", label: "Tokens", match: ["/tokens", "/token/"]},
   {href: "/rwas", label: "RWAs", match: ["/rwas", "/rwa/"]},
-  {href: "/news", label: "News", match: ["/news"]},
+  // News has no tab here: the RWAs page carries the latest stories, and its
+  // "See all" still opens /news.
   {href: "/profile", label: "Portfolio", match: ["/profile"]},
 ] as const;
 

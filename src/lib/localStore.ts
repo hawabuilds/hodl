@@ -187,6 +187,23 @@ export function writeTradeSettings(settings: TradeSettings): void {
 }
 
 // ---------------------------------------------------------------------------
+// Quick buy (desktop Tokens table)
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_QUICK_BUY_USD = 25;
+
+/** Dollars per quick buy, kept in the browser when nobody is signed in. */
+export function readQuickBuyUsd(): number {
+  const stored = Number(read<number>("quick-buy-usd", DEFAULT_QUICK_BUY_USD));
+  return Number.isFinite(stored) && stored > 0 ? stored : DEFAULT_QUICK_BUY_USD;
+}
+
+export function writeQuickBuyUsd(amount: number): void {
+  write("quick-buy-usd", amount);
+  announce();
+}
+
+// ---------------------------------------------------------------------------
 // Comments posted in this browser
 // ---------------------------------------------------------------------------
 

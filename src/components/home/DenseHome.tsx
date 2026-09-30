@@ -42,7 +42,8 @@ import {sortRwas, sortTokens} from "@/lib/feedSorts";
 import {requestCreate} from "@/lib/createIntent";
 import {useIsDesktop} from "@/hooks/useBreakpoint";
 import {cn} from "@/lib/cn";
-import {DiscoverBoard} from "@/components/desktop/DiscoverBoard";
+import {RwasBoard} from "@/components/desktop/rwas/RwasBoard";
+import {TokensTable} from "@/components/desktop/tokens/TokensTable";
 
 const TOKEN_SORTS: FilterOption<TokenSort>[] = [
   {value: "trending", label: "Trending"},
@@ -70,7 +71,7 @@ const WATCH_FILTERS: FilterOption<WatchFilter>[] = [
  *
  * These were Home until Home became a summary. They are moved here unchanged:
  * on a phone the feed with its Tokens / RWAs / Watchlist tabs, opening on the
- * route's tab; on a desktop /tokens is the board, and /rwas the RWA list.
+ * route's tab; on a desktop /tokens is the Tokens table, and /rwas the RWAs board.
  */
 export function DenseHome({route}: {route: "tokens" | "rwas"}) {
   // Two different screens rather than one screen at two sizes, so the choice
@@ -80,6 +81,13 @@ export function DenseHome({route}: {route: "tokens" | "rwas"}) {
     return (
       <Suspense fallback={null}>
         <DesktopHome />
+      </Suspense>
+    );
+  }
+  if (desktop && route === "rwas") {
+    return (
+      <Suspense fallback={null}>
+        <RwasBoard />
       </Suspense>
     );
   }
@@ -106,7 +114,7 @@ function DesktopHome() {
     router.replace(pathname, {scroll: false});
   }, [pathname, router, searchParams]);
 
-  return <DiscoverBoard />;
+  return <TokensTable />;
 }
 
 function HomeFeed({route, desktop}: {route: "tokens" | "rwas"; desktop: boolean}) {

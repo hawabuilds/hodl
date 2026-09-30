@@ -27,7 +27,8 @@ const CreateSheet = dynamic(
  *  - A token or stock page gets the list rail on its left and lays out its own
  *    panes, which also scroll individually.
  *  - Your portfolio lays out its own panels too, and scrolls inside them.
- *  - Home and News are front pages: they use the full width and scroll as one.
+ *  - Home, RWAs and News are front pages: they use the full width and scroll
+ *    as one.
  *  - Everything else — search, someone else's profile, an article — is a
  *    reading page. Stretched across 1440px a feed row is mostly empty space,
  *    so it sits in a centred column and scrolls as one, the way it does on a
@@ -42,7 +43,7 @@ export function TerminalShell({children}: {children: ReactNode}) {
   const asset = pathname.startsWith("/token/") || pathname.startsWith("/rwa/");
   const portfolio = pathname === "/profile";
   // Home is a summary of cards, laid out across the width like News.
-  const frontPage = pathname === "/news" || pathname === "/home";
+  const frontPage = pathname === "/news" || pathname === "/home" || pathname === "/rwas";
 
   const [createOpen, setCreateOpen] = useState(false);
   useCreateIntent(useCallback(() => setCreateOpen(true), []));

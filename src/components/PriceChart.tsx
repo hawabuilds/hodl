@@ -301,9 +301,11 @@ export function PriceChart({
         fontFamily: "inherit",
         ...lwcLayoutOptions(),
       },
+      // No background grid: the axis labels carry the scale, and the dotted
+      // last-price line is the only horizontal line on the chart.
       grid: {
         vertLines: {visible: false},
-        horzLines: {color: colors.hairline, style: LineStyle.SparseDotted},
+        horzLines: {visible: false},
       },
       rightPriceScale: {
         borderVisible: false,
@@ -383,7 +385,6 @@ export function PriceChart({
     const colors = readColors(host);
     chart.applyOptions({
       layout: {textColor: colors.faint},
-      grid: {horzLines: {color: colors.hairline, style: LineStyle.SparseDotted}},
       crosshair: {vertLine: {color: colors.hairline}},
     });
     const lineColor = up ? colors.green : colors.red;

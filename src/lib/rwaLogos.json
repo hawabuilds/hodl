@@ -1,0 +1,782 @@
+{
+  "AAOI": {
+    "path": "rwa/AAOI",
+    "source": "fmp"
+  },
+  "AAPL": {
+    "path": "rwa/AAPL",
+    "source": "fmp"
+  },
+  "ABCL": {
+    "path": "rwa/ABCL",
+    "source": "fmp"
+  },
+  "ADBE": {
+    "path": "rwa/ADBE",
+    "source": "fmp"
+  },
+  "AEHR": {
+    "path": "rwa/AEHR",
+    "source": "fmp"
+  },
+  "AEIS": {
+    "path": "rwa/AEIS",
+    "source": "fmp"
+  },
+  "ALAB": {
+    "path": "rwa/ALAB",
+    "source": "fmp"
+  },
+  "AMAT": {
+    "path": "rwa/AMAT",
+    "source": "fmp"
+  },
+  "AMBA": {
+    "path": "rwa/AMBA",
+    "source": "fmp"
+  },
+  "AMC": {
+    "path": "rwa/AMC",
+    "source": "fmp"
+  },
+  "AMD": {
+    "path": "rwa/AMD",
+    "source": "fmp"
+  },
+  "AMKR": {
+    "path": "rwa/AMKR",
+    "source": "fmp"
+  },
+  "AMZN": {
+    "path": "rwa/AMZN",
+    "source": "fmp"
+  },
+  "ANET": {
+    "path": "rwa/ANET",
+    "source": "fmp"
+  },
+  "APLD": {
+    "path": "rwa/APLD",
+    "source": "fmp"
+  },
+  "APP": {
+    "path": "rwa/APP",
+    "source": "fmp"
+  },
+  "ASML": {
+    "path": "rwa/ASML",
+    "source": "fmp"
+  },
+  "ASTS": {
+    "path": "rwa/ASTS",
+    "source": "fmp"
+  },
+  "AUR": {
+    "path": "rwa/AUR",
+    "source": "fmp"
+  },
+  "AVAV": {
+    "path": "rwa/AVAV",
+    "source": "fmp"
+  },
+  "AVGO": {
+    "path": "rwa/AVGO",
+    "source": "fmp"
+  },
+  "AXON": {
+    "path": "rwa/AXON",
+    "source": "fmp"
+  },
+  "AXTI": {
+    "path": "rwa/AXTI",
+    "source": "fmp"
+  },
+  "BA": {
+    "path": "rwa/BA",
+    "source": "fmp"
+  },
+  "BABA": {
+    "path": "rwa/BABA",
+    "source": "fmp"
+  },
+  "BB": {
+    "path": "rwa/BB",
+    "source": "fmp"
+  },
+  "BE": {
+    "path": "rwa/BE",
+    "source": "fmp"
+  },
+  "BND": {
+    "path": "rwa/BND",
+    "source": "fmp"
+  },
+  "BULL": {
+    "path": "rwa/BULL",
+    "source": "fmp"
+  },
+  "CBRS": {
+    "path": "rwa/CBRS",
+    "source": "fmp"
+  },
+  "CCL": {
+    "path": "rwa/CCL",
+    "source": "fmp"
+  },
+  "CEG": {
+    "path": "rwa/CEG",
+    "source": "fmp"
+  },
+  "CELH": {
+    "path": "rwa/CELH",
+    "source": "fmp"
+  },
+  "CIEN": {
+    "path": "rwa/CIEN",
+    "source": "fmp"
+  },
+  "CLOV": {
+    "path": "rwa/CLOV",
+    "source": "fmp"
+  },
+  "CLS": {
+    "path": "rwa/CLS",
+    "source": "fmp"
+  },
+  "CLSK": {
+    "path": "rwa/CLSK",
+    "source": "fmp"
+  },
+  "COHR": {
+    "path": "rwa/COHR",
+    "source": "fmp"
+  },
+  "COIN": {
+    "path": "rwa/COIN",
+    "source": "fmp"
+  },
+  "COST": {
+    "path": "rwa/COST",
+    "source": "fmp"
+  },
+  "CRCL": {
+    "path": "rwa/CRCL",
+    "source": "fmp"
+  },
+  "CRDO": {
+    "path": "rwa/CRDO",
+    "source": "fmp"
+  },
+  "CRM": {
+    "path": "rwa/CRM",
+    "source": "fmp"
+  },
+  "CRWD": {
+    "path": "rwa/CRWD",
+    "source": "fmp"
+  },
+  "CRWV": {
+    "path": "rwa/CRWV",
+    "source": "fmp"
+  },
+  "CSCO": {
+    "path": "rwa/CSCO",
+    "source": "fmp"
+  },
+  "CTSH": {
+    "path": "rwa/CTSH",
+    "source": "fmp"
+  },
+  "CVNA": {
+    "path": "rwa/CVNA",
+    "source": "fmp"
+  },
+  "DDOG": {
+    "path": "rwa/DDOG",
+    "source": "fmp"
+  },
+  "DELL": {
+    "path": "rwa/DELL",
+    "source": "fmp"
+  },
+  "DJT": {
+    "path": "rwa/DJT",
+    "source": "fmp"
+  },
+  "DOCN": {
+    "path": "rwa/DOCN",
+    "source": "fmp"
+  },
+  "ELF": {
+    "path": "rwa/ELF",
+    "source": "fmp"
+  },
+  "EWT": {
+    "path": "rwa/EWT",
+    "source": "fmp"
+  },
+  "EWY": {
+    "path": "rwa/EWY",
+    "source": "fmp"
+  },
+  "F": {
+    "path": "rwa/F",
+    "source": "fmp"
+  },
+  "FICO": {
+    "path": "rwa/FICO",
+    "source": "fmp"
+  },
+  "FIG": {
+    "path": "rwa/FIG",
+    "source": "fmp"
+  },
+  "FISV": {
+    "path": "rwa/FISV",
+    "source": "fmp"
+  },
+  "FIX": {
+    "path": "rwa/FIX",
+    "source": "fmp"
+  },
+  "FLNC": {
+    "path": "rwa/FLNC",
+    "source": "fmp"
+  },
+  "FLY": {
+    "path": "rwa/FLY",
+    "source": "manual"
+  },
+  "FTNT": {
+    "path": "rwa/FTNT",
+    "source": "fmp"
+  },
+  "FUTU": {
+    "path": "rwa/FUTU",
+    "source": "fmp"
+  },
+  "GE": {
+    "path": "rwa/GE",
+    "source": "fmp"
+  },
+  "GEV": {
+    "path": "rwa/GEV",
+    "source": "fmp"
+  },
+  "GLD": {
+    "path": "rwa/GLD",
+    "source": "manual"
+  },
+  "GLW": {
+    "path": "rwa/GLW",
+    "source": "fmp"
+  },
+  "GLXY": {
+    "path": "rwa/GLXY",
+    "source": "fmp"
+  },
+  "GME": {
+    "path": "rwa/GME",
+    "source": "fmp"
+  },
+  "GOOGL": {
+    "path": "rwa/GOOGL",
+    "source": "fmp"
+  },
+  "HII": {
+    "path": "rwa/HII",
+    "source": "fmp"
+  },
+  "HIMS": {
+    "path": "rwa/HIMS",
+    "source": "fmp"
+  },
+  "HPE": {
+    "path": "rwa/HPE",
+    "source": "fmp"
+  },
+  "HWM": {
+    "path": "rwa/HWM",
+    "source": "fmp"
+  },
+  "IBM": {
+    "path": "rwa/IBM",
+    "source": "fmp"
+  },
+  "IBRX": {
+    "path": "rwa/IBRX",
+    "source": "fmp"
+  },
+  "INDA": {
+    "path": "rwa/INDA",
+    "source": "fmp"
+  },
+  "INFQ": {
+    "path": "rwa/INFQ",
+    "source": "fmp"
+  },
+  "INOD": {
+    "path": "rwa/INOD",
+    "source": "fmp"
+  },
+  "INTC": {
+    "path": "rwa/INTC",
+    "source": "fmp"
+  },
+  "INTU": {
+    "path": "rwa/INTU",
+    "source": "fmp"
+  },
+  "IONQ": {
+    "path": "rwa/IONQ",
+    "source": "fmp"
+  },
+  "IREN": {
+    "path": "rwa/IREN",
+    "source": "fmp"
+  },
+  "JBL": {
+    "path": "rwa/JBL",
+    "source": "fmp"
+  },
+  "JNJ": {
+    "path": "rwa/JNJ",
+    "source": "fmp"
+  },
+  "JOBY": {
+    "path": "rwa/JOBY",
+    "source": "fmp"
+  },
+  "KLAC": {
+    "path": "rwa/KLAC",
+    "source": "fmp"
+  },
+  "KSS": {
+    "path": "rwa/KSS",
+    "source": "fmp"
+  },
+  "KTOS": {
+    "path": "rwa/KTOS",
+    "source": "fmp"
+  },
+  "LHX": {
+    "path": "rwa/LHX",
+    "source": "fmp"
+  },
+  "LITE": {
+    "path": "rwa/LITE",
+    "source": "fmp"
+  },
+  "LLY": {
+    "path": "rwa/LLY",
+    "source": "fmp"
+  },
+  "LMT": {
+    "path": "rwa/LMT",
+    "source": "fmp"
+  },
+  "LRCX": {
+    "path": "rwa/LRCX",
+    "source": "fmp"
+  },
+  "LULU": {
+    "path": "rwa/LULU",
+    "source": "fmp"
+  },
+  "LUNR": {
+    "path": "rwa/LUNR",
+    "source": "fmp"
+  },
+  "MDB": {
+    "path": "rwa/MDB",
+    "source": "fmp"
+  },
+  "META": {
+    "path": "rwa/META",
+    "source": "fmp"
+  },
+  "MOD": {
+    "path": "rwa/MOD",
+    "source": "fmp"
+  },
+  "MPWR": {
+    "path": "rwa/MPWR",
+    "source": "fmp"
+  },
+  "MRNA": {
+    "path": "rwa/MRNA",
+    "source": "fmp"
+  },
+  "MRVL": {
+    "path": "rwa/MRVL",
+    "source": "fmp"
+  },
+  "MSFT": {
+    "path": "rwa/MSFT",
+    "source": "fmp"
+  },
+  "MSTR": {
+    "path": "rwa/MSTR",
+    "source": "fmp"
+  },
+  "MTSI": {
+    "path": "rwa/MTSI",
+    "source": "fmp"
+  },
+  "MU": {
+    "path": "rwa/MU",
+    "source": "fmp"
+  },
+  "MXL": {
+    "path": "rwa/MXL",
+    "source": "fmp"
+  },
+  "NAVN": {
+    "path": "rwa/NAVN",
+    "source": "fmp"
+  },
+  "NBIS": {
+    "path": "rwa/NBIS",
+    "source": "fmp"
+  },
+  "NET": {
+    "path": "rwa/NET",
+    "source": "fmp"
+  },
+  "NFLX": {
+    "path": "rwa/NFLX",
+    "source": "fmp"
+  },
+  "NNE": {
+    "path": "rwa/NNE",
+    "source": "fmp"
+  },
+  "NOW": {
+    "path": "rwa/NOW",
+    "source": "fmp"
+  },
+  "NU": {
+    "path": "rwa/NU",
+    "source": "fmp"
+  },
+  "NVDA": {
+    "path": "rwa/NVDA",
+    "source": "fmp"
+  },
+  "NVTS": {
+    "path": "rwa/NVTS",
+    "source": "fmp"
+  },
+  "OKLO": {
+    "path": "rwa/OKLO",
+    "source": "fmp"
+  },
+  "ON": {
+    "path": "rwa/ON",
+    "source": "fmp"
+  },
+  "ONTO": {
+    "path": "rwa/ONTO",
+    "source": "fmp"
+  },
+  "ORCL": {
+    "path": "rwa/ORCL",
+    "source": "fmp"
+  },
+  "OUST": {
+    "path": "rwa/OUST",
+    "source": "fmp"
+  },
+  "P": {
+    "path": "rwa/P",
+    "source": "fmp"
+  },
+  "PANW": {
+    "path": "rwa/PANW",
+    "source": "fmp"
+  },
+  "PATH": {
+    "path": "rwa/PATH",
+    "source": "fmp"
+  },
+  "PENG": {
+    "path": "rwa/PENG",
+    "source": "fmp"
+  },
+  "PFE": {
+    "path": "rwa/PFE",
+    "source": "fmp"
+  },
+  "PL": {
+    "path": "rwa/PL",
+    "source": "fmp"
+  },
+  "PLTR": {
+    "path": "rwa/PLTR",
+    "source": "fmp"
+  },
+  "POET": {
+    "path": "rwa/POET",
+    "source": "fmp"
+  },
+  "POWL": {
+    "path": "rwa/POWL",
+    "source": "fmp"
+  },
+  "PR": {
+    "path": "rwa/PR",
+    "source": "fmp"
+  },
+  "PWR": {
+    "path": "rwa/PWR",
+    "source": "fmp"
+  },
+  "QBTS": {
+    "path": "rwa/QBTS",
+    "source": "fmp"
+  },
+  "QCOM": {
+    "path": "rwa/QCOM",
+    "source": "fmp"
+  },
+  "QNT": {
+    "path": "rwa/QNT",
+    "source": "fmp"
+  },
+  "QQQ": {
+    "path": "rwa/QQQ",
+    "source": "fmp"
+  },
+  "QUBT": {
+    "path": "rwa/QUBT",
+    "source": "fmp"
+  },
+  "RBLX": {
+    "path": "rwa/RBLX",
+    "source": "fmp"
+  },
+  "RCAT": {
+    "path": "rwa/RCAT",
+    "source": "fmp"
+  },
+  "RDDT": {
+    "path": "rwa/RDDT",
+    "source": "fmp"
+  },
+  "RDW": {
+    "path": "rwa/RDW",
+    "source": "fmp"
+  },
+  "RGTI": {
+    "path": "rwa/RGTI",
+    "source": "fmp"
+  },
+  "RIVN": {
+    "path": "rwa/RIVN",
+    "source": "fmp"
+  },
+  "RKLB": {
+    "path": "rwa/RKLB",
+    "source": "fmp"
+  },
+  "RUN": {
+    "path": "rwa/RUN",
+    "source": "fmp"
+  },
+  "SATS": {
+    "path": "rwa/SATS",
+    "source": "fmp"
+  },
+  "SCHD": {
+    "path": "rwa/SCHD",
+    "source": "fmp"
+  },
+  "SGOV": {
+    "path": "rwa/SGOV",
+    "source": "fmp"
+  },
+  "SHOP": {
+    "path": "rwa/SHOP",
+    "source": "fmp"
+  },
+  "SHY": {
+    "path": "rwa/SHY",
+    "source": "fmp"
+  },
+  "SIMO": {
+    "path": "rwa/SIMO",
+    "source": "fmp"
+  },
+  "SKHY": {
+    "path": "rwa/SKHY",
+    "source": "fmp"
+  },
+  "SLS": {
+    "path": "rwa/SLS",
+    "source": "fmp"
+  },
+  "SLV": {
+    "path": "rwa/SLV",
+    "source": "fmp"
+  },
+  "SMCI": {
+    "path": "rwa/SMCI",
+    "source": "fmp"
+  },
+  "SMH": {
+    "path": "rwa/SMH",
+    "source": "fmp"
+  },
+  "SMR": {
+    "path": "rwa/SMR",
+    "source": "fmp"
+  },
+  "SNAP": {
+    "path": "rwa/SNAP",
+    "source": "fmp"
+  },
+  "SNDK": {
+    "path": "rwa/SNDK",
+    "source": "fmp"
+  },
+  "SNOW": {
+    "path": "rwa/SNOW",
+    "source": "fmp"
+  },
+  "SOFI": {
+    "path": "rwa/SOFI",
+    "source": "fmp"
+  },
+  "SOUN": {
+    "path": "rwa/SOUN",
+    "source": "fmp"
+  },
+  "SOXX": {
+    "path": "rwa/SOXX",
+    "source": "fmp"
+  },
+  "SPCX": {
+    "path": "rwa/SPCX",
+    "source": "fmp"
+  },
+  "SPMO": {
+    "path": "rwa/SPMO",
+    "source": "fmp"
+  },
+  "SPY": {
+    "path": "rwa/SPY",
+    "source": "fmp"
+  },
+  "TE": {
+    "path": "rwa/TE",
+    "source": "fmp"
+  },
+  "TEAM": {
+    "path": "rwa/TEAM",
+    "source": "fmp"
+  },
+  "TEM": {
+    "path": "rwa/TEM",
+    "source": "fmp"
+  },
+  "TER": {
+    "path": "rwa/TER",
+    "source": "fmp"
+  },
+  "TSEM": {
+    "path": "rwa/TSEM",
+    "source": "manual"
+  },
+  "TSLA": {
+    "path": "rwa/TSLA",
+    "source": "fmp"
+  },
+  "TSM": {
+    "path": "rwa/TSM",
+    "source": "fmp"
+  },
+  "TTD": {
+    "path": "rwa/TTD",
+    "source": "fmp"
+  },
+  "TTWO": {
+    "path": "rwa/TTWO",
+    "source": "fmp"
+  },
+  "UMC": {
+    "path": "rwa/UMC",
+    "source": "fmp"
+  },
+  "UNH": {
+    "path": "rwa/UNH",
+    "source": "fmp"
+  },
+  "UPS": {
+    "path": "rwa/UPS",
+    "source": "fmp"
+  },
+  "USAR": {
+    "path": "rwa/USAR",
+    "source": "fmp"
+  },
+  "USO": {
+    "path": "rwa/USO",
+    "source": "fmp"
+  },
+  "VICR": {
+    "path": "rwa/VICR",
+    "source": "fmp"
+  },
+  "VRT": {
+    "path": "rwa/VRT",
+    "source": "fmp"
+  },
+  "VSAT": {
+    "path": "rwa/VSAT",
+    "source": "fmp"
+  },
+  "VST": {
+    "path": "rwa/VST",
+    "source": "fmp"
+  },
+  "VTI": {
+    "path": "rwa/VTI",
+    "source": "fmp"
+  },
+  "WDAY": {
+    "path": "rwa/WDAY",
+    "source": "fmp"
+  },
+  "WDC": {
+    "path": "rwa/WDC",
+    "source": "fmp"
+  },
+  "WULF": {
+    "path": "rwa/WULF",
+    "source": "fmp"
+  },
+  "WYFI": {
+    "path": "rwa/WYFI",
+    "source": "fmp"
+  },
+  "XLK": {
+    "path": "rwa/XLK",
+    "source": "fmp"
+  },
+  "XNDU": {
+    "path": "rwa/XNDU",
+    "source": "fmp"
+  },
+  "XOM": {
+    "path": "rwa/XOM",
+    "source": "fmp"
+  },
+  "ZM": {
+    "path": "rwa/ZM",
+    "source": "fmp"
+  },
+  "ZS": {
+    "path": "rwa/ZS",
+    "source": "fmp"
+  }
+}

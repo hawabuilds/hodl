@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HODL RWAs — familiar</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Inter,system-ui,sans-serif;background:#0A0A0F;color:#F5F5F7}
+a{color:#ABAEF5}a:hover{color:#C9CBFA}
+input::placeholder{color:#76768A}
+.num{font-variant-numeric:tabular-nums}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1440px; box-sizing: border-box; background: #0A0A0F; color: #F5F5F7; font-family: Inter, system-ui, sans-serif; display: flex; flex-direction: column">
+
+<header style="height: 64px; box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 0 32px; border-bottom: 1px solid #1A1A24; flex-shrink: 0">
+<div style="display: flex; align-items: center; gap: 9px; margin-right: 20px">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="#7C74FF" aria-hidden="true"><path d="M12 1.5l3.2 3.2L12 7.9 8.8 4.7z"></path><path d="M4.7 8.8l3.2 3.2-3.2 3.2L1.5 12z"></path><path d="M19.3 8.8l3.2 3.2-3.2 3.2-3.2-3.2z"></path><path d="M12 16.1l3.2 3.2L12 22.5l-3.2-3.2z"></path></svg>
+<span style="font-size: 20px; font-weight: 800; letter-spacing: -0.3px; color: #F5F5F7">HODL</span>
+</div>
+<nav aria-label="Main" style="display: flex; gap: 4px">
+<a href="#" style="font-size: 14px; font-weight: 600; color: #8B8B9A; padding: 9px 14px; border-radius: 10px; text-decoration: none">Home</a>
+<a href="#" style="font-size: 14px; font-weight: 600; color: #8B8B9A; padding: 9px 14px; border-radius: 10px; text-decoration: none">Tokens</a>
+<a href="#" style="font-size: 14px; font-weight: 600; color: #F5F5F7; background: #1A1A24; padding: 9px 14px; border-radius: 10px; text-decoration: none">RWAs</a>
+<a href="#" style="font-size: 14px; font-weight: 600; color: #8B8B9A; padding: 9px 14px; border-radius: 10px; text-decoration: none">News</a>
+<a href="#" style="font-size: 14px; font-weight: 600; color: #8B8B9A; padding: 9px 14px; border-radius: 10px; text-decoration: none">Portfolio</a>
+</nav>
+<div style="flex-grow: 1"></div>
+<label style="display: flex; align-items: center; gap: 10px; width: 380px; height: 40px; box-sizing: border-box; background: #111118; border: 1px solid #1E1E2A; border-radius: 12px; padding: 0 14px">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8B8B9A" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.6" y2="16.6"></line></svg>
+<input type="text" aria-label="Search" placeholder="Search tokens, RWAs, people" style="border: 0; background: transparent; color: #F5F5F7; font-family: inherit; font-size: 14px; outline: none; flex-grow: 1; min-width: 0">
+</label>
+<div style="flex-grow: 1"></div>
+<button type="button" aria-label="Notifications" style="width: 40px; height: 40px; border-radius: 12px; border: 0; background: #15151D; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B4B4C6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"></path></svg></button>
+<button type="button" style="background: #5750E0; color: #FFFFFF; border: 0; font-family: inherit; font-size: 14px; font-weight: 700; padding: 11px 18px; border-radius: 12px; cursor: pointer">Create</button>
+<div style="display: flex; align-items: center; gap: 8px; background: #15151D; padding: 4px 12px 4px 4px; border-radius: 20px"><div style="width: 32px; height: 32px; border-radius: 16px; background: #2A2A36; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700">H</div><span style="font-size: 14px; font-weight: 700">@hawabuilds</span></div>
+</header>
+
+<main style="padding: 32px 0 40px 0; display: flex; justify-content: center; flex-grow: 1">
+<div style="width: 1200px; display: grid; grid-template-columns: 760px 400px; gap: 40px; align-items: start">
+
+<div style="display: flex; flex-direction: column; gap: 40px">
+
+<div style="display: flex; flex-direction: column; gap: 6px; height: 72px; justify-content: flex-start">
+<h1 style="margin: 0; font-size: 32px; line-height: 1; font-weight: 800; letter-spacing: -0.8px">RWAs</h1>
+<span style="font-size: 15px; color: #8B8B9A">Real stocks you can trade any time, and the tokens paired with them.</span>
+</div>
+
+<section style="display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; align-items: center; justify-content: space-between; height: 32px">
+<h2 style="margin: 0; font-size: 20px; font-weight: 800">Top movers today</h2>
+<div style="display: flex; gap: 6px">
+<span style="font-size: 13px; font-weight: 700; color: #0A0A0F; background: #F5F5F7; padding: 7px 14px; border-radius: 999px">Up</span>
+<span style="font-size: 13px; font-weight: 600; color: #B4B4C6; border: 1px solid #2A2A36; padding: 6px 14px; border-radius: 999px">Down</span>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px">
+<sc-for list="{{movers}}" as="m" hint-placeholder-count="4">
+<div style="background: #111118; border: 1px solid #1E1E2A; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; align-items: center; gap: 10px">
+<div style="width: 36px; height: 36px; border-radius: 18px; background: {{m.av}}; font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0">{{m.init}}</div>
+<div style="display: flex; flex-direction: column; gap: 1px; min-width: 0">
+<span style="font-size: 15px; font-weight: 800">{{m.t}}</span>
+<span style="font-size: 12px; color: #8B8B9A; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{m.name}}</span>
+</div>
+</div>
+<svg width="100%" height="36" viewBox="0 0 96 28" preserveAspectRatio="none" fill="none" aria-hidden="true"><polyline points="{{m.spark}}" stroke="{{m.col}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none" vector-effect="non-scaling-stroke"></polyline></svg>
+<div style="display: flex; align-items: center; justify-content: space-between">
+<span class="num" style="font-size: 16px; font-weight: 700">{{m.price}}</span>
+<span class="num" style="font-size: 13px; font-weight: 700; color: {{m.col}}; background: {{m.pill}}; padding: 4px 8px; border-radius: 8px">{{m.chg}}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; align-items: center; justify-content: space-between; height: 32px">
+<h2 style="margin: 0; font-size: 20px; font-weight: 800">From Robinhood</h2>
+<div style="display: flex; gap: 6px">
+<span style="font-size: 13px; font-weight: 700; color: #0A0A0F; background: #F5F5F7; padding: 7px 14px; border-radius: 999px">All</span>
+<span style="font-size: 13px; font-weight: 600; color: #B4B4C6; border: 1px solid #2A2A36; padding: 6px 14px; border-radius: 999px">Robinhood</span>
+<span style="font-size: 13px; font-weight: 600; color: #B4B4C6; border: 1px solid #2A2A36; padding: 6px 14px; border-radius: 999px">Vlad</span>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+<sc-for list="{{posts}}" as="x" hint-placeholder-count="3">
+<div style="background: #111118; border: 1px solid #1E1E2A; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 14px; height: 196px; box-sizing: border-box">
+<div style="display: flex; align-items: center; gap: 10px">
+<div style="width: 36px; height: 36px; border-radius: 18px; background: {{x.av}}; color: {{x.fg}}; font-size: 14px; font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0">{{x.init}}</div>
+<div style="display: flex; flex-direction: column; gap: 1px; flex-grow: 1; min-width: 0">
+<span style="font-size: 14px; font-weight: 800">{{x.name}}</span>
+<span style="font-size: 12px; color: #8B8B9A">{{x.handle}} · {{x.ago}}</span>
+</div>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="#B4B4C6" aria-hidden="true"><path d="M17.8 3h3.1l-6.8 7.8L22 21h-6.2l-4.9-6.4L5.3 21H2.2l7.3-8.3L2 3h6.4l4.4 5.8zm-1.1 16.2h1.7L7.4 4.7H5.6z"></path></svg>
+</div>
+<span style="font-size: 14px; line-height: 1.45; color: #D6D6E4; flex-grow: 1">{{x.text}}</span>
+<a href="#" style="font-size: 13px; font-weight: 700; text-decoration: none">View on X</a>
+</div>
+</sc-for>
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 4px">
+<div style="display: flex; align-items: center; justify-content: space-between; height: 32px; margin-bottom: 12px">
+<h2 style="margin: 0; font-size: 20px; font-weight: 800">News</h2>
+<a href="#" style="font-size: 14px; font-weight: 700; text-decoration: none">See all</a>
+</div>
+<sc-for list="{{news}}" as="n" hint-placeholder-count="5">
+<div style="display: flex; align-items: center; gap: 20px; padding: 18px 0; border-top: 1px solid #1A1A24; height: 124px; box-sizing: border-box">
+<div style="display: flex; flex-direction: column; gap: 8px; flex-grow: 1; min-width: 0">
+<span style="font-size: 13px; font-weight: 600; color: #B4B4C6">{{n.src}} <span style="font-weight: 400; color: #76768A">· {{n.ago}}</span></span>
+<span style="font-size: 16px; font-weight: 700; line-height: 1.35">{{n.h}}</span>
+<span style="font-size: 13px"><span style="font-weight: 700">{{n.t}}</span> <span class="num" style="font-weight: 700; color: {{n.col}}">{{n.chg}}</span></span>
+</div>
+<div style="width: 120px; height: 84px; border-radius: 12px; background: {{n.img}}; flex-shrink: 0"></div>
+</div>
+</sc-for>
+</section>
+
+</div>
+
+<aside style="background: #111118; border: 1px solid #1E1E2A; border-radius: 20px; display: flex; flex-direction: column; overflow: hidden">
+<div style="display: flex; gap: 22px; padding: 0 20px; height: 56px; align-items: flex-end; border-bottom: 1px solid #1E1E2A">
+<span style="font-size: 15px; font-weight: 800; color: #F5F5F7; padding-bottom: 14px; border-bottom: 2px solid #7C74FF">All <span style="font-weight: 600; color: #76768A">195</span></span>
+<span style="font-size: 15px; font-weight: 700; color: #8B8B9A; padding-bottom: 16px">Watchlist <span style="font-weight: 600; color: #5E5E70">8</span></span>
+</div>
+
+<div style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; font-size: 12px; font-weight: 600; color: #76768A; border-bottom: 1px solid #1E1E2A">
+<button type="button" style="display: flex; align-items: center; gap: 6px; font-family: inherit; font-size: 13px; font-weight: 700; color: #F5F5F7; background: #1A1A24; border: 1px solid #2A2A36; padding: 6px 10px; border-radius: 9px">Category: All<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 3.5L5 7l3.5-3.5" stroke="#B4B4C6" stroke-width="1.6" fill="none" stroke-linecap="round"></path></svg></button>
+<button type="button" style="display: flex; align-items: center; gap: 6px; font-family: inherit; font-size: 13px; font-weight: 700; color: #F5F5F7; background: #1A1A24; border: 1px solid #2A2A36; padding: 6px 10px; border-radius: 9px">Sort: Most popular<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 3.5L5 7l3.5-3.5" stroke="#B4B4C6" stroke-width="1.6" fill="none" stroke-linecap="round"></path></svg></button>
+</div>
+<sc-for list="{{side}}" as="s" hint-placeholder-count="10">
+<div style="display: grid; grid-template-columns: 36px 1fr 56px 84px; align-items: center; gap: 12px; padding: 0 20px; height: 64px; border-bottom: 1px solid #16161F">
+<div style="width: 36px; height: 36px; border-radius: 18px; background: {{s.av}}; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center">{{s.init}}</div>
+<div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+<span style="display: flex; align-items: center; gap: 8px"><span style="font-size: 14px; font-weight: 800">{{s.t}}</span><span style="font-size: 11px; font-weight: 700; color: #ABAEF5; background: #1C1C2E; padding: 2px 6px; border-radius: 999px">{{s.nl}}</span></span>
+<span style="font-size: 12px; color: #8B8B9A; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{s.name}}</span>
+</div>
+<svg width="56" height="24" viewBox="0 0 96 28" preserveAspectRatio="none" fill="none" aria-hidden="true"><polyline points="{{s.spark}}" stroke="{{s.col}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" vector-effect="non-scaling-stroke"></polyline></svg>
+<div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
+<span class="num" style="font-size: 14px; font-weight: 700">{{s.price}}</span>
+<span class="num" style="font-size: 12px; font-weight: 700; color: {{s.col}}; background: {{s.pill}}; padding: 3px 7px; border-radius: 6px">{{s.chg}}</span>
+</div>
+</div>
+</sc-for>
+<div style="display: flex; align-items: center; justify-content: center; gap: 10px; padding: 16px; font-size: 13px; color: #76768A">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="#2A2A38" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" stroke="#7C74FF" stroke-width="3" stroke-linecap="round"></path></svg>
+Loading more as you scroll
+</div>
+</aside>
+
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1440}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+  "movers": [
+    {
+      "t": "BB",
+      "name": "BlackBerry",
+      "av": "#26262E",
+      "init": "BB",
+      "spark": "0,23 16,20 32,21 48,13 64,10 80,6 96,4",
+      "price": "$8.90",
+      "chg": "+5.74%",
+      "col": "#3DDBA8",
+      "pill": "#0F3A2E"
+    },
+    {
+      "t": "SNAP",
+      "name": "Snap",
+      "av": "#3A3A14",
+      "init": "SN",
+      "spark": "0,22 16,22 32,17 48,18 64,11 80,8 96,5",
+      "price": "$5.51",
+      "chg": "+4.93%",
+      "col": "#3DDBA8",
+      "pill": "#0F3A2E"
+    },
+    {
+      "t": "FIG",
+      "name": "Figma",
+      "av": "#2E1E3A",
+      "init": "FI",
+      "spark": "0,23 16,20 32,21 48,13 64,10 80,6 96,4",
+      "price": "$21.04",
+      "chg": "+4.79%",
+      "col": "#3DDBA8",
+      "pill": "#0F3A2E"
+    },
+    {
+      "t": "NBIS",
+      "name": "Nebius Group",
+      "av": "#1E2E3A",
+      "init": "NB",
+      "spark": "0,22 16,22 32,17 48,18 64,11 80,8 96,5",
+      "price": "$242.88",
+      "chg": "+4.78%",
+      "col": "#3DDBA8",
+      "pill": "#0F3A2E"
+    }
+  ],
+  "posts": [
+    {
+      "name": "Robinhood",
+      "handle": "@RobinhoodApp",
+      "ago": "[time]",
+      "av": "#1E3A1E",
+      "fg": "#86E39A",
+      "init": "R",
+      "text": "[Latest post from Robinhood on X]"
+    },
+    {
+      "name": "Vlad Tenev",
+      "handle": "@vladtenev",
+      "ago": "[time]",
+      "av": "#2A2A36",
+      "fg": "#F5F5F7",
+      "init": "V",
+      "text": "[Latest post from Vlad on X]"
+    },
+    {
+      "name": "Robinhood",
+      "handle": "@RobinhoodApp",
+      "ago": "[time]",
+      "av": "#1E3A1E",
+      "fg": "#86E39A",
+      "init": "R",
+      "text": "[Earlier post from Robinhood on X]"
+    }
+  ],
+  "news": [
+    {
+      "src": "Benzinga",
+      "ago": "10:23 am",
+      "h": "What's Going On With AMC Stock Tuesday?",
+      "t": "AMC",
+      "chg": "-5.68%",
+      "col": "#FF6B7A",
+      "img": "#2A1A20"
+    },
+    {
+      "src": "Yahoo Finance",
+      "ago": "49m",
+      "h": "U.S. Navy Selects Boeing for F/A-XX Program",
+      "t": "BA",
+      "chg": "[x]%",
+      "col": "#8B8B9A",
+      "img": "#1A2230"
+    },
+    {
+      "src": "Yahoo Finance",
+      "ago": "1h",
+      "h": "Dow Jones Futures Rise With Micron, Inflation Data Due; Yields Pressure Stocks But Bloom Energy Soars",
+      "t": "BE",
+      "chg": "[x]%",
+      "col": "#8B8B9A",
+      "img": "#1E2A1E"
+    },
+    {
+      "src": "[Source]",
+      "ago": "[time]",
+      "h": "[Headline about a stock on HODL]",
+      "t": "[TICKER]",
+      "chg": "[x]%",
+      "col": "#8B8B9A",
+      "img": "#22222C"
+    },
+    {
+      "src": "[Source]",
+      "ago": "[time]",
+      "h": "[Headline about a stock on HODL]",
+      "t": "[TICKER]",
+      "chg": "[x]%",
+      "col": "#8B8B9A",
+      "img": "#22222C"
+    }
+  ],
+  "lists": [
+    {
+      "t": "All",
+      "fg": "#F5F5F7",
+      "bg": "#1E1E2A",
+      "bd": "#2E2E3E"
+    },
+    {
+      "t": "Tech",
+      "fg": "#B4B4C6",
+      "bg": "transparent",
+      "bd": "#1E1E2A"
+    },
+    {
+      "t": "AI",
+      "fg": "#B4B4C6",
+      "bg": "transparent",
+      "bd": "#1E1E2A"
+    },
+    {
+      "t": "Semiconductors",
+      "fg": "#B4B4C6",
+      "bg": "transparent",
+      "bd": "#1E1E2A"
+    },
+    {
+      "t": "Energy",
+      "fg": "#B4B4C6",
+      "bg": "transparent",
+      "bd": "#1E1E2A"
+    },
+    {
+      "t": "Healthcare",
+      "fg": "#B4B4C6",
+      "bg": "transparent",
+      "bd": "#1E1E2A"
+    },
+    {
+      "t": "Consumer",
+      "fg": "#B4B4C6",
+      "bg": "transparent",
+      "bd": "#1E1E2A"
+    },
+    {
+      "t": "ETFs & Funds",
+      "fg": "#B4B4C6",
+      "bg": "transparent",
+      "bd": "#1E1E2A"
+    },
+    {
+      "t": "Gold",
+      "fg": "#B4B4C6",
+      "bg": "transparent",
+      "bd": "#1E1E2A"
+    }
+  ],
+  "side": [
+    {
+      "t": "NVDA",
+      "name": "NVIDIA",
+      "av": "#1E3322",
+      "init": "NV",
+      "n": "14",
+      "nl": "14 tokens",
+      "spark": "0,12 16,14 32,11 48,15 64,13 80,16 96,15",
+      "price": "$228.04",
+      "chg": "-0.55%",
+      "col": "#FF6B7A",
+      "pill": "#3E1A22"
+    },
+    {
+      "t": "AMZN",
+      "name": "Amazon",
+      "av": "#3A2E14",
+      "init": "AZ",
+      "n": "6",
+      "nl": "6 tokens",
+      "spark": "0,22 16,22 32,17 48,18 64,11 80,8 96,5",
+      "price": "$[AMZN]",
+      "chg": "+[x]%",
+      "col": "#3DDBA8",
+      "pill": "#0F3A2E"
+    },
+    {
+      "t": "AMC",
+      "name": "AMC Entertainment",
+      "av": "#4A1E24",
+      "init": "AM",
+      "n": "3",
+      "nl": "3 tokens",
+      "spark": "0,6 16,9 32,8 48,15 64,17 80,22 96,23",
+      "price": "$3.07",
+      "chg": "-5.68%",
+      "col": "#FF6B7A",
+      "pill": "#3E1A22"
+    },
+    {
+      "t": "PLTR",
+      "name": "Palantir",
+      "av": "#26262E",
+      "init": "PL",
+      "n": "3",
+      "nl": "3 tokens",
+      "spark": "0,23 16,20 32,21 48,13 64,10 80,6 96,4",
+      "price": "$[PLTR]",
+      "chg": "+[x]%",
+      "col": "#3DDBA8",
+      "pill": "#0F3A2E"
+    },
+    {
+      "t": "GLD",
+      "name": "SPDR Gold",
+      "av": "#4A3E14",
+      "init": "GL",
+      "n": "2",
+      "nl": "2 tokens",
+      "spark": "0,12 16,14 32,11 48,15 64,13 80,16 96,15",
+      "price": "$[GLD]",
+      "chg": "+[x]%",
+      "col": "#3DDBA8",
+      "pill": "#0F3A2E"
+    },
+    {
+      "t": "MU",
+      "name": "Micron",
+      "av": "#1E2A3A",
+      "init": "MU",
+      "n": "2",
+      "nl": "2 tokens",
+      "spark": "0,22 16,22 32,17 48,18 64,11 80,8 96,5",
+      "price": "$[MU]",
+      "chg": "+[x]%",
+      "col": "#3DDBA8",
+      "pill": "#0F3A2E"
+    },
+    {
+      "t": "GOOGL",
+      "name": "Alphabet",
+      "av": "#1E2E4A",
+      "init": "GO",
+      "n": "2",
+      "nl": "2 tokens",
+      "spark": "0,23 16,20 32,21 48,13 64,10 80,6 96,4",
+      "price": "$[GOOGL]",
+      "chg": "+[x]%",
+      "col": "#3DDBA8",
+      "pill": "#0F3A2E"
+    },
+    {
+      "t": "MRNA",
+      "name": "Moderna",
+      "av": "#3A1E2A",
+      "init": "MR",
+      "n": "1",
+      "nl": "1 token",
+      "spark": "0,5 16,7 32,14 48,13 64,19 80,21 96,24",
+      "price": "$192.47",
+      "chg": "-6.30%",
+      "col": "#FF6B7A",
+      "pill": "#3E1A22"
+    },
+    {
+      "t": "CEG",
+      "name": "Constellation Energy",
+      "av": "#2A2A14",
+      "init": "CE",
+      "n": "1",
+      "nl": "1 token",
+      "spark": "0,6 16,9 32,8 48,15 64,17 80,22 96,23",
+      "price": "$249.62",
+      "chg": "-4.70%",
+      "col": "#FF6B7A",
+      "pill": "#3E1A22"
+    },
+    {
+      "t": "INTC",
+      "name": "Intel",
+      "av": "#1E2A4A",
+      "init": "IN",
+      "n": "1",
+      "nl": "1 token",
+      "spark": "0,22 16,22 32,17 48,18 64,11 80,8 96,5",
+      "price": "$119.42",
+      "chg": "+3.78%",
+      "col": "#3DDBA8",
+      "pill": "#0F3A2E"
+    }
+  ]
+};
+  }
+}
+</script>
+</body>
+</html>

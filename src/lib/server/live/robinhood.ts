@@ -1,6 +1,8 @@
 import type {ChartPoint, Timeframe} from "@/lib/types";
 import {CHART_HISTORY_BARS} from "@/lib/chartPlot";
 import registry from "../rwaRegistry.json" with {type: "json"};
+import storedLogos from "../../rwaLogos.json" with {type: "json"};
+import {SUPABASE_URL} from "@/lib/env";
 import {cached, getJson, stale} from "./cache";
 
 /**
@@ -44,7 +46,24 @@ export interface RegistryEntry {
   description: string | null;
 }
 
-export const RWA_REGISTRY = registry as RegistryEntry[];
+/**
+ * Company logos, stored once in our own Storage by
+ * scripts/backfill-rwa-logos.ts. Robinhood's own `logoUrl` is the same
+ * Robinhood feather for every stock token, so it is never shown; a ticker
+ * without a stored logo gets the lettered avatar instead.
+ */
+const LOGOS = storedLogos as Record<string, {path: string}>;
+
+/** The public URL of a stored logo. The project URL comes from the env, never the repo. */
+function logoUrl(ticker: string): string | null {
+  const path = LOGOS[ticker]?.path;
+  return path && SUPABASE_URL ? `${SUPABASE_URL}/storage/v1/object/public/token-images/${path}/128.webp` : null;
+}
+
+export const RWA_REGISTRY = (registry as RegistryEntry[]).map((entry) => ({
+  ...entry,
+  logoUrl: logoUrl(entry.ticker),
+}));
 
 export const RWA_BY_TICKER = new Map(
   RWA_REGISTRY.map((entry) => [entry.ticker, entry]),
@@ -59,7 +78,10 @@ interface QuoteResponse {
     tokenSymbol: string;
     bid: string;
     ask: string;
+    /** Shares of the stock traded today on its exchange — a count, not dollars. */
     dailyTradingVolume?: string;
+    /** Dollars minted and burned of the stock token on Robinhood Chain today. */
+    mintBurnUsdVolume?: string;
     dailyHigh?: string;
     dailyLow?: string;
     isTradingHalt?: boolean;
@@ -72,13 +94,18 @@ export interface Quote {
   priceUsd: number;
   bid: number;
   ask: number;
+  /** The stock's dollar volume today: shares traded × price. */
   volume24hUsd: number;
+  /** Shares traded today, as Robinhood reports it. */
+  volumeShares: number;
+  /** Dollars of the stock token minted and burned on Robinhood Chain today. */
+  chainVolumeUsd: number;
   dailyHigh: number | null;
   dailyLow: number | null;
   halted: boolean;
 }
 
-function parseQuote(ticker: string, body: QuoteResponse): Quote | null {
+export function parseQuote(ticker: string, body: QuoteResponse): Quote | null {
   const q = body.quotes?.[0];
   if (!q) return null;
 
@@ -86,13 +113,19 @@ function parseQuote(ticker: string, body: QuoteResponse): Quote | null {
   const ask = Number(q.ask);
   if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0) return null;
 
+  // The mid. A bid or an ask on its own is a side of the market, not a price.
+  const priceUsd = (bid + ask) / 2;
+  const shares = Number(q.dailyTradingVolume ?? 0) || 0;
   return {
     ticker,
-    // The mid. A bid or an ask on its own is a side of the market, not a price.
-    priceUsd: (bid + ask) / 2,
+    priceUsd,
     bid,
     ask,
-    volume24hUsd: Number(q.dailyTradingVolume ?? 0) || 0,
+    // Robinhood's volume is a share count. It was shown as dollars once, which
+    // put NVIDIA's ~$11B day at "$48M".
+    volume24hUsd: shares * priceUsd,
+    volumeShares: shares,
+    chainVolumeUsd: Number(q.mintBurnUsdVolume ?? 0) || 0,
     dailyHigh: Number(q.dailyHigh) || null,
     dailyLow: Number(q.dailyLow) || null,
     halted: Boolean(q.isTradingHalt),
@@ -143,7 +176,7 @@ async function loadQuotes(tickers: string[]): Promise<Map<string, Quote>> {
  * timestamp for anything that needs to judge freshness.
  */
 export async function quotes(): Promise<Map<string, Quote>> {
-  const key = "rh:quotes";
+  const key = "rh:quotes:v2";
   const previous = stale<Map<string, Quote>>(key) ?? new Map<string, Quote>();
 
   try {
@@ -175,7 +208,7 @@ export async function quoteFor(ticker: string): Promise<Quote | null> {
  * requests to get them — the reward scan being the one that taught us that.
  */
 export function cachedQuotes(): Map<string, Quote> {
-  return stale<Map<string, Quote>>("rh:quotes") ?? new Map();
+  return stale<Map<string, Quote>>("rh:quotes:v2") ?? new Map();
 }
 
 /**

@@ -18,11 +18,11 @@ export function StatusBar() {
   const {ethUsd} = useEthPrice();
   const {count: watchCount} = useWatchlist();
 
-  // The watchlist column appears only once something is pinned, so on the
-  // board this is where a new user learns it exists.
+  // Until something is starred the Watchlist tab is empty, so on the Tokens
+  // table this is where a new user learns what fills it.
   const hint =
     pathname === "/tokens" && watchCount === 0
-      ? "☆ Star a token or RWA to add a Watchlist column"
+      ? "☆ Star a token to add it to your Watchlist"
       : "Press / to search";
 
   return (

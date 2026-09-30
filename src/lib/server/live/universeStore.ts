@@ -82,6 +82,11 @@ export interface TokenStatRow {
   price_status?: string | null;
   /** When the pool price last moved (a swap). Null = never seen to move. */
   price_moved_at?: string | null;
+  /** DexScreener's 24h buy and sell counts. Null = no data. */
+  buys_24h?: number | null;
+  sells_24h?: number | null;
+  /** When vol_24h and the counts were measured. */
+  vol_at?: string | null;
 }
 
 export interface TokenWrite {
@@ -888,6 +893,7 @@ export async function replaceTokenPools(
 }
 
 let movedColumnWarned = false;
+let countsColumnWarned = false;
 let pricedColumnsWarned = false;
 
 export async function upsertStats(
@@ -920,6 +926,20 @@ export async function upsertStats(
         console.error("token_stats.price_moved_at missing — run scripts/schema-price-refresh.sql");
       }
       for (const row of slice) delete (row as {price_moved_at?: unknown}).price_moved_at;
+      ({error} = await db().from("token_stats").upsert(slice, {onConflict: "address"}));
+    }
+    if (error && /buys_24h|sells_24h|vol_at/i.test(error.message)) {
+      // Before scripts/schema-tokens-table.sql: write without the counts.
+      if (!countsColumnWarned) {
+        countsColumnWarned = true;
+        console.error("token_stats counts missing — run scripts/schema-tokens-table.sql");
+      }
+      for (const row of slice) {
+        const loose = row as {buys_24h?: unknown; sells_24h?: unknown; vol_at?: unknown};
+        delete loose.buys_24h;
+        delete loose.sells_24h;
+        delete loose.vol_at;
+      }
       ({error} = await db().from("token_stats").upsert(slice, {onConflict: "address"}));
     }
     if (error && /priced_at|price_status/i.test(error.message)) {
@@ -1517,7 +1537,7 @@ export async function listForPriceRefresh(opts: {
   const now = opts.now ?? Date.now();
   const since = new Date(now - ACTIVE_WINDOW_MS).toISOString();
 
-  const activeQuery = (withMoved: boolean) => {
+  const activeQuery = (mode: "moved+vol_at" | "moved" | "volume") => {
     let request: any = db()
       .from("token_stats")
       .select("address, tokens!inner(status, launchpad)")
@@ -1526,15 +1546,26 @@ export async function listForPriceRefresh(opts: {
       .or("eligible.is.null,eligible.is.true", {referencedTable: "tokens"})
       .order("vol_24h", {ascending: false, nullsFirst: false})
       .limit(opts.activeLimit);
-    request = withMoved
-      ? request.or(`price_moved_at.gte.${since},and(vol_24h.gt.0,updated_at.gte.${since})`)
-      : request.gt("vol_24h", 0).gte("updated_at", since);
+    // Volume counts only when it was measured in the window (vol_at): the price
+    // job re-saves vol_24h as it was, so updated_at would keep a token that
+    // traded once weeks ago "active" for ever.
+    request =
+      mode === "moved+vol_at"
+        ? request.or(`price_moved_at.gte.${since},and(vol_24h.gt.0,vol_at.gte.${since})`)
+        : mode === "moved"
+          ? request.or(`price_moved_at.gte.${since},and(vol_24h.gt.0,updated_at.gte.${since})`)
+          : request.gt("vol_24h", 0).gte("updated_at", since);
     return request;
   };
-  let active = opts.activeLimit > 0 ? await activeQuery(true) : {data: [], error: null};
+  let active: {data: unknown[] | null; error: {message: string} | null} =
+    opts.activeLimit > 0 ? await activeQuery("moved+vol_at") : {data: [], error: null};
+  if (active.error && /vol_at/i.test(active.error.message)) {
+    // Before scripts/schema-tokens-table.sql.
+    active = await activeQuery("moved");
+  }
   if (active.error && /price_moved_at/i.test(active.error.message)) {
     // Before scripts/schema-price-refresh.sql: recent volume is the only signal.
-    active = await activeQuery(false);
+    active = await activeQuery("volume");
   }
   if (active.error) throw active.error;
   const activeAddresses = ((active.data ?? []) as {address: string}[]).map((row) =>
@@ -1725,6 +1756,9 @@ export function rowToAsset(row: TokenRow, stats: TokenStatRow | undefined): Toke
       "24h": {
         volumeUsd: Math.round(Number(stats?.vol_24h ?? 0)),
         changePct: Number(stats?.price_change_24h ?? 0),
+        // Saved from DexScreener; undefined = it had no data.
+        buys: stats?.buys_24h != null ? Number(stats.buys_24h) : undefined,
+        sells: stats?.sells_24h != null ? Number(stats.sells_24h) : undefined,
       },
     },
     holders: 0,

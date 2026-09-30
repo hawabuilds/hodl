@@ -29,9 +29,20 @@ const TTL_MS = 15 * 60_000;
 /** The accounts the Robinhood side of the feed follows. */
 const HANDLES = [
   {handle: "RobinhoodApp", name: "Robinhood"},
-  {handle: "RobinhoodCrypto", name: "Robinhood Crypto"},
   {handle: "vladtenev", name: "Vlad Tenev"},
 ] as const;
+
+/**
+ * No calls to X before this time. X bills reads from prepaid credits; once
+ * they run out every call is a 402, and retrying on each page view would only
+ * fill the logs. One warning per window says so — to the logs, never a user.
+ */
+let pausedUntil = 0;
+
+/** A 402 from X: the account's prepaid credits are used up. */
+export function creditsDepleted(status: number, body: {type?: string} | null): boolean {
+  return status === 402 || /credits-depleted/.test(body?.type ?? "");
+}
 
 const BY_ID = new Map<string, (typeof HANDLES)[number]>();
 
@@ -66,6 +77,7 @@ function clean(text: string): string {
 async function load(): Promise<FeedItem[]> {
   const token = process.env.X_BEARER_TOKEN;
   if (!token) return [];
+  if (Date.now() < pausedUntil) return [];
 
   // Replies and retweets are excluded at the query rather than filtered after:
   // these accounts reply constantly, and a news feed of "@someone 🙏" is noise
@@ -86,7 +98,21 @@ async function load(): Promise<FeedItem[]> {
     signal: AbortSignal.timeout(9000),
   });
 
-  if (!res.ok) throw new Error(`x search -> ${res.status}`);
+  if (!res.ok) {
+    const problem = (await res.json().catch(() => null)) as {type?: string} | null;
+    if (creditsDepleted(res.status, problem)) {
+      pausedUntil = Date.now() + TTL_MS;
+      console.warn(
+        "[x] X API credits are used up: Robinhood posts are hidden until credits are added at console.x.com.",
+      );
+      return [];
+    }
+    if (res.status === 429) {
+      const reset = Number(res.headers.get("x-rate-limit-reset")) * 1000;
+      pausedUntil = Number.isFinite(reset) && reset > Date.now() ? reset : Date.now() + TTL_MS;
+    }
+    throw new Error(`x search -> ${res.status}`);
+  }
   const body = (await res.json()) as SearchResponse;
 
   // The search returns author ids; the usernames come back in `includes`.
@@ -143,7 +169,7 @@ async function load(): Promise<FeedItem[]> {
  * cannot be reached.
  */
 export async function posts(): Promise<FeedItem[]> {
-  const key = "x:posts";
+  const key = "x:posts:v2";
   try {
     const loaded = await cached(key, TTL_MS, load);
     if (loaded.length > 0) return loaded;

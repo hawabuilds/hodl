@@ -227,13 +227,15 @@ function FeaturedChart({rwa}: {rwa: RwaAsset}) {
         Most token volume today
       </div>
       <div className="flex min-w-0 items-center gap-3">
-        <span
-          aria-hidden="true"
-          className="grid h-[var(--home-feat-logo)] w-[var(--home-feat-logo)] shrink-0 place-items-center rounded-full bg-[var(--price-up-wash)] font-extrabold text-price-up"
-          style={{fontSize: "max(11px, calc(var(--home-feat-logo) * 0.38))"}}
-        >
-          {rwa.ticker.slice(0, 2)}
-        </span>
+        {/* The company logo, as on the RWAs tab; the coloured lettered avatar without one. */}
+        <Avatar
+          className="!h-[var(--home-feat-logo)] !w-[var(--home-feat-logo)]"
+          name={rwa.ticker}
+          src={rwa.logoUrl}
+          seed={rwa.ticker}
+          size={36}
+          eager
+        />
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <h2 className="truncate text-[length:var(--home-t-name)] font-extrabold leading-[1.2] tracking-[-0.03em]">

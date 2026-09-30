@@ -15,6 +15,7 @@ import {
   type DexPair,
 } from "./dexscreener";
 import {quotes, RWA_BY_ADDRESS, RWA_BY_TICKER, RWA_REGISTRY, type RegistryEntry} from "./robinhood";
+import {intradayLines, stockMoves, thinSeries} from "./rhMarket";
 import {launchpadsFor} from "./launchpads";
 import {holderRewardsFor} from "./holderRewards";
 import {graduatedFrom, marketProvesGraduated} from "./graduation";
@@ -68,13 +69,6 @@ function storedPfp(url: string | null | undefined): string | null {
  * other's job — the measurements in the runbook are what settled that.
  */
 
-/**
- * Deep enough that the pool's own price history is worth drawing.
- *
- * Below this the shape is noise: on a $2k pool a single trade moves the line
- * further than a day of real price action does.
- */
-const TRUSTED_POOL_LIQUIDITY_USD = 25_000;
 const PFP_TTL_MS = 6 * 60 * 60_000;
 
 function round(value: number, dp = 6): number {
@@ -266,56 +260,34 @@ async function resolveTokenImages(
 }
 
 /**
- * The deepest pool in which each stock token is the *base* asset.
- *
- * The base requirement is not a detail. DexScreener's `priceUsd` and
- * `priceChange` both describe the base token, so reading them off a pool where
- * the stock token is the quote side gives you the community token's numbers
- * wearing the stock's ticker — NVDA showed +78% that way, which was AI moving,
- * not NVDA.
+ * A stock's day move and intraday line from Robinhood's stock data: last
+ * price against the previous close, or the last session's while the market is
+ * shut. With no move to hand it reads flat, as a row with no deep pool did.
  */
-function deepestByTicker(pairs: DexPair[]): Map<string, DexPair> {
-  const best = new Map<string, DexPair>();
-
-  for (const pair of pairs) {
-    const base = pair.baseToken?.address?.toLowerCase();
-    if (!base) continue;
-
-    const entry = RWA_BY_ADDRESS.get(base);
-    if (!entry) continue;
-
-    const liq = pair.liquidity?.usd ?? 0;
-    const held = best.get(entry.ticker);
-    if (!held || liq > (held.liquidity?.usd ?? 0)) best.set(entry.ticker, pair);
-  }
-
-  return best;
+function realMove(
+  ticker: string,
+  moves: Awaited<ReturnType<typeof stockMoves>>,
+  lines: Record<string, number[]>,
+): {changePct: number; series: number[]} {
+  return {
+    changePct: moves.moves[ticker]?.changePct ?? 0,
+    series: thinSeries(lines[ticker] ?? []),
+  };
 }
 
 export async function listRwas(): Promise<RwaAsset[]> {
-  // Both discovery paths, because `tokens/v1` caps its response per token and
-  // on its own it misses most of the pools a stock token actually trades in.
-  const [quoteSettled, rwaSettled, chainSettled] = await Promise.allSettled([
-    quotes(),
-    rwaPairs(),
-    communityPairs(),
+  const [quoteSettled, moves, lines] = await Promise.all([
+    quotes().then(
+      (value) => ({status: "fulfilled" as const, value}),
+      (reason: unknown) => ({status: "rejected" as const, reason}),
+    ),
+    stockMoves(),
+    intradayLines(),
   ]);
   const quoteMap = quoteSettled.status === "fulfilled" ? quoteSettled.value : new Map();
-  const rwaSide = rwaSettled.status === "fulfilled" ? rwaSettled.value : [];
-  const chainSide = chainSettled.status === "fulfilled" ? chainSettled.value : [];
   if (quoteSettled.status === "rejected") {
     console.error("rwa quotes failed", quoteSettled.reason);
   }
-  if (rwaSettled.status === "rejected") {
-    console.error("rwa pairs failed", rwaSettled.reason);
-  }
-  if (chainSettled.status === "rejected") {
-    console.error("rwa community pairs failed", chainSettled.reason);
-  }
-
-  const merged = new Map<string, DexPair>();
-  for (const pair of [...rwaSide, ...chainSide]) merged.set(pair.pairAddress, pair);
-  const deepest = deepestByTicker([...merged.values()]);
 
   // Supply straight from the chain, so market cap is the real quantity of the
   // instrument rather than whatever a pool happened to report. A pool's
@@ -336,20 +308,10 @@ export async function listRwas(): Promise<RwaAsset[]> {
     const quote = quoteMap.get(entry.ticker);
     if (!quote) continue; // no price, no row — never a placeholder
 
-    const pool = deepest.get(entry.ticker);
-    const liquid = (pool?.liquidity?.usd ?? 0) >= TRUSTED_POOL_LIQUIDITY_USD;
-
-    // The sparkline is drawn only where a deep pool gives real history. On a
-    // thin pool the shape is noise, and inventing one would be worse than the
-    // blank the component already renders for an empty series.
-    const series = pool && liquid ? seriesFrom(pool) : [];
-
-    // Day change from the same deep pool, or from the day's range when there
-    // is none. Never from a dust pool.
-    const changePct =
-      pool && liquid && typeof pool.priceChange?.h24 === "number"
-        ? pool.priceChange.h24
-        : 0;
+    // The stock's real market move and intraday line from Robinhood — the
+    // same figure the desktop RWAs page shows — not the token's pool, which
+    // on this chain is too thin to say how a stock did.
+    const {changePct, series} = realMove(entry.ticker, moves, lines);
 
     out.push({
       kind: "rwa",
@@ -795,33 +757,19 @@ async function resolveTokenAddress(wanted: string): Promise<string | null> {
 async function buildRwaAsset(entry: RegistryEntry): Promise<RwaAsset | null> {
   const address = entry.address.toLowerCase();
 
-  const [quoteMap, pools, supplies] = await Promise.all([
+  const [quoteMap, supplies, moves, lines] = await Promise.all([
     quotes(),
-    pairsForToken(address),
     totalSupplies([{address: entry.address, decimals: entry.decimals}]).catch(
       () => new Map<string, number>(),
     ),
+    stockMoves(),
+    intradayLines(),
   ]);
 
   const quote = quoteMap.get(entry.ticker);
   if (!quote) return null;
 
-  const deepest = pools
-    .filter((pair) => pair.baseToken?.address?.toLowerCase() === address)
-    .reduce<DexPair | null>(
-      (best, pair) =>
-        !best || (pair.liquidity?.usd ?? 0) > (best.liquidity?.usd ?? 0)
-          ? pair
-          : best,
-      null,
-    );
-
-  const liquid = (deepest?.liquidity?.usd ?? 0) >= TRUSTED_POOL_LIQUIDITY_USD;
-  const series = deepest && liquid ? seriesFrom(deepest) : [];
-  const changePct =
-    deepest && liquid && typeof deepest.priceChange?.h24 === "number"
-      ? deepest.priceChange.h24
-      : 0;
+  const {changePct, series} = realMove(entry.ticker, moves, lines);
 
   return {
     kind: "rwa",

@@ -99,13 +99,17 @@ export function AssetRow({
       )}
     >
       {rwa ? (
+        // Home's rows carry the company logo (stored with the RWAs tab's);
+        // one without falls back to a coloured circle with the ticker.
         compact ? (
-          <span
-            aria-hidden="true"
-            className="grid h-[var(--home-logo,28px)] w-[var(--home-logo,28px)] shrink-0 place-items-center rounded-full bg-[var(--overlay-wash)] text-[length:var(--home-t-small,12px)] font-extrabold text-muted"
-          >
-            {symbol.slice(0, 2)}
-          </span>
+          <Avatar
+            className="!h-[var(--home-logo,28px)] !w-[var(--home-logo,28px)]"
+            name={symbol}
+            src={asset.logoUrl}
+            seed={symbol}
+            size={28}
+            eager={eager}
+          />
         ) : null
       ) : (
         <Avatar

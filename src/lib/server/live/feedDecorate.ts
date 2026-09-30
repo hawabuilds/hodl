@@ -179,6 +179,9 @@ export async function decorateTokenAssets(
     price_change_24h: number | null;
     priced_at: string;
     price_status: "priced";
+    buys_24h: number | null;
+    sells_24h: number | null;
+    vol_at: string;
   }[] = [];
 
   const out: TokenAsset[] = assets.map((asset) => {
@@ -198,6 +201,12 @@ export async function decorateTokenAssets(
         price_change_24h: decorated.changePct,
         priced_at: new Date().toISOString(),
         price_status: "priced",
+        // DexScreener's 24h counts, saved so the Tokens table can sort by them,
+        // and when this volume was measured (the price job keeps vol_24h as it
+        // was, so updated_at says nothing about its age).
+        buys_24h: decorated.windows?.["24h"]?.buys ?? null,
+        sells_24h: decorated.windows?.["24h"]?.sells ?? null,
+        vol_at: new Date().toISOString(),
       });
     }
     return decorated;
