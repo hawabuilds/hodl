@@ -4,6 +4,7 @@ import {useRef, useState} from "react";
 import {ConnectionsSheet} from "@/components/ConnectionsSheet";
 import {EditProfileSheet} from "@/components/EditProfileSheet";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
+import {AllocationPanel} from "@/components/allocation/AllocationPanel";
 import {ColumnSegments} from "@/components/desktop/BoardColumn";
 import {HoldingsList, HoldingsSkeleton, HoldingsTable} from "@/components/HoldingsList";
 import {PillRail} from "@/components/PillRail";
@@ -14,7 +15,7 @@ import {ShareProfileButton} from "@/components/ShareProfileButton";
 import {SocialRow} from "@/components/SocialRow";
 import {Avatar} from "@/components/ui/Avatar";
 import {PencilIcon} from "@/components/ui/Icons";
-import {useIsDesktop} from "@/hooks/useBreakpoint";
+import {useIsDesktop, useIsWideDesktop} from "@/hooks/useBreakpoint";
 import {usePortfolio} from "@/hooks/usePortfolio";
 import {useMe} from "@/hooks/useMe";
 import {useUser} from "@/hooks/useUser";
@@ -44,7 +45,11 @@ export default function ProfilePage() {
   const book = usePortfolio(range);
   const [side, setSide] = useState<Side>("token");
   const [deskSide, setDeskSide] = useState<DeskSide>("all");
+  const [chartView, setChartView] = useState<"trend" | "allocation">("trend");
   const desktop = useIsDesktop();
+  const wide = useIsWideDesktop();
+  // Below 1400px Holdings and Allocation share one panel, switched by its title.
+  const [lowerView, setLowerView] = useState<"holdings" | "allocation">("holdings");
   const [editOpen, setEditOpen] = useState(false);
   const [scrubbed, setScrubbed] = useState<ChartPoint | null>(null);
   const [connections, setConnections] = useState<"followers" | "following" | null>(
@@ -256,7 +261,7 @@ export default function ProfilePage() {
           {allocated > 0 ? (
             <div className="mt-[18px]">
               <div className="text-[10.5px] font-bold uppercase tracking-[0.08em] text-faint">
-                Allocation
+                Split
               </div>
               <div className="mt-2 flex h-2 gap-[2px] overflow-hidden rounded-full">
                 {tokensValue > 0 ? (
@@ -305,17 +310,36 @@ export default function ProfilePage() {
             ) : null}
           </section>
 
+          <div className={cn("grid min-h-0 gap-2.5", wide && "grid-cols-[minmax(0,1fr)_380px]")}>
           <section className="flex min-h-0 flex-col rounded-[14px] border border-[var(--overlay-wash)] bg-surface-base pt-3.5">
             <div className="flex items-center justify-between gap-3 px-[18px] pb-3">
-              <h2 className="text-[15px] font-extrabold tracking-[-0.02em]">Holdings</h2>
-              <ColumnSegments
-                label="Filter holdings"
-                options={deskSides}
-                value={deskSide}
-                onChange={setDeskSide}
-                size="md"
-              />
+              {wide ? (
+                <h2 className="text-[15px] font-extrabold tracking-[-0.02em]">Holdings</h2>
+              ) : (
+                <ColumnSegments
+                  label="Holdings or allocation"
+                  options={[
+                    {value: "holdings", label: "Holdings"},
+                    {value: "allocation", label: "Allocation"},
+                  ]}
+                  value={lowerView}
+                  onChange={setLowerView}
+                  size="md"
+                />
+              )}
+              {wide || lowerView === "holdings" ? (
+                <ColumnSegments
+                  label="Filter holdings"
+                  options={deskSides}
+                  value={deskSide}
+                  onChange={setDeskSide}
+                  size="md"
+                />
+              ) : null}
             </div>
+            {!wide && lowerView === "allocation" ? (
+              <AllocationPanel holdings={book.holdings} loading={book.isLoading} layout="desktop" title={false} />
+            ) : (
             <div className="scroll-quiet min-h-0 flex-1 overflow-y-auto">
               {book.isLoading && rows.length === 0 ? (
                 <div className="px-[22px]">
@@ -336,7 +360,18 @@ export default function ProfilePage() {
               )}
               <div className="px-[18px] pb-4">{statusNote}</div>
             </div>
+            )}
           </section>
+
+          {wide ? (
+            <section
+              aria-label="Allocation"
+              className="flex min-h-0 flex-col rounded-[14px] border border-[var(--overlay-wash)] bg-surface-base pt-3.5"
+            >
+              <AllocationPanel holdings={book.holdings} loading={book.isLoading} layout="desktop" />
+            </section>
+          ) : null}
+          </div>
         </div>
 
         {overlays}
@@ -388,22 +423,42 @@ export default function ProfilePage() {
 
       {book.connected ? (
         <>
-          <PriceChart
-            points={points}
-            height={140}
-            positive={positive}
-            showBaseline={false}
-            onScrub={setScrubbed}
-            className="mt-3"
-          />
-          <PillRail
-            label="Portfolio range"
-            options={PORTFOLIO_RANGES}
-            value={range}
-            onChange={setRange}
-            positive={positive}
-            className="mt-2"
-          />
+          <div className="mt-3">
+            <ColumnSegments
+              label="Portfolio view"
+              options={[
+                {value: "trend", label: "Trend"},
+                {value: "allocation", label: "Allocation"},
+              ]}
+              value={chartView}
+              onChange={setChartView}
+              size="touch"
+            />
+          </div>
+          {chartView === "allocation" ? (
+            <div className="mt-3">
+              <AllocationPanel holdings={book.holdings} loading={book.isLoading} layout="phone" />
+            </div>
+          ) : (
+            <>
+              <PriceChart
+                points={points}
+                height={140}
+                positive={positive}
+                showBaseline={false}
+                onScrub={setScrubbed}
+                className="mt-3"
+              />
+              <PillRail
+                label="Portfolio range"
+                options={PORTFOLIO_RANGES}
+                value={range}
+                onChange={setRange}
+                positive={positive}
+                className="mt-2"
+              />
+            </>
+          )}
         </>
       ) : null}
 

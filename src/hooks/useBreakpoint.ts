@@ -45,3 +45,17 @@ function serverSnapshot(): boolean {
 export function useIsDesktop(): boolean {
   return useSyncExternalStore(subscribe, snapshot, serverSnapshot);
 }
+
+/** Wide enough for Portfolio's Holdings table and Allocation panel side by side. */
+export const WIDE_DESKTOP_QUERY = "(min-width: 1400px)";
+
+function subscribeWide(onChange: () => void): () => void {
+  const media = window.matchMedia(WIDE_DESKTOP_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+/** Whether a desktop window has room for two wide panels in one row. */
+export function useIsWideDesktop(): boolean {
+  return useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE_DESKTOP_QUERY).matches, serverSnapshot);
+}

@@ -24,7 +24,7 @@ import {
 import {isUserDeclinedTrade, reportTradeNotify} from "@/lib/notifications/reportTrade";
 import {isPriced} from "@/lib/priceState";
 import {useSession} from "@/lib/session";
-import {fetchSwapQuote} from "@/lib/swapQuote";
+import {fetchSwapQuote, type SwapQuote} from "@/lib/swapQuote";
 import {erc20Abi} from "@/lib/swapTx";
 import {
   PRICE_IMPACT_TOO_HIGH,
@@ -33,7 +33,7 @@ import {
   refuseUnsafeBuyQuote,
 } from "@/lib/tradePolicy";
 import {buyPaysNative, buyReceivePreview, quoteOutSymbol, ticketNetOut, tradeTokenAddress} from "@/lib/tradeTicket";
-import type {TokenAsset} from "@/lib/types";
+import type {RwaAsset, TokenAsset} from "@/lib/types";
 import {units} from "@/lib/format";
 
 /**
@@ -97,11 +97,64 @@ export type QuickBuyStatus =
   | {kind: "done"; text: string}
   | {kind: "error"; text: string};
 
+/** What one buy came to. `skipped` never reached the wallet; `failed` did, or was declined there. */
+export type BuyOutcome =
+  | {kind: "done"; hash: `0x${string}`; text: string}
+  | {kind: "skipped"; reason: string}
+  | {kind: "failed"; reason: string; declined: boolean}
+  | {kind: "sign-in"};
+
+/** A buy that passed every check, ready to sign. */
+interface CheckedBuy {
+  ok: true;
+  quote: SwapQuote;
+  token: `0x${string}`;
+}
+
+/** Why a buy would not be sent, before anything is signed. */
+export type BuyCheck = CheckedBuy | {ok: false; reason: string; impact?: boolean};
+
+type BuyableAsset = TokenAsset | RwaAsset;
+
+const symbolOf = (asset: BuyableAsset) => (asset.kind === "rwa" ? asset.ticker : asset.symbol);
+
 /**
- * One buy of `amountUsd` of a token, through the same path as the buy panel:
- * quote, the panel's safety checks, an approval first when paying with a
- * token the router cannot spend yet, then the swap — each confirmed in the
- * wallet's own screen (Privy's, for the HODL wallet).
+ * The buy panel's checks for `amountUsd` of an asset, without signing: a
+ * quote, the size minimum, the unsafe-quote guard, the price-impact block and
+ * the notional cap. Top up runs this first so every refusal is shown with its
+ * reason before anything is sent.
+ */
+export async function checkBuy(asset: BuyableAsset, amountUsd: number, slippagePct: number): Promise<BuyCheck> {
+  const token = tradeTokenAddress(asset);
+  if (!token) return {ok: false, reason: `${symbolOf(asset)} can't be bought here.`};
+  const small = tooSmall(amountUsd);
+  if (small) return {ok: false, reason: small};
+  const quoted = await fetchSwapQuote({token, side: "buy", amountUsd});
+  if (!quoted.ok) return {ok: false, reason: quoteMissReason(quoted.error)};
+  const quote = quoted.quote;
+  const unsafe = refuseUnsafeBuyQuote({quote, slippagePct, amountUsd});
+  if (unsafe) return {ok: false, reason: unsafe};
+  const preview = buyReceivePreview({
+    amountTokens: Number(formatUnits(ticketNetOut(quote), quote.outDecimals)),
+    tokenSymbol: symbolOf(asset),
+    markPriceUsd: isPriced(asset.priceUsd) ? asset.priceUsd : null,
+    spendUsd: amountUsd,
+    quotedUsdOut: quote.usdOut ?? null,
+  });
+  if (preview.impactLevel === "block") {
+    return {ok: false, reason: `${PRICE_IMPACT_TOO_HIGH} (${preview.impactLabel})`, impact: true};
+  }
+  if ((quote.hops?.length ?? 0) > 1 && liveBuyOverCap(amountUsd)) {
+    return {ok: false, reason: "This size is above the current notional cap."};
+  }
+  return {ok: true, quote, token};
+}
+
+/**
+ * One buy of `amountUsd` of a token or a stock, through the same path as the
+ * buy panel: quote, the panel's safety checks, an exact-amount approval first
+ * when paying with a token the router cannot spend yet, then the swap — each
+ * confirmed in the wallet's own screen (Privy's, for the HODL wallet).
  */
 export function useQuickBuy() {
   const session = useSession();
@@ -118,61 +171,30 @@ export function useQuickBuy() {
 
   const buy = useCallback(
     async (
-      asset: TokenAsset,
+      asset: BuyableAsset,
       amountUsd: number,
       slippagePct: number,
       report: (status: QuickBuyStatus) => void,
-    ) => {
+    ): Promise<BuyOutcome> => {
       if (!user.authenticated) {
         user.login();
-        return;
+        return {kind: "sign-in"};
       }
-      if (user.isDemo) {
-        report({kind: "error", text: "Demo mode has no signing wallet. Sign in with Privy to trade."});
-        return;
-      }
-      const token = tradeTokenAddress(asset);
-      if (!token) {
-        report({kind: "error", text: `${asset.symbol} can't be bought here.`});
-        return;
-      }
-      const small = tooSmall(amountUsd);
-      if (small) {
-        report({kind: "error", text: small});
-        return;
-      }
-      if (busy) return;
-      setBusy(asset.address);
+      const symbol = symbolOf(asset);
+      const refuse = (reason: string): BuyOutcome => {
+        report({kind: "error", text: reason});
+        return {kind: "skipped", reason};
+      };
+      if (user.isDemo) return refuse("Demo mode has no signing wallet. Sign in with Privy to trade.");
+      if (busy) return refuse("Another buy is still running.");
+      setBusy(asset.id);
       let usedLive = true;
-      const symbol = asset.symbol;
       try {
         report({kind: "working", text: `Getting a price for $${amountUsd} of ${symbol}…`});
-        const quoted = await fetchSwapQuote({token, side: "buy", amountUsd});
-        if (!quoted.ok) {
-          report({kind: "error", text: quoteMissReason(quoted.error)});
-          return;
-        }
-        let quote = quoted.quote;
-        const unsafe = refuseUnsafeBuyQuote({quote, slippagePct, amountUsd});
-        if (unsafe) {
-          report({kind: "error", text: unsafe});
-          return;
-        }
-        const preview = buyReceivePreview({
-          amountTokens: Number(formatUnits(ticketNetOut(quote), quote.outDecimals)),
-          tokenSymbol: symbol,
-          markPriceUsd: isPriced(asset.priceUsd) ? asset.priceUsd : null,
-          spendUsd: amountUsd,
-          quotedUsdOut: quote.usdOut ?? null,
-        });
-        if (preview.impactLevel === "block") {
-          report({kind: "error", text: `${PRICE_IMPACT_TOO_HIGH} (${preview.impactLabel}). Try a smaller amount.`});
-          return;
-        }
-        if ((quote.hops?.length ?? 0) > 1 && liveBuyOverCap(amountUsd)) {
-          report({kind: "error", text: "This size is above the current notional cap."});
-          return;
-        }
+        const checked = await checkBuy(asset, amountUsd, slippagePct);
+        if (!checked.ok) return refuse(checked.reason);
+        let {quote} = checked;
+        const {token} = checked;
 
         const payNative = buyPaysNative(quote);
         const live = isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote);
@@ -198,13 +220,11 @@ export function useQuickBuy() {
                   quoteSymbol: quote.quoteSymbol,
                 })} first — confirm in your wallet, then confirm the buy.`,
               });
+              // Exactly this trade's size; never an unlimited allowance.
               await hodl.approve(spend, need);
               // The quote has aged while the approval confirmed.
               const fresh = await fetchSwapQuote({token, side: "buy", amountUsd});
-              if (!fresh.ok) {
-                report({kind: "error", text: quoteMissReason(fresh.error)});
-                return;
-              }
+              if (!fresh.ok) return refuse(quoteMissReason(fresh.error));
               quote = fresh.quote;
             }
           }
@@ -216,11 +236,12 @@ export function useQuickBuy() {
         }
 
         const received = Number(formatUnits(ticketNetOut(quote), quote.outDecimals));
-        report({kind: "done", text: `Bought ${units(received)} ${symbol} for $${amountUsd}.`});
+        const text = `Bought ${units(received)} ${symbol} for $${amountUsd}.`;
+        report({kind: "done", text});
         void reportTradeNotify(session.getAccessToken, {
           status: "filled",
           side: "buy",
-          kind: "token",
+          kind: asset.kind,
           assetId: asset.id,
           ticker: symbol,
           tokenAmount: received,
@@ -228,12 +249,12 @@ export function useQuickBuy() {
           quoteSymbol: quoteOutSymbol(quote),
           txHash: hash,
         });
+        return {kind: "done", hash, text};
       } catch (cause) {
         const reason = usedLive ? hodl.explain(cause) : swap.explain(cause);
-        report({
-          kind: "error",
-          text: isUserDeclinedTrade(reason) ? "Buy cancelled." : reason,
-        });
+        const declined = isUserDeclinedTrade(reason);
+        report({kind: "error", text: declined ? "Buy cancelled." : reason});
+        return {kind: "failed", reason: declined ? "Cancelled in your wallet." : reason, declined};
       } finally {
         setBusy(null);
       }

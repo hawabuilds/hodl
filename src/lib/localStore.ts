@@ -203,6 +203,17 @@ export function writeQuickBuyUsd(amount: number): void {
   announce();
 }
 
+/** Allocation targets without a signed-in account (demo mode). Signed in, they live on the profile. */
+export function readAllocationTargets(): Record<string, number> {
+  const stored = read<Record<string, number>>("allocation-targets", {});
+  return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+}
+
+export function writeAllocationTargets(targets: Record<string, number>): void {
+  write("allocation-targets", targets);
+  announce();
+}
+
 // ---------------------------------------------------------------------------
 // Comments posted in this browser
 // ---------------------------------------------------------------------------
