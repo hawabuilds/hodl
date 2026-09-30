@@ -75,8 +75,8 @@ export function ColumnSegments<T extends string>({
   value: T;
   onChange: (value: T) => void;
   label: string;
-  /** `sm` sits in a column header; `md` filters a whole page. */
-  size?: "sm" | "md";
+  /** `sm` sits in a column header; `md` filters a whole page; `touch` is 44px for a phone. */
+  size?: "sm" | "md" | "touch";
 }) {
   return (
     <div
@@ -84,7 +84,7 @@ export function ColumnSegments<T extends string>({
       aria-label={label}
       className={cn(
         "flex shrink-0 gap-0.5 rounded-full bg-[var(--segment-track)]",
-        size === "md" ? "p-[3px]" : "p-[2px]",
+        size === "sm" ? "p-[2px]" : "p-[3px]",
       )}
     >
       {options.map((option) => (
@@ -95,7 +95,11 @@ export function ColumnSegments<T extends string>({
           onClick={() => onChange(option.value)}
           className={cn(
             "inline-flex items-center gap-1 whitespace-nowrap rounded-full font-extrabold transition-colors",
-            size === "md" ? "px-3 py-1.5 text-[12px]" : "px-[9px] py-1 text-[11px]",
+            size === "touch"
+              ? "min-h-[44px] px-4 text-[13px]"
+              : size === "md"
+                ? "px-3 py-1.5 text-[12px]"
+                : "px-[9px] py-1 text-[11px]",
             value === option.value
               ? "bg-[var(--bg-input)] text-ink"
               : "text-faint hover:text-muted",

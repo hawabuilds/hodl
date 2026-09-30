@@ -4,16 +4,31 @@ import {useEffect, useState} from "react";
 import Link from "next/link";
 import {usePathname} from "next/navigation";
 import {TABS, type TabKey} from "@/config/app";
+import {useActivity, useAlertPrefs} from "@/hooks/useActivity";
 import {usePrefetchNews} from "@/hooks/useNewsFeed";
+import {badgeLabel, followingBadgeCount} from "@/lib/alerts";
+import {usePulse} from "@/lib/alertBus";
 import {cn} from "@/lib/cn";
-import {HomeIcon, NewsIcon, SearchIcon, UserIcon} from "./ui/Icons";
+import {ActivityIcon, HomeIcon, NewsIcon, SearchIcon, UserIcon} from "./ui/Icons";
 
 const ICONS: Record<TabKey, (props: {className?: string}) => JSX.Element> = {
   home: HomeIcon,
   search: SearchIcon,
+  activity: ActivityIcon,
   news: NewsIcon,
   profile: UserIcon,
 };
+
+/**
+ * What is new on the Activity page: activity from people you follow that
+ * alerts under Settings → Alerts, plus replies and new followers — the two
+ * halves of the page, the same counts desktop puts on its rail tab and bell.
+ */
+function useFollowingBadge(): number {
+  const {activity} = useActivity();
+  const {prefs} = useAlertPrefs();
+  return followingBadgeCount(activity, prefs);
+}
 
 /**
  * The primary navigation.
@@ -23,7 +38,7 @@ const ICONS: Record<TabKey, (props: {className?: string}) => JSX.Element> = {
  * visibly under its blurred edges is what makes the app feel like a surface
  * rather than a page.
  *
- * Icons only. Four destinations, each with a shape nobody has to read, and the
+ * Icons only. Five destinations, each with a shape nobody has to read, and the
  * labels stay in `aria-label` for anyone who does need them.
  */
 export function TabBar() {
@@ -43,6 +58,10 @@ export function TabBar() {
   useEffect(() => setPressed(null), [pathname]);
 
   const current = pressed ?? pathname;
+  const unread = useFollowingBadge();
+  // A pop-up for a trade or a reply pulses the badge, as it does on desktop.
+  const beatActivity = usePulse("following");
+  const beatBell = usePulse("bell");
 
   return (
     <nav
@@ -68,10 +87,14 @@ export function TabBar() {
             <Link
               key={tab.key}
               href={tab.href}
-              // Every tab is one press away, so keep all four route payloads
+              // Every tab is one press away, so keep all five route payloads
               // warm rather than paying an RSC round trip on tap.
               prefetch
-              aria-label={tab.label}
+              aria-label={
+                tab.key === "activity" && unread > 0
+                  ? `${tab.label}, ${unread} new`
+                  : tab.label
+              }
               aria-current={active ? "page" : undefined}
               onPointerDown={() => {
                 setPressed(tab.href);
@@ -88,7 +111,22 @@ export function TabBar() {
                   : "text-faint hover:bg-[var(--overlay-wash)] hover:text-muted",
               )}
             >
-              <Icon className="h-[21px] w-[21px]" />
+              <span className="relative">
+                <Icon className="h-[21px] w-[21px]" />
+                {tab.key === "activity" && badgeLabel(unread) ? (
+                  <span
+                    // A new key restarts the pulse.
+                    key={beatActivity + beatBell}
+                    aria-hidden="true"
+                    className={cn(
+                      "absolute -right-2.5 -top-2 grid h-4 min-w-4 place-items-center rounded-full bg-error px-1 text-[10px] font-extrabold leading-none text-white tabular-nums ring-2 ring-surface-popup",
+                      beatActivity + beatBell > 0 && "alert-pulse",
+                    )}
+                  >
+                    {badgeLabel(unread)}
+                  </span>
+                ) : null}
+              </span>
             </Link>
           );
         })}

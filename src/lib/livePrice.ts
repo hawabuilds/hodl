@@ -76,6 +76,41 @@ export function publishPrices(
   return accepted;
 }
 
+/**
+ * How old a feed price may be and still be offered as the live price.
+ *
+ * The feed carries two kinds of price: one a provider read for this payload,
+ * and one lifted from the store because no provider covered the token. The
+ * second can be weeks old. Stamped with the payload's time, as it used to be,
+ * it beat every fill on the token's own tape, and the page header showed
+ * Insulinu at a price its pool had left two weeks earlier. Past this age a
+ * price is left to the feed row that carries it and kept out of the shared one.
+ */
+export const FEED_READING_MAX_AGE_MS = 15 * 60_000;
+
+/**
+ * The feed's prices as readings, each stamped with when it was actually read.
+ *
+ * `priceAt` is that time when the server knows it; otherwise the payload's
+ * `asOf` stands in, which is right for a provider read and for stock quotes.
+ */
+export function feedReadings(
+  assets: {id: string; priceUsd: number | null; priceAt?: string | null}[],
+  asOf: number,
+  now: number = Date.now(),
+): {id: string; price: number; at: number}[] {
+  const out: {id: string; price: number; at: number}[] = [];
+  for (const asset of assets) {
+    const price = asset.priceUsd;
+    if (price == null || !Number.isFinite(price) || price <= 0) continue;
+    const read = asset.priceAt ? Date.parse(asset.priceAt) : NaN;
+    const at = Number.isFinite(read) ? Math.min(read, asOf) : asOf;
+    if (now - at > FEED_READING_MAX_AGE_MS) continue;
+    out.push({id: asset.id, price, at});
+  }
+  return out;
+}
+
 /** The newest known price for an asset, or null if nothing has published one. */
 export function priceFor(id: string): number | null {
   return readings.get(keyFor(id))?.price ?? null;

@@ -34,7 +34,7 @@ import {qualifiesForUniverse} from "@/lib/tokenUniverse";
 import {hasDatabase} from "../db";
 import {isAddress, normalizeAddress} from "@/lib/address";
 import {showsThreeState} from "@/lib/threeState";
-import {isListed} from "@/lib/universe";
+import {isListed, type LaunchpadId} from "@/lib/universe";
 import {
   getTokenBySymbol,
   getTokenRow,
@@ -44,10 +44,16 @@ import {
 import {loadDecoratedFeedPage} from "./feedDecorate";
 import {feedImageUrl} from "@/lib/tokenImage";
 import {looksInvertedMemecoin, usdPriceFor} from "@/lib/pairOrientation";
-import {isTradeableFromLiquidity} from "@/lib/priceState";
+import {
+  isPriced,
+  isTradeableFromLiquidity,
+  pricesAgree,
+  withoutStoredSnapshot,
+} from "@/lib/priceState";
 import {marketCapAt} from "@/lib/marketCap";
 import {resolveV4PoolKeys} from "./v4Pools";
 import {resolveBestV3Pool} from "./v3Pools";
+import {priceTokensBatch} from "./onchainPrice";
 
 function storedPfp(url: string | null | undefined): string | null {
   return feedImageUrl({image_url: url ?? null});
@@ -841,6 +847,53 @@ async function buildRwaAsset(entry: RegistryEntry): Promise<RwaAsset | null> {
   };
 }
 
+/**
+ * The store's price, checked against the pool the tape trades on.
+ *
+ * Reached only when no provider priced the token on this read — DexScreener
+ * has no pair for it and Gecko was rate limited, returned nothing, or gave a
+ * pool it could not orient. The store row is then the only price left, and it
+ * can be weeks old: the price cron revisits a fixed slice of the universe, and
+ * most priced rows have not been touched in over a week. Insulinu's row said
+ * 0.0000563 while its only real pool, and every fill on its tape, sat at
+ * 0.0000026, so the page showed a cap twenty times too high.
+ *
+ * The pool's spot referees; it does not stand in. A stored price it
+ * contradicts is dropped and the token reads as unpriced, which leaves the
+ * header to the tape — nothing here chooses between two numbers that disagree.
+ * A pool that cannot be read leaves the row as it was, because then there is
+ * nothing to say the row is wrong.
+ */
+async function checkedAgainstPool(asset: TokenAsset): Promise<TokenAsset> {
+  if (!isPriced(asset.priceUsd) || !asset.launchpad) return asset;
+
+  let spot: number | null;
+  try {
+    const {rows} = await priceTokensBatch([
+      {
+        address: asset.address,
+        launchpad: asset.launchpad.id as LaunchpadId,
+        total_supply: asset.circulatingSupply,
+      },
+    ]);
+    const row = rows[0];
+    spot = row?.price_status === "priced" ? row.last_price : null;
+  } catch (error) {
+    console.error("pool spot read failed; stored price left unchecked", error);
+    return asset;
+  }
+  if (spot == null || pricesAgree(asset.priceUsd, spot)) return asset;
+
+  console.warn("stored price disagrees with its pool; shown unpriced", {
+    token: asset.address,
+    symbol: asset.symbol,
+    stored: asset.priceUsd,
+    storedAt: asset.priceAt ?? null,
+    pool: spot,
+  });
+  return withoutStoredSnapshot(asset);
+}
+
 async function decorateFromProviders(asset: TokenAsset): Promise<TokenAsset> {
   try {
     const [pools, holders] = await Promise.all([
@@ -848,7 +901,7 @@ async function decorateFromProviders(asset: TokenAsset): Promise<TokenAsset> {
       holderCountFor(asset.address).catch(() => 0),
     ]);
     const deepest = deepestPoolForToken(asset.address, pools);
-    if (!deepest) return {...asset, holders};
+    if (!deepest) return {...(await checkedAgainstPool(asset)), holders};
     const liquidityUsd = Math.round(
       deepest.liquidity?.usd ?? asset.liquidityUsd ?? 0,
     );
@@ -870,26 +923,31 @@ async function decorateFromProviders(asset: TokenAsset): Promise<TokenAsset> {
         liquidityUsd,
       });
       return {
-        ...asset,
+        ...(await checkedAgainstPool(asset)),
         holders,
         liquidityUsd,
         tradeable: isTradeableFromLiquidity(liquidityUsd),
       };
     }
     const series = seriesFrom(deepest, asset.address);
-    const priceUsd =
-      oriented != null && oriented > 0 ? round(oriented, 10) : asset.priceUsd;
+    const pooled = oriented != null && oriented > 0;
+    // The pool gave liquidity and volume but no price. The store's price is not
+    // put beside them until it has been checked — unchecked, this is how a
+    // weeks-old price came to sit next to today's liquidity.
+    const base = pooled ? asset : await checkedAgainstPool(asset);
+    const priceUsd = pooled ? round(oriented, 10) : base.priceUsd;
     const marketCapUsd =
-      priceUsd != null && priceUsd > 0
+      pooled && priceUsd != null
         ? marketCapAt({...asset, priceUsd}, priceUsd)
-        : asset.marketCapUsd;
+        : base.marketCapUsd;
     return {
-      ...asset,
+      ...base,
       holders,
       priceUsd,
+      priceAt: pooled ? new Date().toISOString() : base.priceAt,
       marketCapUsd,
-      changePct: round(deepest.priceChange?.h24 ?? asset.changePct, 2),
-      volume24hUsd: Math.round(deepest.volume?.h24 ?? asset.volume24hUsd ?? 0),
+      changePct: round(deepest.priceChange?.h24 ?? base.changePct, 2),
+      volume24hUsd: Math.round(deepest.volume?.h24 ?? base.volume24hUsd ?? 0),
       liquidityUsd,
       tradeable: isTradeableFromLiquidity(liquidityUsd),
       rwaPaired: asset.rwaPaired || tokenHasStockPair(asset.address, pools),
@@ -897,8 +955,8 @@ async function decorateFromProviders(asset: TokenAsset): Promise<TokenAsset> {
       series: series.length > 0 ? series.map((value) => round(value, 10)) : asset.series,
     };
   } catch (error) {
-    console.error("token page decorate failed; serving store row", error);
-    return asset;
+    console.error("token page decorate failed; serving checked store row", error);
+    return checkedAgainstPool(asset);
   }
 }
 

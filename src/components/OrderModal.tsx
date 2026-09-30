@@ -22,7 +22,7 @@ import {useLocalStore} from "@/hooks/useLocalStore";
 import {useSwap} from "@/hooks/useSwap";
 import {isUserDeclinedTrade, reportTradeNotify} from "@/lib/notifications/reportTrade";
 import {useSession} from "@/lib/session";
-import {setTradeBusy} from "@/lib/alertBus";
+import {setTradeBusy, setTradeSheetOpen} from "@/lib/alertBus";
 import {
   HODL_ROUTER_ADDRESS,
   hodlCanExecuteQuote,
@@ -95,6 +95,13 @@ export function OrderModal({
   side: "buy" | "sell";
   onClose: () => void;
 }) {
+  // No pop-ups over a trade in progress.
+  const open = asset !== null;
+  useEffect(() => {
+    setTradeSheetOpen(open);
+    return () => setTradeSheetOpen(false);
+  }, [open]);
+
   return (
     <Modal
       open={asset !== null}

@@ -2,27 +2,29 @@
 
 import {useCallback, useMemo, useState, useEffect} from "react";
 import {useCommentTarget} from "@/lib/alertBus";
-import {changePctForPoints, mergeTradesIntoChart} from "@/lib/chartLive";
-import {firstPrintContext, hoveredCandleChangePct} from "@/lib/chartLwc";
+import {mergeTradesIntoChart} from "@/lib/chartLive";
+import {changeFromViewStart, headerChange, tokenHeaderPrice} from "@/lib/chartHeader";
+import {firstPrintContext} from "@/lib/chartLwc";
 import {TIMEFRAME_MS, chartWindowMs} from "@/lib/chartPlot";
 import {readChartStyle, writeChartStyle} from "@/lib/localStore";
-import {formatLiquidityUsd, formatMarketCapAt, formatPriceUsd} from "@/lib/priceState";
+import {formatLiquidityUsd, formatMarketCapAt} from "@/lib/priceState";
+import {formatSubscriptUsd} from "@/lib/priceFormat";
 import {publishPrice} from "@/lib/livePrice";
 import {useLivePrice} from "@/hooks/useLivePrice";
 import dynamic from "next/dynamic";
 import {useRouter} from "next/navigation";
 import {useIsDesktop} from "@/hooks/useBreakpoint";
 import {addressUrlForChain, RH_MAINNET_ID} from "@/config/chain";
-import {useAsset, useChart, useNews, useTrades} from "@/hooks/useAsset";
+import {useAsset, useChart, useHourlyReference, useNews, useTrades} from "@/hooks/useAsset";
 import {cn} from "@/lib/cn";
 import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
-import {clock, shortAddress} from "@/lib/format";
+import {shortAddress} from "@/lib/format";
 import {PriceDelta} from "./ui/PriceDelta";
 import {lastHomePath} from "@/lib/homeState";
 import {sectorFor} from "@/lib/sectors";
 import {defaultChartTimeframe} from "@/lib/chartTimeframe";
 import type {AssetKind, ChartPoint, ChartStyle, Timeframe} from "@/lib/types";
-import {RWA_TIMEFRAMES, TIMEFRAMES, timeframeLabel} from "@/lib/types";
+import {RWA_TIMEFRAMES, TIMEFRAMES} from "@/lib/types";
 import {AssetSkeleton} from "./AssetPageSkeleton";
 import {LaunchpadMark} from "./LaunchpadMark";
 import {PanelTabs, type PanelTab} from "./PanelTabs";
@@ -112,18 +114,21 @@ export function AssetPage({
     kind === "rwa" ? RWA_TIMEFRAMES : TIMEFRAMES;
   const [panel, setPanel] = useState<PanelKey>("trades");
   // A Following row, the bell or a pop-up links here with #comments or
-  // #comment-<id>: open on Comments, at that comment. Desktop only for now.
+  // #comment-<id>: open on Comments, at that comment.
   const [commentTarget, setCommentTarget] = useState<string | null>(null);
-  const openComments = useCallback(
-    (commentId: string | null) => {
-      if (!desktop) return;
-      setPanel("comments");
-      setCommentTarget(commentId);
-    },
-    [desktop],
-  );
+  const openComments = useCallback((commentId: string | null) => {
+    setPanel("comments");
+    setCommentTarget(commentId);
+  }, []);
   useCommentTarget(openComments, `${kind}:${id}`);
   const [scrubbed, setScrubbed] = useState<ChartPoint | null>(null);
+  const [viewStart, setViewStart] = useState<ChartPoint | null>(null);
+  const onScrub = useCallback((point: ChartPoint | null, start?: ChartPoint | null) => {
+    setScrubbed(point);
+    setViewStart(point ? (start ?? null) : null);
+  }, []);
+  // Up or down across the bars in view — the line's colour, and the pills'.
+  const [positive, setPositive] = useState(true);
   const [orderSide, setOrderSide] = useState<"buy" | "sell" | null>(null);
   const [chartStyle, setChartStyle] = useState<ChartStyle>("line");
   useEffect(() => {
@@ -131,6 +136,7 @@ export function AssetPage({
   }, []);
 
   const chart = useChart(kind, id, timeframe);
+  const hourly = useHourlyReference(kind, id);
   const trades = useTrades(kind, id, true);
   const news = useNews(id, kind === "rwa" && panel === "detail");
 
@@ -161,12 +167,6 @@ export function AssetPage({
   }, [kind, id, newestFill]);
 
   const livePrice = useLivePrice(id);
-  const liveChange =
-    changePctForPoints(livePoints) ??
-    chart.changePct ??
-    asset?.changePct ??
-    0;
-  const positive = liveChange >= 0;
 
   // On desktop a token's Info sits permanently beside the ticket, so it is not
   // also a tab; a stock's News has no such home and stays one.
@@ -197,17 +197,24 @@ export function AssetPage({
 
   const tokenArt = asset.kind === "token" ? applyCachedLogo(asset) : null;
 
-  // While scrubbing, the header reports the point under the finger; otherwise
-  // it reports the live price. A hovered candle's % is that bar's open→close,
-  // not the cumulative move from the start of the visible window.
-  const latestTrade = trades.trades[0];
-  const shownPrice =
-    scrubbed?.price ??
-    livePrice ??
-    (kind === "rwa" ? asset.priceUsd : (latestTrade?.priceUsd ?? asset.priceUsd));
-  const shownChange = scrubbed
-    ? (hoveredCandleChangePct(livePoints, scrubbed) ?? liveChange)
-    : liveChange;
+  // While scrubbing, the header reports the point under the finger and how
+  // far it is from the first bar in view; otherwise the live price and its
+  // 24h change (or since launch, for a token younger than a day).
+  // A token's header is its chart's last point: the newest on-chain trade in
+  // the pool the chart and trades list read. A stock's is the Robinhood quote.
+  const currentPrice =
+    kind === "rwa"
+      ? (livePrice ?? asset.priceUsd)
+      : tokenHeaderPrice({
+          chartPoints: livePoints,
+          trades: trades.trades,
+          providerPrice: asset.priceUsd,
+        });
+  const shownPrice = scrubbed?.price ?? currentPrice;
+  // The ticket quotes "per token" and values a sell from the same price the
+  // header shows, not the provider's, which can be a stored price weeks old.
+  const tradeAsset =
+    asset.kind === "token" && currentPrice != null ? {...asset, priceUsd: currentPrice} : asset;
 
   // One calculation, one price. Both live in shared modules precisely so the
   // feed row for this asset and the panel further down this page cannot end up
@@ -219,6 +226,18 @@ export function AssetPage({
     supply: asset.circulatingSupply,
     bucketMs: TIMEFRAME_MS[chart.resolvedTimeframe],
   });
+  const dayChange = headerChange({
+    asset: {
+      kind: asset.kind,
+      priceUsd: asset.priceUsd,
+      changePct: asset.changePct,
+      listedAt: asset.kind === "token" ? asset.listedAt : null,
+    },
+    livePrice: currentPrice,
+    launchPrice: launchContext?.label === "Launch" ? launchContext.price : null,
+    hourly,
+  });
+  const fromViewStart = scrubbed ? changeFromViewStart(scrubbed.price, viewStart?.price) : null;
 
   const chipItems = (
     <>
@@ -258,7 +277,7 @@ export function AssetPage({
   const priceFigure = (
     <div className={desktop ? "text-right" : undefined}>
       <div className="tabular-nums text-[32px] font-extrabold leading-none tracking-[-0.035em]">
-        {formatPriceUsd(shownPrice)}
+        {formatSubscriptUsd(shownPrice)}
       </div>
       <div
         className={cn(
@@ -268,20 +287,23 @@ export function AssetPage({
       >
         {asset.kind === "token" && shownMarketCap === "—" ? (
           <span className="tabular-nums text-faint">—</span>
+        ) : scrubbed ? (
+          <>
+            <PriceDelta value={fromViewStart ?? Number.NaN} />
+            <span className="font-semibold text-faint">from start of view</span>
+          </>
         ) : (
-          <PriceDelta value={shownChange} />
+          <>
+            <PriceDelta value={dayChange.pct ?? Number.NaN} />
+            <span className="font-semibold text-faint">{dayChange.label}</span>
+          </>
         )}
-        <span className="font-semibold text-faint">
-          {scrubbed
-            ? clock(scrubbed.t)
-            : timeframeLabel(timeframe, chart.resolvedTimeframe)}
-        </span>
       </div>
     </div>
   );
 
   const capFigure = (
-    <div className="text-right">
+    <div className="shrink-0 text-right">
       <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-faint">
         Market cap
       </div>
@@ -447,19 +469,27 @@ export function AssetPage({
         <div className="mt-3 h-[220px] rounded-xl bg-wash">
           <PanelError message={chart.error} onRetry={chart.retry} />
         </div>
+      ) : chart.isLoading ? (
+        // History not back yet. The tape alone would draw a few hours of
+        // bars and then jump, and "Not enough history" would be untrue.
+        <ChartSkeleton height={desktop ? "clamp(220px, 32vh, 380px)" : 190} />
       ) : (
         <PriceChart
           points={livePoints}
-          positive={positive}
-          windowMs={chartWindowMs(timeframe)}
+          live
+          onTrend={setPositive}
+          // The bars on screen, not the pill: while a new timeframe loads the
+          // last one stays up, and the view must refit when the new one lands.
+          windowMs={chartWindowMs(chart.resolvedTimeframe)}
           emptyLabel={`Not enough history for ${timeframe}`}
           style={chartStyle}
           showBaseline={asset.kind !== "token"}
           floorPrice={launchContext?.price ?? livePoints[0]?.price}
           onNeedOlder={chart.hasMore ? chart.loadOlder : undefined}
-          onScrub={setScrubbed}
+          onScrub={onScrub}
           height={desktop ? "clamp(220px, 32vh, 380px)" : undefined}
-          className="mt-3"
+          // The last timeframe, dimmed, until the new one arrives.
+          className={cn("mt-3 transition-opacity duration-200", chart.isSwitching && "opacity-50")}
         />
       )}
 
@@ -539,7 +569,7 @@ export function AssetPage({
           className="scroll-quiet flex min-h-0 flex-col gap-2.5 overflow-y-auto"
         >
           <div className="rounded-[14px] border border-[var(--overlay-wash)] bg-surface-base p-5">
-            <OrderTicket asset={asset} side="buy" inline />
+            <OrderTicket asset={tradeAsset} side="buy" inline />
           </div>
           {asset.kind === "token" ? (
             <div className="rounded-[14px] border border-[var(--overlay-wash)] bg-surface-base px-[22px] py-4">
@@ -564,7 +594,7 @@ export function AssetPage({
       />
 
       <OrderModal
-        asset={orderSide ? asset : null}
+        asset={orderSide ? tradeAsset : null}
         side={orderSide ?? "buy"}
         onClose={() => setOrderSide(null)}
       />
@@ -621,5 +651,35 @@ function ContractChip({address}: {address: string}) {
         <ArrowUpRightIcon className="h-3 w-3" />
       </a>
     </span>
+  );
+}
+
+/**
+ * A chart-shaped placeholder: a faint line that pulses, the same height as the
+ * chart it stands in for, so nothing below it moves when the data lands.
+ */
+function ChartSkeleton({height}: {height: number | string}) {
+  return (
+    <div
+      aria-label="Loading chart"
+      role="status"
+      style={{height}}
+      className="relative mt-3 w-full animate-pulse overflow-hidden rounded-xl bg-wash"
+    >
+      <svg
+        viewBox="0 0 300 100"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+        className="absolute inset-x-0 bottom-[18%] h-[55%] w-full text-[var(--overlay-wash-hover)]"
+      >
+        <polyline
+          points="0,70 30,62 55,68 85,45 110,52 140,30 170,41 200,26 230,38 260,20 300,28"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+    </div>
   );
 }

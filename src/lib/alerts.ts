@@ -180,6 +180,21 @@ export function unreadBell(activity: Activity, prefs: AlertPrefs): number {
     .length;
 }
 
+/**
+ * The number on the phone's Following tab: both halves of the page — activity
+ * that alerts, plus replies and new followers.
+ */
+export function followingBadgeCount(activity: Activity | null, prefs: AlertPrefs): number {
+  if (!activity) return 0;
+  return unreadFollowing(activity, prefs) + unreadBell(activity, prefs);
+}
+
+/** "3", "9+", or nothing at all when there is nothing new. */
+export function badgeLabel(count: number): string | null {
+  if (!(count > 0)) return null;
+  return count > 9 ? "9+" : String(count);
+}
+
 /** Newest first, ties broken by id so the order never flickers between polls. */
 export function mergeActivity<T extends {at: string; id: string}>(lists: T[][], limit: number): T[] {
   return lists

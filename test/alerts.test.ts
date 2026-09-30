@@ -8,6 +8,8 @@ import {
   dismissToast,
   followingAlerts,
   groupToastText,
+  badgeLabel,
+  followingBadgeCount,
   mergeActivity,
   pushToasts,
   tradeUsdLabel,
@@ -148,5 +150,27 @@ describe("pop-ups", () => {
     assert.equal(tradeUsdLabel(1_250), "$1.3K");
     assert.equal(tradeUsdLabel(12_400), "$12K");
     assert.equal(tradeUsdLabel(null), null);
+  });
+});
+
+describe("phone Following tab badge", () => {
+  const activity: Activity = {
+    following: [trade("a", "buy", 5, "2026-09-30T10:05:00Z"), comment("c", "2026-09-30T10:04:00Z")],
+    bell: [reply("r", "2026-09-30T10:05:00Z")],
+    followingSeenAt: "2026-09-30T10:00:00Z",
+    bellSeenAt: "2026-09-30T10:00:00Z",
+    followingCount: 1,
+  };
+
+  it("counts both halves of the page, as Settings → Alerts allows", () => {
+    assert.equal(followingBadgeCount(activity, DEFAULT_ALERT_PREFS), 3);
+    assert.equal(followingBadgeCount(activity, {...DEFAULT_ALERT_PREFS, replies: false}), 2);
+    assert.equal(followingBadgeCount(null, DEFAULT_ALERT_PREFS), 0);
+  });
+
+  it("reads 9+ past nine, and nothing at all at zero", () => {
+    assert.equal(badgeLabel(3), "3");
+    assert.equal(badgeLabel(12), "9+");
+    assert.equal(badgeLabel(0), null);
   });
 });

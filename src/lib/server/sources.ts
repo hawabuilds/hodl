@@ -18,10 +18,10 @@ import * as swaps from "./live/swaps";
 import * as headlines from "./live/news";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {quotePriceUsd} from "@/lib/server/quotePrice";
-import {reorientPoints} from "@/lib/pairOrientation";
+import {applyOrientation, decideOrientation} from "@/lib/pairOrientation";
 import {clipChartToOrigin} from "@/lib/chartLwc";
 import {mergeTradesIntoChart} from "@/lib/chartLive";
-import {CHART_HISTORY_BARS, TIMEFRAME_MS} from "@/lib/chartPlot";
+import {CHART_FIRST_LOAD_BARS, CHART_HISTORY_BARS, TIMEFRAME_MS} from "@/lib/chartPlot";
 import {pairsForToken} from "./live/dexscreener";
 import {underFeature} from "./live/rpcMeter";
 import {type FeedQuery} from "./newsfeed";
@@ -36,7 +36,9 @@ async function liveSwapsFor(
   target: {pool: string; token: string; quote: string},
   priceUsd: number | null,
 ): Promise<Trade[]> {
-  if (!target.quote || priceUsd == null || priceUsd <= 0) return [];
+  // An unpriced token still has a tape: fills are sized from their quote leg,
+  // and only the ones that cannot be are dropped.
+  if (!target.quote) return [];
   const quoteUsd = await quotePriceUsd(target.quote);
   return swaps.recentSwaps(
     target.pool,
@@ -271,23 +273,28 @@ export async function fetchChart(
           : undefined;
       // Pass the token address. Gecko's pool `base` is often the stock
       // (WORTHLESS/SPY), so `token=base` charts SPY and reorient flattens it.
-      const raw = await gecko.candles(
-        target.pool,
-        timeframe,
-        target.token,
-        CHART_HISTORY_BARS,
-        beforeMs,
-        Number.isFinite(listedAt) ? listedAt : undefined,
-      );
+      const origin = Number.isFinite(listedAt) ? listedAt : undefined;
+      const pool = target;
+      const candlesAt = (before?: number) =>
+        gecko.candles(pool.pool, timeframe, pool.token, CHART_FIRST_LOAD_BARS, before, origin);
+      const [raw, tradePrice] = await Promise.all([
+        candlesAt(beforeMs),
+        latestTradePrice(asset, assetIsSeeded),
+      ]);
       resolvedTimeframe = raw.resolvedTimeframe;
+      // Oriented against the pool's own latest on-chain trade, never a
+      // provider price. An older page takes the decision made on the newest
+      // one (cached), since its candles are history, not today's price.
+      const reference = beforeMs != null ? (await candlesAt()).points : raw.points;
+      const orientation = decideOrientation(
+        reference,
+        tradePrice,
+        asset.liquidityUsd ?? 0,
+        asset.symbol,
+      );
       const points = clipChartToOrigin(
-        reorientPoints(
-          raw.points,
-          asset.priceUsd,
-          asset.liquidityUsd ?? 0,
-          asset.symbol,
-        ),
-        Number.isFinite(listedAt) ? listedAt : undefined,
+        applyOrientation(raw.points, orientation),
+        origin,
         TIMEFRAME_MS[resolvedTimeframe],
       );
       if (points.length > 1) {
@@ -339,6 +346,20 @@ export async function fetchChart(
  * Same source and the same reason as the chart. GeckoTerminal returns the last
  * 300 swaps per pool, which is far more tape than the panel shows.
  */
+/**
+ * The newest on-chain trade's price in the pool the chart reads: the reference
+ * the chart is oriented against. Null when the pool has no recent trade.
+ */
+async function latestTradePrice(asset: Asset, assetIsSeeded: boolean): Promise<number | null> {
+  try {
+    const tape = await fetchTrades(asset, 5, assetIsSeeded);
+    const newest = tape.data.find((trade) => Number.isFinite(trade.priceUsd) && trade.priceUsd > 0);
+    return newest?.priceUsd ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchTrades(
   asset: Asset,
   limit?: number,

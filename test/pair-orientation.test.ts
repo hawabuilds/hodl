@@ -1,8 +1,10 @@
 import {describe, it} from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyOrientation,
+  decideOrientation,
   looksInvertedMemecoin,
-  reorientPoints,
+  orientAgainstTrade,
   usdPriceFor,
 } from "../src/lib/pairOrientation";
 
@@ -58,24 +60,54 @@ describe("pair orientation", () => {
     assert.equal(looksInvertedMemecoin(149, 5_000_000), false);
   });
 
-  it("rescales an inverted series onto the live token price", () => {
-    const out = reorientPoints(
-      [
-        {t: 1, price: 140},
-        {t: 2, price: 149},
-      ],
-      0.0097,
-      80_000,
-    );
-    assert.equal(out.length, 2);
-    assert.ok(Math.abs(out[1].price - 0.0097) < 1e-9);
-    assert.ok(out[0].price < 0.02);
+  it("keeps candles that agree with the pool's latest on-chain trade", () => {
+    const candles = [
+      {t: 1, price: 0.0000028},
+      {t: 2, price: 0.0000026},
+    ];
+    const out = orientAgainstTrade(candles, 0.0000025829, 3_400);
+    assert.equal(out.orientation, "kept");
+    assert.deepEqual(out.points, candles);
   });
 
-  it("hides an inverted series when there is no live price", () => {
-    assert.deepEqual(
-      reorientPoints([{t: 1, price: 149}, {t: 2, price: 150}], null, 80_000),
-      [],
+  it("flips candles quoted the other way round, checked against the trade", () => {
+    // Candles in tokens per dollar: 1 / $0.0000025 = 400,000.
+    const out = orientAgainstTrade(
+      [
+        {t: 1, price: 500_000, open: 450_000, high: 520_000, low: 440_000},
+        {t: 2, price: 400_000},
+      ],
+      0.0000025,
+      3_400,
     );
+    assert.equal(out.orientation, "flipped");
+    assert.ok(Math.abs(out.points[1]!.price - 0.0000025) < 1e-15);
+    // A flipped candle's high comes from its low.
+    assert.ok(Math.abs(out.points[0]!.high! - 1 / 440_000) < 1e-15);
+    assert.ok(Math.abs(out.points[0]!.low! - 1 / 520_000) < 1e-15);
+  });
+
+  it("hides candles that match the trade neither way, rather than rescaling them", () => {
+    // The stock's side of the pool: $149 against a token trading at $0.0097.
+    const out = orientAgainstTrade([{t: 1, price: 140}, {t: 2, price: 149}], 0.0097, 80_000);
+    assert.equal(out.orientation, "hidden");
+    assert.deepEqual(out.points, []);
+  });
+
+  it("never takes a provider price: there is no argument for one", () => {
+    // The only reference is the pool's trade; a 22x-off stored price cannot reach it.
+    assert.equal(orientAgainstTrade.length, 4);
+    assert.equal(decideOrientation([{t: 1, price: 0.0000026}], 0.0000026, 3_400), "kept");
+  });
+
+  it("hides a memecoin at equity scale when there is no trade to check", () => {
+    assert.equal(decideOrientation([{t: 1, price: 149}, {t: 2, price: 150}], null, 80_000), "hidden");
+    assert.equal(decideOrientation([{t: 1, price: 0.002}], null, 80_000), "kept");
+  });
+
+  it("gives older pages the newest page's decision, whatever their prices", () => {
+    // Launch at $0.000001, now $0.1: the old page is history, not inverted.
+    const older = [{t: 1, price: 0.000001}];
+    assert.deepEqual(applyOrientation(older, "kept"), older);
   });
 });

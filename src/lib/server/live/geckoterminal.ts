@@ -1,6 +1,6 @@
 import type {ChartPoint, Timeframe, Trade} from "@/lib/types";
-import {isPlausiblePrice, mergeChartPoints} from "@/lib/chartLwc";
-import {CHART_HISTORY_BARS} from "@/lib/chartPlot";
+import {isPlausiblePrice} from "@/lib/chartLwc";
+import {CHART_FIRST_LOAD_BARS} from "@/lib/chartPlot";
 import type {DexPair} from "./dexscreener";
 import {cached, stale} from "./cache";
 import {
@@ -548,9 +548,6 @@ export function bucketForAge(ageMs: number): Timeframe {
   return "1m";
 }
 
-/** Extra Gecko pages on first load so launch prints can sit on the axis. */
-const MAX_ORIGIN_PAGES = 5;
-
 /** A line needs two real prints. One candle is not a chart and must not be padded. */
 export const ENOUGH_TO_DRAW = 2;
 
@@ -667,47 +664,6 @@ async function candlesAt(
   return [];
 }
 
-async function candlesBackToOrigin(
-  pool: string,
-  timeframe: Timeframe,
-  token: string | null,
-  limit: number,
-  beforeMs?: number,
-  originMs?: number,
-): Promise<ChartPoint[]> {
-  let points = await candlesAt(pool, timeframe, token, limit, beforeMs);
-  if (
-    beforeMs != null ||
-    originMs == null ||
-    !Number.isFinite(originMs) ||
-    points.length < 2
-  ) {
-    return points;
-  }
-
-  let pages = 0;
-  while (
-    pages < MAX_ORIGIN_PAGES &&
-    points.length >= limit &&
-    points[0].t > originMs &&
-    !isGeckoRateLimited()
-  ) {
-    pages += 1;
-    // Older pages are extra. A failure there keeps what has already loaded.
-    let older: ChartPoint[];
-    try {
-      older = await candlesAt(pool, timeframe, token, limit, points[0].t);
-    } catch {
-      break;
-    }
-    if (older.length === 0) break;
-    const merged = mergeChartPoints(older, points);
-    if (merged.length === points.length) break;
-    points = merged;
-  }
-  return points;
-}
-
 /**
  * Candles for a pool, oldest first, in the shape `PriceChart` already takes.
  *
@@ -722,7 +678,7 @@ export async function candles(
   timeframe: Timeframe,
   /** The asset whose price this is, so a quote-side pool still reads right. */
   token: string | null = null,
-  limit = CHART_HISTORY_BARS,
+  limit = CHART_FIRST_LOAD_BARS,
   beforeMs?: number,
   originMs?: number,
 ): Promise<{
@@ -741,14 +697,9 @@ export async function candles(
 
   for (const bucket of ladder) {
     try {
-      const points = await candlesBackToOrigin(
-        pool,
-        bucket,
-        token,
-        limit,
-        beforeMs,
-        originMs,
-      );
+      // One page. Older history loads as the chart is scrolled left; paging
+      // back to launch here sent thousands of bars nobody had asked to see.
+      const points = await candlesAt(pool, bucket, token, limit, beforeMs);
       if (points.length > 1) {
         return {points, error: null, resolvedTimeframe: bucket};
       }

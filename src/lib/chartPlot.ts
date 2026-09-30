@@ -16,6 +16,15 @@ export const CHART_WINDOW_BARS = 120;
 /** Widest history one chart request asks for. Gecko's OHLCV ceiling is 1000. */
 export const CHART_HISTORY_BARS = 1000;
 
+/**
+ * Bars a token chart loads first, and per page when scrolled back.
+ *
+ * A thousand, plus pages back towards launch, sent 1,721 hourly bars (57KB
+ * gzipped) and 6,000 one-minute bars (717KB) for a view that shows about 120.
+ * Scrolling left loads the rest a page at a time.
+ */
+export const CHART_FIRST_LOAD_BARS = 300;
+
 export function chartWindowMs(timeframe: Timeframe): number {
   return TIMEFRAME_MS[timeframe] * CHART_WINDOW_BARS;
 }

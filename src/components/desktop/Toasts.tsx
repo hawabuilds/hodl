@@ -29,6 +29,7 @@ import {
 import {cn} from "@/lib/cn";
 import {assetPath} from "@/lib/routes";
 import {CloseIcon} from "../ui/Icons";
+import {OverlayPortal} from "../ui/OverlayPortal";
 import {AssetLogo, PersonAvatar} from "./FollowingFeed";
 
 /**
@@ -43,7 +44,19 @@ import {AssetLogo, PersonAvatar} from "./FollowingFeed";
 /** A row older than this that turns up late (a new follow, say) is history, not news. */
 const FRESH_MS = 10 * 60_000;
 
-export function Toasts() {
+/** Pop-ups on a phone last a second less: the screen is smaller and busier. */
+const PHONE_TOAST_MS = 4_000;
+
+/**
+ * `desktop`: bottom-left above the status bar, up to three, hover to pause.
+ * `phone`: one at a time at the top of the screen, smaller, gone after four
+ * seconds or a swipe up. The rules behind them — what pops up, grouping,
+ * Settings → Alerts, holding off during a trade — are the same.
+ */
+export type ToastsLayout = "desktop" | "phone";
+
+export function Toasts({layout = "desktop"}: {layout?: ToastsLayout} = {}) {
+  const phone = layout === "phone";
   const user = useUser();
   const router = useRouter();
   const pathname = usePathname() ?? "";
@@ -111,8 +124,13 @@ export function Toasts() {
       close(toast.id);
       const item = toast.group ? toast.latest : toast.item;
       if (toast.kind === "trade") {
-        // The Following tab is where trades live. On a token page the rail is
-        // already there; anywhere else, go to the token with it open.
+        // Trades live under Following: on a phone, the Activity page; on
+        // desktop, the rail — already there on a token page, and otherwise
+        // the token's page with it open.
+        if (phone) {
+          router.push("/activity");
+          return;
+        }
         setRailList("following");
         const onAsset = pathname.startsWith("/token/") || pathname.startsWith("/rwa/");
         if (!onAsset && "asset" in item) router.push(assetPath(item.asset.kind, item.asset.id));
@@ -124,10 +142,32 @@ export function Toasts() {
         announceCommentTarget(hash);
       }
     },
-    [close, pathname, router],
+    [close, pathname, phone, router],
   );
 
   if (state.toasts.length === 0) return null;
+
+  if (phone) {
+    // One at a time: the newest. Closing it closes the ones it replaced, so
+    // an older pop-up never surfaces after the newer one has gone.
+    const newest = state.toasts[state.toasts.length - 1]!;
+    return (
+      <OverlayPortal>
+        <div
+          aria-live="polite"
+          className="pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top)+64px)] z-[60] flex justify-center px-[22px]"
+        >
+          <ToastCard
+            key={newest.id}
+            toast={newest}
+            onOpen={open}
+            onClose={() => setState(EMPTY_TOASTS)}
+            phone
+          />
+        </div>
+      </OverlayPortal>
+    );
+  }
 
   return (
     <div
@@ -146,19 +186,25 @@ function ToastCard({
   toast,
   onOpen,
   onClose,
+  phone = false,
 }: {
   toast: Toast;
   onOpen: (toast: Toast) => void;
   onClose: (id: string) => void;
+  phone?: boolean;
 }) {
+  const lifetime = phone ? PHONE_TOAST_MS : TOAST_MS;
   const [hovered, setHovered] = useState(false);
-  const remaining = useRef(TOAST_MS);
+  const remaining = useRef(lifetime);
   const startedAt = useRef(0);
+  // Swipe up to dismiss: how far the finger has dragged the card, in px.
+  const [dragY, setDragY] = useState(0);
+  const dragStart = useRef<number | null>(null);
 
-  // A group that grows starts its five seconds again.
+  // A group that grows starts its time again.
   useEffect(() => {
-    remaining.current = TOAST_MS;
-  }, [toast.shownAt]);
+    remaining.current = lifetime;
+  }, [toast.shownAt, lifetime]);
 
   useEffect(() => {
     if (hovered) return;
@@ -172,34 +218,82 @@ function ToastCard({
 
   const item = toast.group ? toast.latest : toast.item;
 
+  const swipe = phone
+    ? {
+        onPointerDown: (event: React.PointerEvent) => {
+          dragStart.current = event.clientY;
+          setHovered(true);
+        },
+        onPointerMove: (event: React.PointerEvent) => {
+          if (dragStart.current == null) return;
+          setDragY(Math.min(0, event.clientY - dragStart.current));
+        },
+        onPointerUp: () => {
+          const dragged = dragY;
+          dragStart.current = null;
+          setHovered(false);
+          if (dragged < -24) onClose(toast.id);
+          else setDragY(0);
+        },
+        onPointerCancel: () => {
+          dragStart.current = null;
+          setHovered(false);
+          setDragY(0);
+        },
+      }
+    : {};
+
   return (
     <div
       role="status"
       data-surface="popup"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      className="pointer-events-auto flex animate-rise items-center gap-2.5 rounded-2xl border border-[var(--overlay-wash-hover)] bg-[var(--bg-input)] py-2.5 pl-3 pr-2 shadow-panel"
+      onMouseEnter={phone ? undefined : () => setHovered(true)}
+      onMouseLeave={phone ? undefined : () => setHovered(false)}
+      {...swipe}
+      style={
+        phone
+          ? {
+              transform: dragY ? `translateY(${dragY}px)` : undefined,
+              opacity: dragY ? Math.max(0.2, 1 + dragY / 80) : undefined,
+              touchAction: "none",
+            }
+          : undefined
+      }
+      className={cn(
+        "pointer-events-auto flex animate-rise items-center rounded-2xl border border-[var(--overlay-wash-hover)] bg-[var(--bg-input)] shadow-panel",
+        phone ? "w-full max-w-[386px] gap-2 py-1 pl-2.5 pr-1" : "gap-2.5 py-2.5 pl-3 pr-2",
+        dragStart.current == null && "transition-[transform,opacity] duration-150",
+      )}
     >
       <button
         type="button"
-        onClick={() => onOpen(toast)}
-        className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+        onClick={() => {
+          // A swipe that ended over the card is not a tap.
+          if (!dragY) onOpen(toast);
+        }}
+        className={cn(
+          "flex min-w-0 flex-1 items-center text-left",
+          phone ? "min-h-[44px] gap-2" : "gap-2.5",
+        )}
       >
-        <PersonAvatar person={item.person} size={30} />
-        <span className="min-w-0 flex-1 text-[13px] leading-[1.35]">
+        <PersonAvatar person={item.person} size={phone ? 26 : 30} />
+        <span className={cn("min-w-0 flex-1 leading-[1.35]", phone ? "text-[12.5px]" : "text-[13px]")}>
           {toast.group ? (
             <span className="line-clamp-2 font-bold">{groupToastText(toast.kind, toast.count)}</span>
           ) : (
             <ToastText kind={toast.kind} item={toast.item} />
           )}
         </span>
-        {"asset" in item ? <AssetLogo asset={item.asset} size={26} /> : null}
+        {"asset" in item ? <AssetLogo asset={item.asset} size={phone ? 22 : 26} /> : null}
       </button>
       <button
         type="button"
         onClick={() => onClose(toast.id)}
         aria-label="Dismiss"
-        className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-faint transition-colors hover:bg-[var(--overlay-wash)] hover:text-ink"
+        className={cn(
+          "grid shrink-0 place-items-center rounded-full text-faint transition-colors hover:bg-[var(--overlay-wash)] hover:text-ink",
+          phone ? "h-11 w-11" : "h-6 w-6",
+        )}
       >
         <CloseIcon className="h-3 w-3" />
       </button>

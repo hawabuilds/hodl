@@ -5,6 +5,7 @@ import {useEffect, useRef, useState} from "react";
 import {Button} from "@/components/ui/Button";
 import {Sheet} from "@/components/ui/Sheet";
 import {useAlertPrefs} from "@/hooks/useActivity";
+import {useIsDesktop} from "@/hooks/useBreakpoint";
 import type {AlertPrefs, AlertSwitch} from "@/lib/alerts";
 import {cn} from "@/lib/cn";
 
@@ -16,21 +17,23 @@ import {cn} from "@/lib/cn";
  * once — the next pop-up already follows it.
  */
 
-const SWITCHES: {key: AlertSwitch; title: string; note?: string}[] = [
+const SWITCHES: {key: AlertSwitch; title: string}[] = [
   {key: "followBuys", title: "Someone I follow buys"},
   {key: "followSells", title: "Someone I follow sells"},
   {key: "followComments", title: "Someone I follow comments"},
   {key: "replies", title: "Someone replies to my comment"},
   {key: "newFollowers", title: "Someone follows me"},
-  {
-    key: "popups",
-    title: "Show pop-ups",
-    note: "Off: no pop-ups, but the bell and Following still update.",
-  },
+  {key: "popups", title: "Show pop-ups"},
 ];
 
 export function AlertSettings({open, onClose}: {open: boolean; onClose: () => void}) {
   const {prefs, loaded, error, save} = useAlertPrefs();
+  // Desktop has a bell; a phone keeps the same things on its Activity tab.
+  const desktop = useIsDesktop();
+  const counts = desktop ? "the Following tab and the bell" : "the Activity tab";
+  const popupsNote = desktop
+    ? "Off: no pop-ups, but the bell and Following still update."
+    : "Off: no pop-ups, but the Activity tab still updates.";
   const [status, setStatus] = useState<string | null>(null);
   const [minDraft, setMinDraft] = useState("");
   const typing = useRef(false);
@@ -68,7 +71,7 @@ export function AlertSettings({open, onClose}: {open: boolean; onClose: () => vo
       <div className="px-1 pb-8">
         <h2 className="text-[17px] font-extrabold tracking-[-0.02em]">Alerts</h2>
         <p className="mt-1 text-[12.5px] leading-[1.45] text-faint">
-          What counts on the Following tab and the bell, and what pops up. Never sent as a push or an email.
+          What counts on {counts}, and what pops up. Never sent as a push or an email.
         </p>
 
         {!loaded && !error ? (
@@ -82,7 +85,11 @@ export function AlertSettings({open, onClose}: {open: boolean; onClose: () => vo
                 <li key={row.key}>
                   <SwitchRow
                     title={row.title}
-                    note={row.note}
+                    note={
+                      row.key === "popups"
+                        ? popupsNote
+                        : undefined
+                    }
                     on={prefs[row.key]}
                     onToggle={() => void change({[row.key]: !prefs[row.key]})}
                   />
@@ -92,7 +99,7 @@ export function AlertSettings({open, onClose}: {open: boolean; onClose: () => vo
 
             <label className="mt-4 block">
               <span className="text-[14px] font-bold">Only alert me for trades over</span>
-              <span className="mt-2 flex items-center gap-1 rounded-xl bg-[var(--bg-input)] px-3 py-2 shadow-inset-soft focus-within:shadow-inset-focus">
+              <span className="mt-2 flex min-h-[44px] items-center gap-1 rounded-xl bg-[var(--bg-input)] px-3 shadow-inset-soft focus-within:shadow-inset-focus">
                 <span className="text-[14px] font-bold text-faint">$</span>
                 <input
                   inputMode="decimal"
@@ -103,7 +110,7 @@ export function AlertSettings({open, onClose}: {open: boolean; onClose: () => vo
                     setMinDraft(event.target.value.replace(/[^0-9.]/g, ""));
                   }}
                   aria-describedby="alerts-min-note"
-                  className="min-w-0 flex-1 bg-transparent text-[14px] font-bold tabular-nums text-ink outline-none"
+                  className="min-h-[44px] min-w-0 flex-1 bg-transparent text-[14px] font-bold tabular-nums text-ink outline-none"
                 />
               </span>
               <span id="alerts-min-note" className="mt-1.5 block text-[11.5px] text-faint">

@@ -16,6 +16,7 @@ export const APP_DOMAIN = "hodl.fan";
 export const TABS = [
   {href: "/home", label: "Home", key: "home"},
   {href: "/search", label: "Search", key: "search"},
+  {href: "/activity", label: "Activity", key: "activity"},
   {href: "/news", label: "News", key: "news"},
   {href: "/profile", label: "Profile", key: "profile"},
 ] as const;

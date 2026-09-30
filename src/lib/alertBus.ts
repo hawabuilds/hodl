@@ -40,18 +40,24 @@ export function useRailList(): RailList {
 // ── A trade under way ──────────────────────────────────────────────────
 
 let tradeBusy = false;
+let tradeSheetOpen = false;
 
 /** Set by the ticket while a swap or approval is confirming. */
 export function setTradeBusy(busy: boolean): void {
   tradeBusy = busy;
 }
 
+/** Set while the phone's buy/sell sheet is open. */
+export function setTradeSheetOpen(open: boolean): void {
+  tradeSheetOpen = open;
+}
+
 /**
- * True while a trade is confirming or the cursor is in the ticket's amount
- * box. Pop-ups wait for neither; they are dropped, and the counts carry them.
+ * True while a trade is confirming, the phone's buy/sell sheet is open, or the
+ * cursor is in the ticket's amount box. Pop-ups wait for neither; they are dropped, and the counts carry them.
  */
 export function tradeInProgress(): boolean {
-  if (tradeBusy) return true;
+  if (tradeBusy || tradeSheetOpen) return true;
   if (typeof document === "undefined") return false;
   return Boolean(document.activeElement?.closest("[data-trade-input]"));
 }

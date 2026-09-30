@@ -319,7 +319,12 @@ export async function recentSwaps(
   pool: string,
   token: string,
   quote: string,
-  priceUsd: number,
+  /**
+   * The token's own price, used only for a fill whose quote leg has no USD
+   * price. Null when the token is unpriced; such fills are then left out
+   * rather than given a price nothing measured.
+   */
+  priceUsd: number | null,
   /** USD price of the quote asset — USDG is 1, RWAs from Robinhood mid. */
   quotePriceUsd: number | null = null,
 ): Promise<Trade[]> {
@@ -422,8 +427,8 @@ export async function recentSwaps(
       // Size the fill from the quote leg when we know that asset's USD price.
       // DexScreener and the indexer both do this; token spot × amount is wrong
       // on RWA-paired pools (e.g. OUROBOROS/CRCL).
-      let executionPrice = priceUsd;
-      let amountUsd = amount * priceUsd;
+      let executionPrice: number;
+      let amountUsd: number;
       const quoteAbs =
         Number.isFinite(quoteAmount) && quoteAmount > 0 ? quoteAmount : 0;
 
@@ -433,6 +438,11 @@ export async function recentSwaps(
       } else if (quotePriceUsd != null && quotePriceUsd > 0 && quoteAbs > 0) {
         amountUsd = quoteAbs * quotePriceUsd;
         executionPrice = amountUsd / amount;
+      } else if (priceUsd != null && priceUsd > 0) {
+        executionPrice = priceUsd;
+        amountUsd = amount * priceUsd;
+      } else {
+        continue;
       }
 
       trades.push({

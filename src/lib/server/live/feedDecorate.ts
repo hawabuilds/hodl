@@ -109,10 +109,8 @@ export function applyDexPair(asset: TokenAsset, pair: DexPair): TokenAsset {
     });
     priceUsd = null;
   }
-  const price =
-    priceUsd != null && Number.isFinite(priceUsd) && priceUsd > 0
-      ? priceUsd
-      : asset.priceUsd;
+  const fromPair = priceUsd != null && Number.isFinite(priceUsd) && priceUsd > 0;
+  const price = fromPair ? priceUsd : asset.priceUsd;
   const changePct =
     typeof pair.priceChange?.h24 === "number"
       ? pair.priceChange.h24
@@ -140,6 +138,7 @@ export function applyDexPair(asset: TokenAsset, pair: DexPair): TokenAsset {
   return {
     ...asset,
     priceUsd: price != null ? round(price, 10) : null,
+    priceAt: fromPair ? new Date().toISOString() : asset.priceAt,
     changePct: round(changePct, 2),
     volume24hUsd,
     liquidityUsd,

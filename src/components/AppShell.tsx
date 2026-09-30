@@ -10,6 +10,7 @@ import {useIsDesktop} from "@/hooks/useBreakpoint";
 import {TabBar} from "./TabBar";
 import {PushPrompt} from "./PushPrompt";
 import {TerminalShell} from "./desktop/TerminalShell";
+import {Toasts} from "./desktop/Toasts";
 
 /**
  * Status bar / Dynamic Island inset, plus a little extra so titles do not
@@ -70,11 +71,17 @@ export function AppShell({children}: {children: ReactNode}) {
 
   return (
     <div className="flex h-full flex-col bg-surface-base">
-      <div className="scroll-quiet min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-[22px] pb-[calc(96px+env(safe-area-inset-bottom))]">
+      {/*
+        The runway under the floating tab bar. The bar sits 14px up and is 58px
+        tall; 96px left the last row 24px above it, still inside the bar's
+        shadow and blur, so it read as hidden behind it. 120px clears it by 48.
+      */}
+      <div className="scroll-quiet min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-[22px] pb-[calc(120px+env(safe-area-inset-bottom))]">
         {children}
       </div>
 
       <TabBar />
+      <Toasts layout="phone" />
       <PushPrompt />
     </div>
   );

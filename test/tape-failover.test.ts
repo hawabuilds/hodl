@@ -233,4 +233,59 @@ describe("tape decimals are read, never assumed", () => {
       /decimals unknown for 0x4444/,
     );
   });
+
+  /** One v3 swap: the pool paid out a whole token for 0.001 WETH. */
+  function wethSwap(pool: string) {
+    const word = (value: bigint) =>
+      (value < 0n ? (1n << 256n) + value : value).toString(16).padStart(64, "0");
+    chain({
+      eth_blockNumber: () => "0x1000",
+      eth_getBlockByNumber: () => ({timestamp: "0x" + Math.floor(Date.now() / 1000).toString(16)}),
+      eth_call: () => "0x" + "12".padStart(64, "0"),
+      eth_getLogs: () => [
+        {
+          address: pool,
+          topics: ["0x0", "0x" + "0".repeat(64), "0x" + "0".repeat(64)],
+          data:
+            "0x" +
+            word(-(10n ** 18n)) +
+            word(10n ** 15n) +
+            word(1n) +
+            word(1n) +
+            word(0n),
+          blockNumber: "0x1000",
+          transactionHash: "0x" + "b".repeat(64),
+          logIndex: "0x0",
+        },
+      ],
+    });
+  }
+
+  it("leaves out a fill it cannot price when the token is unpriced", async () => {
+    // WETH has no USD price on this path, so the only price left for the fill
+    // would be the token's own — and an unpriced token has none to lend it.
+    const token = "0x0666666666666666666666666666666666666666";
+    const weth = "0x0bd7d308f8e1639fab988df18a8011f41eacad73";
+    wethSwap("0x7777777777777777777777777777777777777777");
+    assert.deepEqual(
+      await recentSwaps("0x7777777777777777777777777777777777777777", token, weth, null, null),
+      [],
+    );
+  });
+
+  it("still prices that fill from the token when it has a price", async () => {
+    const token = "0x0666666666666666666666666666666666666666";
+    const weth = "0x0bd7d308f8e1639fab988df18a8011f41eacad73";
+    wethSwap("0x8888888888888888888888888888888888888888");
+    const fills = await recentSwaps(
+      "0x8888888888888888888888888888888888888888",
+      token,
+      weth,
+      0.002,
+      null,
+    );
+    assert.equal(fills.length, 1);
+    assert.equal(fills[0].priceUsd, 0.002);
+    assert.equal(fills[0].side, "buy");
+  });
 });

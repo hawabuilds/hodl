@@ -89,7 +89,8 @@ export function SheetTitle({
         type="button"
         onClick={onClose}
         aria-label="Close"
-        className="grid h-8 w-8 place-items-center rounded-full bg-[var(--overlay-wash)] text-muted transition-colors hover:bg-[var(--overlay-wash-hover)]"
+        // 32px to look at, 44px to tap: the ring around it is invisible.
+        className="relative grid h-8 w-8 place-items-center rounded-full bg-[var(--overlay-wash)] text-muted transition-colors after:absolute after:-inset-1.5 after:content-[''] hover:bg-[var(--overlay-wash-hover)]"
       >
         <CloseIcon className="h-[15px] w-[15px]" />
       </button>

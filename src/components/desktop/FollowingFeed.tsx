@@ -37,7 +37,14 @@ const FILTERS = [
 
 type Filter = (typeof FILTERS)[number]["value"];
 
-export function FollowingFeed() {
+/**
+ * `rail` sits in the desktop sidebar. `page` fills a phone screen: rows run to
+ * the edges like the phone's other lists, and the chips are 44px to tap.
+ */
+export type FeedLayout = "rail" | "page";
+
+export function FollowingFeed({layout = "rail"}: {layout?: FeedLayout} = {}) {
+  const page = layout === "page";
   const user = useUser();
   const {activity, isLoading, error, retry, markSeen} = useActivity();
   const [filter, setFilter] = useState<Filter>("all");
@@ -102,16 +109,26 @@ export function FollowingFeed() {
 
   return (
     <div>
-      <div className="flex items-center px-3.5 pb-1 pt-2.5">
-        <ColumnSegments label="Show" options={FILTERS} value={filter} onChange={setFilter} />
+      <div className={cn("flex items-center pb-1 pt-2.5", page ? "" : "px-3.5")}>
+        <ColumnSegments
+          label="Show"
+          options={FILTERS}
+          value={filter}
+          onChange={setFilter}
+          size={page ? "touch" : "sm"}
+        />
       </div>
       {items.length === 0 ? (
         <ColumnNote>Nothing yet from people you follow.</ColumnNote>
       ) : (
-        <ul>
+        <ul className={page ? "-mx-[22px]" : undefined}>
           {items.map((item) => (
             <li key={`${item.type}:${item.id}`} className="border-b border-[var(--overlay-wash)] last:border-b-0">
-              {item.type === "trade" ? <TradeRow item={item} /> : <CommentRow item={item} />}
+              {item.type === "trade" ? (
+                <TradeRow item={item} page={page} />
+              ) : (
+                <CommentRow item={item} page={page} />
+              )}
             </li>
           ))}
         </ul>
@@ -120,14 +137,18 @@ export function FollowingFeed() {
   );
 }
 
-const rowClass =
-  "flex items-start gap-2.5 px-3.5 py-2.5 transition-colors duration-150 hover:bg-[var(--overlay-wash)]";
+function rowClass(page: boolean) {
+  return cn(
+    "flex items-start gap-2.5 transition-colors duration-150 hover:bg-[var(--overlay-wash)]",
+    page ? "px-[22px] py-3" : "px-3.5 py-2.5",
+  );
+}
 
-function TradeRow({item}: {item: Extract<FollowingItem, {type: "trade"}>}) {
+function TradeRow({item, page}: {item: Extract<FollowingItem, {type: "trade"}>; page: boolean}) {
   const buy = item.side === "buy";
   const size = tradeUsdLabel(item.usd);
   return (
-    <AssetLink kind={item.asset.kind} id={item.asset.id} className={rowClass}>
+    <AssetLink kind={item.asset.kind} id={item.asset.id} className={rowClass(page)}>
       <PersonAvatar person={item.person} />
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-baseline gap-1.5 text-[13px] leading-[1.35]">
@@ -144,7 +165,7 @@ function TradeRow({item}: {item: Extract<FollowingItem, {type: "trade"}>}) {
   );
 }
 
-function CommentRow({item}: {item: Extract<FollowingItem, {type: "comment"}>}) {
+function CommentRow({item, page}: {item: Extract<FollowingItem, {type: "comment"}>; page: boolean}) {
   const hash = commentHash(item.id);
   return (
     <AssetLink
@@ -152,7 +173,7 @@ function CommentRow({item}: {item: Extract<FollowingItem, {type: "comment"}>}) {
       id={item.asset.id}
       hash={hash}
       onClick={() => announceCommentTarget(hash)}
-      className={rowClass}
+      className={rowClass(page)}
     >
       <PersonAvatar person={item.person} />
       <span className="min-w-0 flex-1">

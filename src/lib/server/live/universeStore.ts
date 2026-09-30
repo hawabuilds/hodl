@@ -80,6 +80,8 @@ export interface TokenStatRow {
   priced_at?: string | null;
   /** priced | no_pool | failed | null (not yet evaluated). */
   price_status?: string | null;
+  /** When the pool price last moved (a swap). Null = never seen to move. */
+  price_moved_at?: string | null;
 }
 
 export interface TokenWrite {
@@ -885,6 +887,7 @@ export async function replaceTokenPools(
   return rows.length;
 }
 
+let movedColumnWarned = false;
 let pricedColumnsWarned = false;
 
 export async function upsertStats(
@@ -907,9 +910,18 @@ export async function upsertStats(
 
   for (let i = 0; i < payload.length; i += 80) {
     const slice = payload.slice(i, i + 80);
-    const {error} = await db()
+    let {error} = await db()
       .from("token_stats")
       .upsert(slice, {onConflict: "address"});
+    if (error && /price_moved_at/i.test(error.message)) {
+      // Before scripts/schema-price-refresh.sql: write without the mark.
+      if (!movedColumnWarned) {
+        movedColumnWarned = true;
+        console.error("token_stats.price_moved_at missing — run scripts/schema-price-refresh.sql");
+      }
+      for (const row of slice) delete (row as {price_moved_at?: unknown}).price_moved_at;
+      ({error} = await db().from("token_stats").upsert(slice, {onConflict: "address"}));
+    }
     if (error && /priced_at|price_status/i.test(error.message)) {
       if (!pricedColumnsWarned) {
         pricedColumnsWarned = true;
@@ -1433,6 +1445,146 @@ export async function listListedForPricing(opts: {
   });
 }
 
+/** A week: a token whose pool moved, or that showed volume, inside it is active. */
+export const ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** A token outside that window is refreshed about once a day. */
+export const DORMANT_REFRESH_MS = 24 * 60 * 60 * 1000;
+
+/** Where the daily sweep of dormant stored prices has got to, as a priced_at time. */
+export const DORMANT_PRICE_CURSOR = "price-refresh:dormant";
+/** Stored prices read per tick to find the next dormant listed tokens. */
+const DORMANT_SCAN = 1_000;
+
+async function listedRowsFor(addresses: string[]): Promise<TokenRow[]> {
+  const out: TokenRow[] = [];
+  for (let i = 0; i < addresses.length; i += 100) {
+    let request: any = db()
+      .from("tokens")
+      .select(PRICE_LIST_COLUMNS)
+      .eq("status", "listed")
+      .not("launchpad", "is", null)
+      .in("address", addresses.slice(i, i + 100));
+    request = applyUniverseFilter(request);
+    const {data, error} = await request;
+    if (error) throw error;
+    out.push(...((data as TokenRow[]) ?? []));
+  }
+  return out;
+}
+
+/**
+ * Where to resume the dormant sweep next tick.
+ *
+ * One millisecond back from the last row passed, so rows written in the same
+ * millisecond as it are read again rather than skipped. If a whole page shares
+ * one timestamp, step past it instead, or the sweep would never move.
+ */
+export function nextDormantCursor(input: {
+  scanned: {pricedAtMs: number}[];
+  stoppedAt: number;
+  pageFull: boolean;
+}): number {
+  const {scanned, stoppedAt, pageFull} = input;
+  if (scanned.length === 0 || (!pageFull && stoppedAt >= scanned.length - 1)) return 0;
+  const passed = scanned[Math.min(stoppedAt, scanned.length - 1)]!.pricedAtMs;
+  const first = scanned[0]!.pricedAtMs;
+  if (passed === first && stoppedAt >= scanned.length - 1) return passed;
+  return passed - 1;
+}
+
+/**
+ * Which stored prices to refresh this tick.
+ *
+ * Active: every listed token whose pool price moved (a swap) or that showed 24h
+ * volume in the last week, most-traded first, refreshed every tick.
+ * Dormant: listed tokens not refreshed in a day, swept in priced_at order from a
+ * saved position, a page per tick, wrapping when it reaches a day ago — so each
+ * is refreshed about once a day. Tokens that are no longer listed are passed
+ * over as the sweep moves on, rather than sitting at the front of it.
+ *
+ * It used to take the first 80 listed tokens by address every tick, so a token
+ * later in that order was priced once and never again: 22,164 of 23,228 stored
+ * prices were over a week old.
+ */
+export async function listForPriceRefresh(opts: {
+  activeLimit: number;
+  dormantLimit: number;
+  /** The dormant sweep's saved position (epoch ms), from `DORMANT_PRICE_CURSOR`. */
+  dormantCursor?: number;
+  now?: number;
+}): Promise<{active: TokenRow[]; dormant: TokenRow[]; nextDormantCursor: number}> {
+  if (!hasDatabase) return {active: [], dormant: [], nextDormantCursor: 0};
+  const now = opts.now ?? Date.now();
+  const since = new Date(now - ACTIVE_WINDOW_MS).toISOString();
+
+  const activeQuery = (withMoved: boolean) => {
+    let request: any = db()
+      .from("token_stats")
+      .select("address, tokens!inner(status, launchpad)")
+      .eq("tokens.status", "listed")
+      .not("tokens.launchpad", "is", null)
+      .or("eligible.is.null,eligible.is.true", {referencedTable: "tokens"})
+      .order("vol_24h", {ascending: false, nullsFirst: false})
+      .limit(opts.activeLimit);
+    request = withMoved
+      ? request.or(`price_moved_at.gte.${since},and(vol_24h.gt.0,updated_at.gte.${since})`)
+      : request.gt("vol_24h", 0).gte("updated_at", since);
+    return request;
+  };
+  let active = opts.activeLimit > 0 ? await activeQuery(true) : {data: [], error: null};
+  if (active.error && /price_moved_at/i.test(active.error.message)) {
+    // Before scripts/schema-price-refresh.sql: recent volume is the only signal.
+    active = await activeQuery(false);
+  }
+  if (active.error) throw active.error;
+  const activeAddresses = ((active.data ?? []) as {address: string}[]).map((row) =>
+    normalizeAddress(row.address),
+  );
+  const activeSet = new Set(activeAddresses);
+
+  let dormant: TokenRow[] = [];
+  let cursor = opts.dormantCursor ?? 0;
+  if (opts.dormantLimit > 0) {
+    const scan = await db()
+      .from("token_stats")
+      .select("address, priced_at")
+      .eq("price_status", "priced")
+      .gt("priced_at", new Date(cursor).toISOString())
+      .lt("priced_at", new Date(now - DORMANT_REFRESH_MS).toISOString())
+      .order("priced_at", {ascending: true})
+      .limit(DORMANT_SCAN);
+    if (scan.error) throw scan.error;
+    const scanned = ((scan.data ?? []) as {address: string; priced_at: string}[]).map((row) => ({
+      address: normalizeAddress(row.address),
+      pricedAtMs: Date.parse(row.priced_at),
+    }));
+    const listed = new Map(
+      (await listedRowsFor(scanned.map((row) => row.address).filter((a) => !activeSet.has(a)))).map(
+        (row) => [normalizeAddress(row.address), row],
+      ),
+    );
+    let stoppedAt = scanned.length - 1;
+    for (let i = 0; i < scanned.length; i++) {
+      const row = listed.get(scanned[i]!.address);
+      if (!row) continue;
+      dormant.push(row);
+      if (dormant.length >= opts.dormantLimit) {
+        stoppedAt = i;
+        break;
+      }
+    }
+    cursor = nextDormantCursor({scanned, stoppedAt, pageFull: scanned.length >= DORMANT_SCAN});
+  }
+
+  const activeRows = await listedRowsFor(activeAddresses);
+  // Keep the most-traded-first order the stats query gave.
+  const rank = new Map(activeAddresses.map((address, index) => [address, index]));
+  activeRows.sort(
+    (a, b) => (rank.get(normalizeAddress(a.address)) ?? 0) - (rank.get(normalizeAddress(b.address)) ?? 0),
+  );
+  return {active: activeRows, dormant, nextDormantCursor: cursor};
+}
+
 export async function cursorFor(name: string): Promise<bigint> {
   const held = await cursorsFor([name]);
   return held.get(name) ?? 0n;
@@ -1550,6 +1702,7 @@ export function rowToAsset(row: TokenRow, stats: TokenStatRow | undefined): Toke
     imageFallbacks: tokenImageCandidates(row).slice(1),
     imageColor: hexColor(row.image_color),
     priceUsd: price,
+    priceAt: price != null ? (stats?.priced_at ?? stats?.updated_at ?? null) : null,
     changePct: Number(stats?.price_change_24h ?? 0),
     volume24hUsd:
       stats?.vol_24h != null && Number(stats.vol_24h) > 0

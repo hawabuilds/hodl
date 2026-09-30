@@ -19,7 +19,6 @@ import {UnreadCount} from "./UnreadCount";
  * not here, so the bell stays quiet enough to mean something.
  */
 export function Bell() {
-  const user = useUser();
   const {activity, markSeen} = useActivity();
   const {prefs} = useAlertPrefs();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -94,40 +93,84 @@ export function Bell() {
         )}
       >
         <h2 className="px-4 pb-2 pt-3.5 text-[14px] font-extrabold tracking-[-0.01em]">Notifications</h2>
-        {!user.authenticated ? (
-          <div className="px-4 pb-5 pt-2 text-center">
-            <p className="text-[12.5px] font-medium leading-[1.5] text-faint">
-              Sign in to see replies to your comments and new followers.
-            </p>
-            <button
-              type="button"
-              onClick={() => user.login()}
-              className="mt-3 inline-flex h-[32px] items-center rounded-full bg-brand-500 px-4 text-[12.5px] font-extrabold text-white"
-            >
-              Sign in
-            </button>
-          </div>
-        ) : items.length === 0 ? (
-          <p className="px-4 pb-6 pt-3 text-center text-[12.5px] font-medium leading-[1.5] text-faint">
-            Replies to your comments and new followers show up here.
-          </p>
-        ) : (
-          <ul className="scroll-quiet max-h-[min(460px,calc(100dvh-120px))] overflow-y-auto pb-1.5">
-            {items.map((item) => (
-              <li key={`${item.type}:${item.id}`}>
-                <BellRow item={item} fresh={isNew(item)} onGo={() => setOpen(false)} />
-              </li>
-            ))}
-          </ul>
-        )}
+        <BellList
+          items={items}
+          isNew={isNew}
+          onGo={() => setOpen(false)}
+          listClassName="scroll-quiet max-h-[min(460px,calc(100dvh-120px))] overflow-y-auto pb-1.5"
+        />
       </div>
     </div>
   );
 }
 
-function BellRow({item, fresh, onGo}: {item: BellItem; fresh: boolean; onGo: () => void}) {
+/**
+ * Replies to your comments and new followers, or why there are none. The bell's
+ * panel on desktop and the You half of the phone's Following page.
+ */
+export function BellList({
+  items,
+  isNew,
+  onGo,
+  listClassName,
+  page = false,
+}: {
+  items: BellItem[];
+  isNew: (item: BellItem) => boolean;
+  onGo?: () => void;
+  listClassName?: string;
+  /** A phone page: rows run to the screen's edges like its other lists. */
+  page?: boolean;
+}) {
+  const user = useUser();
+  if (!user.authenticated) {
+    return (
+      <div className="px-4 pb-5 pt-2 text-center">
+        <p className="text-[12.5px] font-medium leading-[1.5] text-faint">
+          Sign in to see replies to your comments and new followers.
+        </p>
+        <button
+          type="button"
+          onClick={() => user.login()}
+          className="mt-3 inline-flex h-[32px] items-center rounded-full bg-brand-500 px-4 text-[12.5px] font-extrabold text-white"
+        >
+          Sign in
+        </button>
+      </div>
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <p className="px-4 pb-6 pt-3 text-center text-[12.5px] font-medium leading-[1.5] text-faint">
+        Replies to your comments and new followers show up here.
+      </p>
+    );
+  }
+  return (
+    <ul className={listClassName}>
+      {items.map((item) => (
+        <li key={`${item.type}:${item.id}`}>
+          <BellRow item={item} fresh={isNew(item)} onGo={onGo} page={page} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function BellRow({
+  item,
+  fresh,
+  onGo,
+  page,
+}: {
+  item: BellItem;
+  fresh: boolean;
+  onGo?: () => void;
+  page: boolean;
+}) {
   const className = cn(
-    "flex items-start gap-2.5 px-4 py-2.5 transition-colors hover:bg-[var(--overlay-wash)]",
+    "flex items-start gap-2.5 transition-colors hover:bg-[var(--overlay-wash)]",
+    page ? "px-[22px] py-3" : "px-4 py-2.5",
     fresh && "bg-[color-mix(in_srgb,var(--accent)_7%,transparent)]",
   );
   const time = (
@@ -157,7 +200,7 @@ function BellRow({item, fresh, onGo}: {item: BellItem; fresh: boolean; onGo: () 
       hash={hash}
       onClick={() => {
         announceCommentTarget(hash);
-        onGo();
+        onGo?.();
       }}
       className={className}
     >

@@ -81,6 +81,12 @@ export interface TokenAsset {
   imageColor?: string | null;
   /** Null means unpriced. Never render as "$0". */
   priceUsd: number | null;
+  /**
+   * When `priceUsd` was read, as ISO time. A provider read is now; a store row
+   * is when the price cron last touched it, which can be weeks ago. Missing
+   * means unknown, and readers treat it as the payload's own time.
+   */
+  priceAt?: string | null;
   changePct: number;
   volume24hUsd: number | null;
   marketCapUsd: number | null;

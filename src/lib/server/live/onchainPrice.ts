@@ -13,10 +13,13 @@ import {cached} from "./cache";
 import {multicallChunked, rpc} from "./chain";
 import {cachedQuotes, quotes, RWA_BY_ADDRESS} from "./robinhood";
 import {resolveV4PoolKeysBatch, type V4PoolHit} from "./v4Pools";
-import {MIN_LIQUIDITY_USD} from "@/config/liquidity";
 import {
   CRON_PRICE_PAGE,
+  DORMANT_PRICE_CURSOR,
+  cursorFor,
+  listForPriceRefresh,
   listListedForPricing,
+  writeCursor,
   statsFor,
   upsertStats,
   upsertTokens,
@@ -55,6 +58,22 @@ export interface OnchainPriceRow {
   price_change_24h: number | null;
   priced_at: string | null;
   price_status: PriceStatus | null;
+  /**
+   * When the pool's price last moved, which only a swap does. The refresh
+   * job ranks by it: a token that moved in the last week is refreshed every
+   * tick, one that has not is refreshed once a day.
+   */
+  price_moved_at?: string | null;
+}
+
+/**
+ * Whether a new reading moved from the last one. Pool prices do not drift on
+ * their own — a change means a swap happened since the last refresh. The first
+ * reading of a token counts as a move, so a new listing starts out active.
+ */
+export function priceMoved(previous: number | null | undefined, next: number): boolean {
+  if (previous == null || !Number.isFinite(previous) || previous <= 0) return true;
+  return Math.abs(next - previous) / previous > 1e-9;
 }
 
 export interface PriceBatchResult {
@@ -240,6 +259,7 @@ function finish(
     price_change_24h: fields?.price_change_24h ?? null,
     priced_at: priced ? now : null,
     price_status: status,
+    price_moved_at: fields?.price_moved_at ?? null,
   };
 }
 
@@ -284,6 +304,8 @@ export async function priceTokensBatch(
     const prior = {
       vol_24h: prev?.vol_24h ?? null,
       price_change_24h: prev?.price_change_24h ?? null,
+      // A failed or skipped read says nothing about trading: keep the mark.
+      price_moved_at: prev?.price_moved_at ?? null,
     };
     const hits = keys.get(address) ?? [];
     if (hits.length === 0) {
@@ -369,6 +391,9 @@ export async function priceTokensBatch(
     rows.push(
       finish(address, "priced", {
         ...prior,
+        price_moved_at: priceMoved(prev?.last_price, priceUsd)
+          ? new Date().toISOString()
+          : (prev?.price_moved_at ?? null),
         last_price: priceUsd,
         last_mcap: mcap != null && Number.isFinite(mcap) && mcap > 0 ? mcap : null,
         liquidity_usd: liq,
@@ -457,18 +482,22 @@ export interface RefreshPricesResult extends PriceBatchResult {
 }
 
 /**
- * Hot pools every tick, then a small unpriced keyset page.
- * Must finish well under Vercel 60s — never walk the full listed table.
+ * Refresh stored prices: every active token every tick, most-traded first;
+ * dormant ones about once a day, oldest first; then a small page of listed
+ * tokens never priced at all. See `listForPriceRefresh`.
+ * Must finish well under the route's time limit — never the whole table.
  */
 export async function refreshOnchainPrices(opts?: {
-  hotLimit?: number;
+  activeLimit?: number;
+  dormantLimit?: number;
   unpricedLimit?: number;
   afterAddress?: string | null;
   budgetMs?: number;
 }): Promise<RefreshPricesResult> {
   const started = Date.now();
   const deadline = started + (opts?.budgetMs ?? 45_000);
-  const hotLimit = opts?.hotLimit ?? 80;
+  const activeLimit = opts?.activeLimit ?? 1_500;
+  const dormantLimit = opts?.dormantLimit ?? 200;
   const unpricedLimit = opts?.unpricedLimit ?? 80;
   const pageSize = CRON_PRICE_PAGE;
   const seen = new Set<string>();
@@ -494,19 +523,26 @@ export async function refreshOnchainPrices(opts?: {
     }
   };
 
+  const tiers = {active: 0, dormant: 0, unpriced: 0};
+  let nextCursor: number | null = null;
   try {
-    take(
-      await listListedForPricing({
-        limit: hotLimit,
-        minLiquidity: MIN_LIQUIDITY_USD,
-      }),
-    );
+    const due = await listForPriceRefresh({
+      activeLimit,
+      dormantLimit,
+      dormantCursor: Number(await cursorFor(DORMANT_PRICE_CURSOR)),
+    });
+    take(due.active);
+    tiers.active = batch.length;
+    take(due.dormant);
+    tiers.dormant = batch.length - tiers.active;
+    nextCursor = due.nextDormantCursor;
   } catch (error) {
-    console.error("hot price list failed", error);
+    console.error("price refresh list failed", error);
   }
 
+  const beforeUnpriced = batch.length;
   let after = opts?.afterAddress ?? null;
-  while (batch.length < hotLimit + unpricedLimit && Date.now() < deadline) {
+  while (batch.length < beforeUnpriced + unpricedLimit && Date.now() < deadline) {
     try {
       const page = await listListedForPricing({
         afterAddress: after,
@@ -523,6 +559,9 @@ export async function refreshOnchainPrices(opts?: {
     }
   }
 
+  tiers.unpriced = batch.length - beforeUnpriced;
+  console.info("price refresh", tiers);
+
   if (batch.length === 0) {
     return {...empty, ms: Date.now() - started};
   }
@@ -531,6 +570,12 @@ export async function refreshOnchainPrices(opts?: {
     const held = await statsFor(batch.map((row) => row.address));
     const result = await priceTokensBatch(batch.map(asPriceable), held);
     await writePricedStats(result);
+    // Only once this page is written: a failed tick sweeps the same page again.
+    if (nextCursor != null && dormantLimit > 0) {
+      await writeCursor(DORMANT_PRICE_CURSOR, BigInt(nextCursor)).catch((error) =>
+        console.error("dormant price cursor write failed", error),
+      );
+    }
     const ms = Date.now() - started;
     return {
       ...result,

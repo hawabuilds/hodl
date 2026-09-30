@@ -14,8 +14,10 @@ export async function GET(request: Request) {
 
   const started = Date.now();
   try {
+    // Every active token (moved or traded in a week), dormant ones daily.
     const pass = await refreshOnchainPrices({
-      hotLimit: 80,
+      activeLimit: 1_500,
+      dormantLimit: 200,
       unpricedLimit: 80,
       budgetMs: 45_000,
     });

@@ -1,7 +1,6 @@
 "use client";
 
 import {useEffect, useRef, useState, type ReactNode} from "react";
-import {useIsDesktop} from "@/hooks/useBreakpoint";
 import {useMe} from "@/hooks/useMe";
 import {useUser} from "@/hooks/useUser";
 import {cn} from "@/lib/cn";
@@ -33,7 +32,6 @@ export function SettingsMenu({
   const [open, setOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const desktop = useIsDesktop();
   const user = useUser();
   const me = useMe();
 
@@ -129,8 +127,7 @@ export function SettingsMenu({
         >
           Notifications
         </button>
-        {/* The Following tab, the bell and pop-ups are desktop-only for now. */}
-        {desktop && user.authenticated ? (
+        {user.authenticated ? (
           <button
             type="button"
             role="menuitem"
@@ -138,7 +135,7 @@ export function SettingsMenu({
               setOpen(false);
               setAlertsOpen(true);
             }}
-            className="mt-0.5 flex w-full items-center rounded-[12px] px-2.5 py-2 text-left text-[13.5px] font-bold text-ink hover:bg-[var(--overlay-wash)]"
+            className="mt-0.5 flex min-h-[44px] w-full items-center rounded-[12px] px-2.5 py-2 text-left text-[13.5px] font-bold text-ink hover:bg-[var(--overlay-wash)]"
           >
             Alerts
           </button>
@@ -156,7 +153,7 @@ export function SettingsMenu({
         </p>
       </div>
       <NotificationSettings open={notifyOpen} onClose={() => setNotifyOpen(false)} />
-      {desktop ? <AlertSettings open={alertsOpen} onClose={() => setAlertsOpen(false)} /> : null}
+      <AlertSettings open={alertsOpen} onClose={() => setAlertsOpen(false)} />
     </div>
   );
 }

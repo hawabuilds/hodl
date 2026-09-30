@@ -462,6 +462,16 @@ export function UserIcon(props: IconProps) {
   );
 }
 
+/** A bell drawn like the other tab-bar icons (1.9 stroke): the phone's Activity tab. */
+export function ActivityIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6.2 9a5.8 5.8 0 0 1 11.6 0c0 6.4 2.7 8.2 2.7 8.2H3.5S6.2 15.4 6.2 9" {...stroke} strokeWidth={1.9} />
+      <path d="M10.2 20.6a2 2 0 0 0 3.6 0" {...stroke} strokeWidth={1.9} />
+    </Icon>
+  );
+}
+
 export function SortIcon(props: IconProps) {
   return (
     <Icon {...props}>

@@ -77,6 +77,22 @@ export function useAsset(kind: AssetKind, id: string) {
   };
 }
 
+interface ChartResponse {
+  points: ChartPoint[];
+  changePct: number;
+  timeframe?: Timeframe;
+  resolvedTimeframe?: Timeframe;
+  error?: string | null;
+}
+
+async function fetchChart(kind: AssetKind, key: string, timeframe: Timeframe): Promise<ChartResponse> {
+  const res = await fetch(`/api/asset/${kind}/${key}/chart?tf=${timeframe}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error("Could not load the chart.");
+  return (await res.json()) as ChartResponse;
+}
+
 export function useChart(kind: AssetKind, id: string, timeframe: Timeframe) {
   const key = kind === "token" ? normalizeAddress(id) : id;
   const scope = `${kind}:${key}:${timeframe}`;
@@ -93,19 +109,14 @@ export function useChart(kind: AssetKind, id: string, timeframe: Timeframe) {
   const query = useQuery({
     queryKey: ["chart", kind, key, timeframe],
     refetchInterval: 60_000,
-    queryFn: async () => {
-      const res = await fetch(`/api/asset/${kind}/${key}/chart?tf=${timeframe}`, {
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error("Could not load the chart.");
-      return (await res.json()) as {
-        points: ChartPoint[];
-        changePct: number;
-        timeframe?: Timeframe;
-        resolvedTimeframe?: Timeframe;
-        error?: string | null;
-      };
-    },
+    // A new timeframe keeps the last one on screen until its own data lands,
+    // like Trador. Only for the same asset: another token's chart standing in
+    // for this one would be wrong, not just stale.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === kind && previousQuery?.queryKey[2] === key
+        ? previous
+        : undefined,
+    queryFn: () => fetchChart(kind, key, timeframe),
     retry: false,
   });
 
@@ -145,6 +156,8 @@ export function useChart(kind: AssetKind, id: string, timeframe: Timeframe) {
     changePct: query.data?.changePct ?? null,
     resolvedTimeframe: query.data?.resolvedTimeframe ?? timeframe,
     isLoading: query.isPending && !query.data,
+    /** Showing the previous timeframe while this one loads. */
+    isSwitching: query.isPlaceholderData,
     hasMore,
     loadOlder,
     error:
@@ -230,4 +243,25 @@ export function useNews(id: string, enabled: boolean) {
       (query.data?.items?.length ? null : query.data?.error ?? null),
     retry: () => void query.refetch(),
   };
+}
+
+/**
+ * Hourly bars for the header's 24h change, whatever timeframe is on screen.
+ *
+ * The same query as the 1h chart, so on 1h — the default, and what a row
+ * hover prefetches — it costs nothing. The market's own 24h figure can be a
+ * stale snapshot: a token flat for two weeks still read "▼99% 24h" from the
+ * day it crashed.
+ */
+export function useHourlyReference(kind: AssetKind, id: string) {
+  const key = kind === "token" ? normalizeAddress(id) : id;
+  const query = useQuery({
+    queryKey: ["chart", kind, key, "1h"],
+    refetchInterval: 60_000,
+    queryFn: () => fetchChart(kind, key, "1h"),
+    retry: false,
+  });
+  return query.data?.resolvedTimeframe === "1h" || query.data?.resolvedTimeframe == null
+    ? (query.data?.points ?? null)
+    : null;
 }

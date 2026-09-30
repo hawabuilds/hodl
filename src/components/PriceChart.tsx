@@ -1,11 +1,12 @@
 "use client";
 
-import {useCallback, useEffect, useMemo, useRef} from "react";
+import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {
   AreaSeries,
   CandlestickSeries,
   ColorType,
   CrosshairMode,
+  LastPriceAnimationMode,
   LineStyle,
   createChart,
   type IChartApi,
@@ -34,7 +35,7 @@ import {
   withCompressedSessionBreaks,
 } from "@/lib/chartLwc";
 import {CHART_WINDOW_BARS, TIMEFRAME_MS, gapBreakMsForWindow} from "@/lib/chartPlot";
-import {price} from "@/lib/format";
+import {formatAxisUsd, priceMinMove} from "@/lib/priceFormat";
 import type {ChartPoint, ChartStyle} from "@/lib/types";
 
 interface PriceChartProps {
@@ -45,8 +46,18 @@ interface PriceChartProps {
    * chart being torn down and rebuilt.
    */
   height?: number | string;
-  /** Overrides the up / down colour, e.g. for a portfolio line. */
+  /**
+   * Overrides the up / down colour, e.g. for a portfolio line. Otherwise the
+   * line is green when the price is up across the bars in view, red when down.
+   */
   positive?: boolean;
+  /** Up or down across the bars in view, as the line is coloured. */
+  onTrend?: (up: boolean) => void;
+  /**
+   * A token or stock page: the last price as a dotted line with its label on
+   * the axis, and a small pulsing dot at the end of the line.
+   */
+  live?: boolean;
   /** Dashed rule at the window open, the way a brokerage marks previous close. */
   showBaseline?: boolean;
   /**
@@ -68,9 +79,10 @@ interface PriceChartProps {
   /**
    * Fires as a finger or cursor moves across the chart, and with null when it
    * leaves. The header price follows this so the number under the scrubber is
-   * the one being read, not the live one.
+   * the one being read, not the live one. `viewStart` is the first bar in view,
+   * for "+x% from start of view".
    */
-  onScrub?: (point: ChartPoint | null) => void;
+  onScrub?: (point: ChartPoint | null, viewStart?: ChartPoint | null) => void;
 }
 
 type SeriesApi = ISeriesApi<"Area"> | ISeriesApi<"Candlestick">;
@@ -105,6 +117,26 @@ function asTime(seconds: number): UTCTimestamp {
 function pointAtTime(points: ChartPoint[], time: Time): ChartPoint | null {
   if (typeof time !== "number") return null;
   return points.find((point) => toUtcSeconds(point.t) === time) ?? null;
+}
+
+/** The first and last real bars inside the visible time range. */
+function barsInView(
+  chart: IChartApi,
+  points: ChartPoint[],
+): {first: ChartPoint; last: ChartPoint} | null {
+  if (points.length === 0) return null;
+  const range = chart.timeScale().getVisibleRange();
+  if (!range || typeof range.from !== "number" || typeof range.to !== "number") {
+    return {first: points[0], last: points[points.length - 1]};
+  }
+  const from = range.from;
+  const to = range.to;
+  const inView = points.filter((point) => {
+    const t = toUtcSeconds(point.t);
+    return t >= from && t <= to;
+  });
+  if (inView.length === 0) return null;
+  return {first: inView[0], last: inView[inView.length - 1]};
 }
 
 function floorAutoscale(chart: IChartApi, floor?: number | null) {
@@ -145,6 +177,8 @@ export function PriceChart({
   points,
   height = 190,
   positive,
+  onTrend,
+  live = false,
   showBaseline = true,
   windowMs,
   emptyLabel = "Not enough history yet",
@@ -164,19 +198,38 @@ export function PriceChart({
   const fittedKeyRef = useRef("");
   const lastTapRef = useRef(0);
   const onScrubRef = useRef(onScrub);
+  const onTrendRef = useRef(onTrend);
   const onNeedOlderRef = useRef(onNeedOlder);
   const floorPriceRef = useRef(floorPrice);
   const {theme} = useTheme();
 
   pointsRef.current = points;
   onScrubRef.current = onScrub;
+  onTrendRef.current = onTrend;
   onNeedOlderRef.current = onNeedOlder;
   floorPriceRef.current = floorPrice;
 
-  const up = positive ?? (points.length >= 2
-    ? points[points.length - 1].price >= points[0].price
-    : true);
+  // Green when the price is up across the bars in view, red when down.
+  // Starts from the whole series and follows the view once it is drawn.
+  const [viewUp, setViewUp] = useState(true);
+  const up = positive ?? viewUp;
   const color = up ? "var(--green)" : "var(--red)";
+
+  const refreshTrend = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const bars = barsInView(chart, pointsRef.current);
+    if (!bars) return;
+    const next = bars.last.price >= bars.first.price;
+    setViewUp(next);
+    onTrendRef.current?.(next);
+  }, []);
+
+  // The axis steps as finely as the price moves: a thousandth of the smallest
+  // bar. The default $0.01 left a token at $0.0000025 one tick, at zero.
+  const minMove = useMemo(() => priceMinMove(points.map((point) => point.price)), [points]);
+  const minMoveRef = useRef(minMove);
+  minMoveRef.current = minMove;
 
   const seriesData = useMemo(() => {
     // Cleaned once so the bars and their real times stay the same length, and
@@ -268,7 +321,9 @@ export function PriceChart({
           color: colors.hairline,
           width: 1,
           style: LineStyle.Solid,
-          labelVisible: false,
+          // On a token page the hovered bar's time sits on the time axis;
+          // the header above has room for the price and its change only.
+          labelVisible: live,
         },
         horzLine: {visible: false, labelVisible: false},
       },
@@ -285,7 +340,7 @@ export function PriceChart({
         axisDoubleClickReset: true,
       },
       localization: {
-        priceFormatter: (value: number) => price(value),
+        priceFormatter: (value: number) => formatAxisUsd(value, minMoveRef.current),
       },
     });
 
@@ -296,11 +351,13 @@ export function PriceChart({
         onScrubRef.current?.(null);
         return;
       }
-      onScrubRef.current?.(pointAtTime(pointsRef.current, param.time));
+      const view = barsInView(chart, pointsRef.current);
+      onScrubRef.current?.(pointAtTime(pointsRef.current, param.time), view?.first ?? null);
     };
     chart.subscribeCrosshairMove(onCrosshair);
 
     const onRange = (range: {from: number; to: number} | null) => {
+      refreshTrend();
       if (!range || range.from > 2) return;
       onNeedOlderRef.current?.();
     };
@@ -316,7 +373,7 @@ export function PriceChart({
       prevPointsRef.current = [];
       fittedKeyRef.current = "";
     };
-  }, [height]);
+  }, [height, live, refreshTrend]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -334,6 +391,19 @@ export function PriceChart({
     styleRef.current = style;
     const scaleOpts = {
       autoscaleInfoProvider: floorAutoscale(chart, floorPriceRef.current),
+      priceFormat: {
+        type: "custom" as const,
+        minMove,
+        formatter: (value: number) => formatAxisUsd(value, minMove),
+      },
+    };
+    // The last price as a dotted line across the chart, labelled on the axis,
+    // so "where is it now" never needs a hover.
+    const lastPrice = {
+      priceLineVisible: live,
+      lastValueVisible: live,
+      priceLineStyle: LineStyle.Dotted,
+      priceLineWidth: 1 as const,
     };
 
     if (seriesChanged) {
@@ -346,6 +416,7 @@ export function PriceChart({
         style === "candles"
           ? chart.addSeries(CandlestickSeries, {
               ...lwcCandleStyleOptions(colors),
+              ...lastPrice,
               ...scaleOpts,
             })
           : chart.addSeries(AreaSeries, {
@@ -353,8 +424,12 @@ export function PriceChart({
               topColor: `${lineColor}33`,
               bottomColor: "transparent",
               lineWidth: 2,
-              priceLineVisible: false,
-              lastValueVisible: false,
+              ...lastPrice,
+              priceLineColor: lineColor,
+              // A small dot that pulses at the end of the line: it is live.
+              lastPriceAnimation: live
+                ? LastPriceAnimationMode.Continuous
+                : LastPriceAnimationMode.Disabled,
               crosshairMarkerRadius: 4,
               ...scaleOpts,
             });
@@ -363,11 +438,13 @@ export function PriceChart({
       seriesRef.current.applyOptions({
         lineColor,
         topColor: `${lineColor}33`,
+        priceLineColor: lineColor,
         ...scaleOpts,
       });
     } else if (seriesRef.current) {
       seriesRef.current.applyOptions({
         ...lwcCandleStyleOptions(colors),
+        ...lastPrice,
         ...scaleOpts,
       });
     }
@@ -433,7 +510,8 @@ export function PriceChart({
       fittedKeyRef.current = identityKey;
       applyFit();
     }
-  }, [applyFit, floorPrice, points, seriesData, showBaseline, style, theme, up, windowMs]);
+    refreshTrend();
+  }, [applyFit, floorPrice, live, minMove, points, refreshTrend, seriesData, showBaseline, style, theme, up, windowMs]);
 
   const resetView = useCallback(() => {
     applyFit();

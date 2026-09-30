@@ -2,7 +2,7 @@ import {MIN_LIQUIDITY_USD} from "@/config/liquidity";
 import {compactMoney, price as fmtPrice} from "@/lib/format";
 import {marketCapAt} from "@/lib/marketCap";
 import {applyThreeStateFilter} from "@/lib/threeState";
-import type {Asset} from "@/lib/types";
+import type {Asset, TokenAsset} from "@/lib/types";
 
 /**
  * Three states that must never be collapsed into "$0":
@@ -28,6 +28,51 @@ export function isMeasuredMcap(stat: {
   if (!stat || stat.priced_at == null) return false;
   const mcap = stat.last_mcap;
   return mcap != null && Number.isFinite(Number(mcap)) && Number(mcap) > 0;
+}
+
+/**
+ * How far apart two readings of one token's price may sit and still describe
+ * the same market.
+ *
+ * Not a volatility allowance. Both readings are of the pool the tape trades on,
+ * so a gap this wide means one of them is not describing that pool any more —
+ * Insulinu's stored row read 0.0000563 against a pool at 0.0000026, a factor of
+ * twenty-two.
+ */
+export const PRICE_AGREEMENT_RATIO = 2;
+
+/** True when neither price is more than PRICE_AGREEMENT_RATIO times the other. */
+export function pricesAgree(
+  a: number,
+  b: number,
+  ratio = PRICE_AGREEMENT_RATIO,
+): boolean {
+  if (!isPriced(a) || !isPriced(b)) return false;
+  return Math.max(a, b) / Math.min(a, b) <= ratio;
+}
+
+/**
+ * A token with its stored market snapshot taken away: unpriced, not zero.
+ *
+ * Price, cap, liquidity, volume and change in a `token_stats` row were written
+ * by the same read. When the price is shown to be wrong, the rest of that read
+ * is no better — Insulinu's row carried $21.5k of liquidity beside a pool
+ * holding $3.4k — so all of it goes, and each surface shows "—".
+ */
+export function withoutStoredSnapshot(asset: TokenAsset): TokenAsset {
+  return {
+    ...asset,
+    priceUsd: null,
+    priceAt: null,
+    marketCapUsd: null,
+    liquidityUsd: null,
+    volume24hUsd: null,
+    changePct: 0,
+    windows: {
+      ...asset.windows,
+      "24h": {volumeUsd: 0, changePct: 0},
+    },
+  };
 }
 
 export type PriceStatus = "priced" | "no_pool" | "failed";

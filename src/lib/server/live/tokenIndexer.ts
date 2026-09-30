@@ -1341,8 +1341,11 @@ export async function indexTokens(
     try {
       const leftover = deadline - Date.now();
       if (leftover > 8_000) {
+        // Manual backfills only (the live worker runs with refreshStats off):
+        // a short page of the most-traded tokens and new listings, no daily sweep.
         const pass = await refreshOnchainPrices({
-          hotLimit: 40,
+          activeLimit: 40,
+          dormantLimit: 0,
           unpricedLimit: 80,
           budgetMs: Math.min(leftover - 2_000, 20_000),
         });
