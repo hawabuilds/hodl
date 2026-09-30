@@ -47,9 +47,11 @@ const RWA_SORTS: RwaSort[] = ["marketCap", "movers"];
 const WATCH: WatchFilter[] = ["all", "token", "rwa"];
 const SECTOR_VALUES = new Set<string>(["all", ...SECTORS.map((entry) => entry.id)]);
 
-export function parseHomeView(params: {
-  get: (key: string) => string | null;
-}): HomeViewState {
+export function parseHomeView(
+  params: {get: (key: string) => string | null},
+  /** The tab a route opens on when the URL names none: /tokens or /rwas. */
+  defaultTab: HomeTab = DEFAULT_HOME_VIEW.tab,
+): HomeViewState {
   const tab = TABS.find((value) => value === params.get("tab"));
   const tokenSort = TOKEN_SORTS.find((value) => value === params.get("sort"));
   const rwaSort = RWA_SORTS.find((value) => value === params.get("rwaSort"));
@@ -67,7 +69,7 @@ export function parseHomeView(params: {
   const launchpadRaw = params.get("launchpad");
   const quoteRaw = params.get("quote");
   return {
-    tab: tab ?? DEFAULT_HOME_VIEW.tab,
+    tab: tab ?? defaultTab,
     tokenSort: tokenSort ?? DEFAULT_HOME_VIEW.tokenSort,
     rwaSort: rwaSort ?? DEFAULT_HOME_VIEW.rwaSort,
     sector,
@@ -88,9 +90,12 @@ export function parseHomeView(params: {
 }
 
 /** Query string for a view, empty when everything is at its default. */
-export function homeQuery(state: HomeViewState): string {
+export function homeQuery(
+  state: HomeViewState,
+  defaultTab: HomeTab = DEFAULT_HOME_VIEW.tab,
+): string {
   const params = new URLSearchParams();
-  if (state.tab !== DEFAULT_HOME_VIEW.tab) params.set("tab", state.tab);
+  if (state.tab !== defaultTab) params.set("tab", state.tab);
   if (state.tokenSort !== DEFAULT_HOME_VIEW.tokenSort) {
     params.set("sort", state.tokenSort);
   }
@@ -118,17 +123,34 @@ export function homeQuery(state: HomeViewState): string {
   return query ? `?${query}` : "";
 }
 
-export function rememberHomeView(state: HomeViewState): void {
+/**
+ * Where "back" from a chart page goes: the list the visitor came from, whole.
+ *
+ * The feed moved from /home to /tokens and /rwas when Home became a summary,
+ * so the path is stored with the query rather than assumed.
+ */
+export function rememberHomePath(path: string): void {
   try {
-    sessionStorage.setItem(HOME_STATE_KEY, homeQuery(state));
+    sessionStorage.setItem(HOME_STATE_KEY, path);
   } catch {
     // Private mode — back still works via the URL itself.
   }
 }
 
+export function rememberHomeView(
+  state: HomeViewState,
+  pathname: string,
+  defaultTab: HomeTab = DEFAULT_HOME_VIEW.tab,
+): void {
+  rememberHomePath(`${pathname}${homeQuery(state, defaultTab)}`);
+}
+
 export function lastHomePath(): string {
   try {
-    return `/home${sessionStorage.getItem(HOME_STATE_KEY) ?? ""}`;
+    const stored = sessionStorage.getItem(HOME_STATE_KEY) ?? "";
+    if (stored.startsWith("/")) return stored;
+    // Stored before the move: a bare query was the feed's, now at /tokens.
+    return stored ? `/tokens${stored}` : "/home";
   } catch {
     return "/home";
   }

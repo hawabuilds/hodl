@@ -18,22 +18,28 @@ export function AssetLink({
   className,
   children,
   title,
+  hash,
+  onClick,
 }: {
   kind: AssetKind;
   id: string;
   className?: string;
   children: ReactNode;
   title?: string;
+  /** `comments` or `comment-<id>`: opens the page on its Comments tab. */
+  hash?: string;
+  onClick?: () => void;
 }) {
   const prefetch = usePrefetchAsset();
   const warm = () => prefetch(kind, id);
 
   return (
     <Link
-      href={assetPath(kind, id)}
+      href={hash ? `${assetPath(kind, id)}#${hash}` : assetPath(kind, id)}
       prefetch
       className={className}
       title={title}
+      onClick={onClick}
       onPointerDown={warm}
       onMouseEnter={warm}
     >

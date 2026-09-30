@@ -34,12 +34,15 @@ export function CommentsPanel({
   assetId,
   symbol,
   imageUrl,
+  focusCommentId,
 }: {
   kind: AssetKind;
   assetId: string;
   symbol: string;
   /** The asset's art, for the position line. Stocks fall back to initials. */
   imageUrl?: string | null;
+  /** Scrolled to and briefly marked once it loads — a reply from the bell. */
+  focusCommentId?: string | null;
 }) {
   const [draft, setDraft] = useState("");
   const [replyTo, setReplyTo] = useState<{rootId: string; label: string} | null>(null);
@@ -91,6 +94,25 @@ export function CommentsPanel({
   // ago, and the composer sits at the bottom either way.
   const ordered = [...threads].reverse();
 
+  const focusLoaded = Boolean(
+    focusCommentId &&
+      threads.some(
+        (thread) =>
+          thread.root.id === focusCommentId ||
+          thread.replies.some((reply) => reply.id === focusCommentId),
+      ),
+  );
+  useEffect(() => {
+    if (!focusCommentId || !focusLoaded) return;
+    // After the thread holding it has opened its replies.
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .getElementById(`c-${focusCommentId}`)
+        ?.scrollIntoView({block: "center", behavior: "smooth"});
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusCommentId, focusLoaded]);
+
   return (
     <div>
       {isLoading ? (
@@ -105,6 +127,7 @@ export function CommentsPanel({
             <Thread
               key={thread.root.id}
               thread={thread}
+              focusId={focusCommentId ?? null}
               symbol={symbol}
               imageUrl={imageUrl ?? null}
               onReply={startReply}
@@ -188,8 +211,10 @@ function Thread({
   onLike,
   canLike,
   canReply,
+  focusId,
 }: {
   thread: CommentThread;
+  focusId: string | null;
   symbol: string;
   imageUrl: string | null;
   onReply: (comment: AssetComment, rootId: string) => void;
@@ -200,11 +225,16 @@ function Thread({
   // Replies collapsed by default, so a long argument does not bury the calls.
   const [open, setOpen] = useState(false);
   const replies = thread.replies;
+  const focusInReplies = focusId != null && replies.some((reply) => reply.id === focusId);
+  useEffect(() => {
+    if (focusInReplies) setOpen(true);
+  }, [focusInReplies]);
 
   return (
     <li className="border-b border-[var(--overlay-wash)] last:border-b-0">
       <CommentRow
         comment={thread.root}
+        focused={focusId === thread.root.id}
         symbol={symbol}
         imageUrl={imageUrl}
         replyCount={replies.length}
@@ -221,6 +251,7 @@ function Thread({
             <li key={reply.id}>
               <CommentRow
                 comment={reply}
+                focused={focusId === reply.id}
                 symbol={symbol}
                 imageUrl={imageUrl}
                 compact
@@ -239,6 +270,7 @@ function Thread({
 
 function CommentRow({
   comment,
+  focused,
   symbol,
   imageUrl,
   compact,
@@ -251,6 +283,7 @@ function CommentRow({
   canReply,
 }: {
   comment: AssetComment;
+  focused?: boolean;
   symbol: string;
   imageUrl: string | null;
   compact?: boolean;
@@ -266,7 +299,14 @@ function CommentRow({
   const position = comment.position ?? null;
 
   return (
-    <div className={cn("px-[22px]", compact ? "py-3" : "py-3.5")}>
+    <div
+      id={`c-${comment.id}`}
+      className={cn(
+        "px-[22px] transition-colors duration-700",
+        compact ? "py-3" : "py-3.5",
+        focused && "bg-[color-mix(in_srgb,var(--accent)_9%,transparent)]",
+      )}
+    >
       <div className="flex items-start gap-2.5">
         <Link href={profilePath(comment.author.handle)} className="shrink-0">
           <Avatar

@@ -8,6 +8,7 @@ import {PushPrompt} from "../PushPrompt";
 import {useCreateIntent} from "@/lib/createIntent";
 import {ListRail} from "./ListRail";
 import {StatusBar} from "./StatusBar";
+import {Toasts} from "./Toasts";
 import {TopBar} from "./TopBar";
 
 const CreateSheet = dynamic(
@@ -21,12 +22,12 @@ const CreateSheet = dynamic(
  * Three kinds of page live in it, and they want different things from the
  * space between the bars:
  *
- *  - The board (`/home`) fills it edge to edge with columns that each scroll
- *    on their own, so the shell must not scroll.
+ *  - The board (`/tokens`) fills it edge to edge with columns that each
+ *    scroll on their own, so the shell must not scroll.
  *  - A token or stock page gets the list rail on its left and lays out its own
  *    panes, which also scroll individually.
  *  - Your portfolio lays out its own panels too, and scrolls inside them.
- *  - News is a front page: it uses the full width and scrolls as one.
+ *  - Home and News are front pages: they use the full width and scroll as one.
  *  - Everything else — search, someone else's profile, an article — is a
  *    reading page. Stretched across 1440px a feed row is mostly empty space,
  *    so it sits in a centred column and scrolls as one, the way it does on a
@@ -37,10 +38,11 @@ const CreateSheet = dynamic(
  */
 export function TerminalShell({children}: {children: ReactNode}) {
   const pathname = usePathname() ?? "";
-  const board = pathname === "/home";
+  const board = pathname === "/tokens";
   const asset = pathname.startsWith("/token/") || pathname.startsWith("/rwa/");
   const portfolio = pathname === "/profile";
-  const frontPage = pathname === "/news";
+  // Home is a summary of cards, laid out across the width like News.
+  const frontPage = pathname === "/news" || pathname === "/home";
 
   const [createOpen, setCreateOpen] = useState(false);
   useCreateIntent(useCallback(() => setCreateOpen(true), []));
@@ -64,6 +66,7 @@ export function TerminalShell({children}: {children: ReactNode}) {
       </div>
 
       <StatusBar />
+      <Toasts />
       <CreateSheet open={createOpen} onClose={() => setCreateOpen(false)} />
       <PushPrompt />
     </div>

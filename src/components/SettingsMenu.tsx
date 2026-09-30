@@ -1,12 +1,14 @@
 "use client";
 
 import {useEffect, useRef, useState, type ReactNode} from "react";
+import {useIsDesktop} from "@/hooks/useBreakpoint";
 import {useMe} from "@/hooks/useMe";
 import {useUser} from "@/hooks/useUser";
 import {cn} from "@/lib/cn";
 import {SettingsIcon} from "./ui/Icons";
 import {WalletControls} from "./WalletControls";
 import {NotificationSettings} from "./NotificationSettings";
+import {AlertSettings} from "./AlertSettings";
 
 interface TriggerProps {
   open: boolean;
@@ -30,6 +32,8 @@ export function SettingsMenu({
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const desktop = useIsDesktop();
   const user = useUser();
   const me = useMe();
 
@@ -125,6 +129,20 @@ export function SettingsMenu({
         >
           Notifications
         </button>
+        {/* The Following tab, the bell and pop-ups are desktop-only for now. */}
+        {desktop && user.authenticated ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              setAlertsOpen(true);
+            }}
+            className="mt-0.5 flex w-full items-center rounded-[12px] px-2.5 py-2 text-left text-[13.5px] font-bold text-ink hover:bg-[var(--overlay-wash)]"
+          >
+            Alerts
+          </button>
+        ) : null}
         <p className="mt-1 px-2.5 pb-1.5 text-[10px] font-medium leading-snug text-faint">
           Charts by{" "}
           <a
@@ -138,6 +156,7 @@ export function SettingsMenu({
         </p>
       </div>
       <NotificationSettings open={notifyOpen} onClose={() => setNotifyOpen(false)} />
+      {desktop ? <AlertSettings open={alertsOpen} onClose={() => setAlertsOpen(false)} /> : null}
     </div>
   );
 }

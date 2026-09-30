@@ -50,7 +50,7 @@ export default function SearchPage() {
       <SearchBar
         value={query}
         onChange={setQuery}
-        label="Search people, stocks and tokens"
+        label="Search tokens, RWAs and people"
         placeholder="People, tickers, tokens, addresses"
         className="mb-3.5"
       />

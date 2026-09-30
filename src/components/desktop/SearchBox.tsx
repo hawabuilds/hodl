@@ -109,8 +109,8 @@ export function SearchBox() {
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          placeholder="Search tokens, stocks, people"
-          aria-label="Search people, stocks and tokens"
+          placeholder="Search tokens, RWAs, people"
+          aria-label="Search tokens, RWAs and people"
           aria-expanded={open}
           aria-controls="topbar-search-results"
           autoComplete="off"

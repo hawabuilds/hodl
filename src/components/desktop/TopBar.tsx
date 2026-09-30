@@ -5,13 +5,13 @@ import Link from "next/link";
 import {usePathname} from "next/navigation";
 
 import {APP_NAME} from "@/config/app";
-import {useEthPrice} from "@/hooks/useEthPrice";
 import {useUser} from "@/hooks/useUser";
 import {cn} from "@/lib/cn";
 import {requestCreate} from "@/lib/createIntent";
 import {SettingsMenu} from "../SettingsMenu";
 import {Avatar} from "../ui/Avatar";
 import {RocketIcon} from "../ui/Icons";
+import {Bell} from "./Bell";
 import {SearchBox} from "./SearchBox";
 
 /**
@@ -25,14 +25,16 @@ import {SearchBox} from "./SearchBox";
 
 const NAV = [
   // Token and stock pages count as Discover — they are where it leads.
-  {href: "/home", label: "Discover", match: ["/home", "/token", "/rwa"]},
+  {href: "/home", label: "Home", match: ["/home"]},
+  // A token or RWA page counts as the list it was opened from.
+  {href: "/tokens", label: "Tokens", match: ["/tokens", "/token/"]},
+  {href: "/rwas", label: "RWAs", match: ["/rwas", "/rwa/"]},
   {href: "/news", label: "News", match: ["/news"]},
   {href: "/profile", label: "Portfolio", match: ["/profile"]},
 ] as const;
 
 export function TopBar() {
   const pathname = usePathname() ?? "";
-  const {ethUsd} = useEthPrice();
   const {displayName, handle, pfpUrl} = useUser();
 
   return (
@@ -78,11 +80,8 @@ export function TopBar() {
       <SearchBox />
 
       <div className="flex items-center justify-end gap-2.5">
-        {ethUsd ? (
-          <span className="tabular-nums rounded-full bg-[var(--overlay-wash)] px-3.5 py-2 text-[12.5px] font-bold text-muted">
-            ETH ${ethUsd.toLocaleString("en-US", {maximumFractionDigits: 0})}
-          </span>
-        ) : null}
+        {/* The ETH price lives in the status bar; this spot is for you. */}
+        <Bell />
 
         <button
           type="button"

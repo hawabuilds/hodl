@@ -8,6 +8,8 @@ export type TradeNotifyEvent =
       tokenAmount: number;
       quoteAmount: number;
       quoteSymbol: string;
+      /** The swap's hash, so the server can check the fill on chain. */
+      txHash?: string;
     }
   | {
       status: "failed";

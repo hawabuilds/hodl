@@ -21,8 +21,8 @@ export function StatusBar() {
   // The watchlist column appears only once something is pinned, so on the
   // board this is where a new user learns it exists.
   const hint =
-    pathname === "/home" && watchCount === 0
-      ? "☆ Star a token or stock to add a Watchlist column"
+    pathname === "/tokens" && watchCount === 0
+      ? "☆ Star a token or RWA to add a Watchlist column"
       : "Press / to search";
 
   return (

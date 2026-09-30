@@ -22,6 +22,7 @@ import {useLocalStore} from "@/hooks/useLocalStore";
 import {useSwap} from "@/hooks/useSwap";
 import {isUserDeclinedTrade, reportTradeNotify} from "@/lib/notifications/reportTrade";
 import {useSession} from "@/lib/session";
+import {setTradeBusy} from "@/lib/alertBus";
 import {
   HODL_ROUTER_ADDRESS,
   hodlCanExecuteQuote,
@@ -157,6 +158,11 @@ export function OrderTicket({
   const live =
     isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote);
   const ticket = live ? hodl : swap;
+  // Desktop pop-ups stay out of the way while a trade is confirming.
+  useEffect(() => {
+    setTradeBusy(ticket.submitting);
+    return () => setTradeBusy(false);
+  }, [ticket.submitting]);
   const wallet = (swap.address ?? hodl.address) ?? undefined;
 
   const ethBal = useBalance({
@@ -647,6 +653,7 @@ export function OrderTicket({
             ? Number(formatUnits(BigInt(quote.amountIn), quote.quoteDecimals))
             : estimatedOut,
           quoteSymbol: quoteOutSymbol(quote),
+          txHash: hash,
         });
         return;
       }
@@ -714,6 +721,7 @@ export function OrderTicket({
           ? Number(formatUnits(BigInt(q.amountIn), q.quoteDecimals))
           : Number(formatUnits(ticketNetOut(q), q.outDecimals)),
         quoteSymbol: quoteOutSymbol(q),
+        txHash: hash,
       });
       await allowanceQ.refetch();
     } catch (cause) {
@@ -883,6 +891,8 @@ export function OrderTicket({
               ) : null}
               <input
                 id="order-amount"
+                // While the cursor is here, desktop pop-ups hold off.
+                data-trade-input
                 inputMode="decimal"
                 autoComplete="off"
                 placeholder="0"

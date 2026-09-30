@@ -1,8 +1,11 @@
 import {badRequest, json} from "@/lib/server/http";
 import {requireCaller} from "@/lib/server/auth";
+import {recordHodlTrade} from "@/lib/server/hodlTrades";
 import {notifyTradeFailed, notifyTradeFilled} from "@/lib/server/notifications/trades";
 
 export const dynamic = "force-dynamic";
+// Recording waits up to 15s for our node to see the receipt.
+export const maxDuration = 30;
 
 /**
  * Called after the client waits for a confirmed receipt, or after a submit
@@ -21,6 +24,7 @@ export async function POST(request: Request) {
     tokenAmount?: number;
     quoteAmount?: number;
     quoteSymbol?: string;
+    txHash?: string;
     reason?: string;
   };
 
@@ -48,6 +52,21 @@ export async function POST(request: Request) {
       quoteAmount,
       quoteSymbol,
     }).catch((error) => console.error("trade fill notify failed", error));
+    // For the Following feed. Written only once the chain confirms it; the
+    // amounts above are the ticket's claim and are not what gets stored.
+    if (typeof body.txHash === "string") {
+      await recordHodlTrade({
+        userId: caller.userId,
+        txHash: body.txHash,
+        kind,
+        assetId,
+        symbol: ticker,
+      })
+        .then((result) => {
+          if (!result.recorded) console.info("hodl trade not recorded:", result.reason);
+        })
+        .catch((error) => console.error("hodl trade record failed", error));
+    }
     return json({ok: true});
   }
 

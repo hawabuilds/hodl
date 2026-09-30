@@ -394,3 +394,13 @@ export interface OrderDraft {
   /** Always denominated in USD; the sheet converts to units for display. */
   amountUsd: number;
 }
+
+/** A recent comment by someone the viewer follows, for Home. */
+export interface FollowingComment {
+  id: string;
+  body: string;
+  createdAt: string;
+  author: {handle: string; displayName: string; pfpUrl: string | null};
+  /** What it was said on: a token (by address) or an RWA (by ticker). */
+  asset: {kind: AssetKind; id: string; label: string};
+}

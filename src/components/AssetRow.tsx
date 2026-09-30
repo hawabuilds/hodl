@@ -38,6 +38,9 @@ export function AssetRow({
   eager = false,
   chartTimeframe,
   dense = false,
+  compact = false,
+  sparkline = true,
+  pairChip = true,
   active = false,
 }: {
   asset: Asset;
@@ -53,6 +56,17 @@ export function AssetRow({
    * every screen, so a token never reads differently on desktop than on a phone.
    */
   dense?: boolean;
+  /**
+   * Home's rows, sized by the page: `--home-row`, `--home-logo`,
+   * `--home-t-body` and `--home-t-small` shrink on a short laptop window so
+   * the whole summary fits one screen. Same content and colours. An RWA gets
+   * a ticker badge where a token has its logo, as on Home's design.
+   */
+  compact?: boolean;
+  /** Home's list cards leave the sparkline out; the % stays. */
+  sparkline?: boolean;
+  /** Off where every row shares the pair, as under one RWA's paired tokens. */
+  pairChip?: boolean;
 }) {
   const prefetch = usePrefetchAsset();
   // The same shared price the chart page publishes into, so a row and the page
@@ -77,35 +91,59 @@ export function AssetRow({
       onMouseEnter={warm}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-3 py-[13px] transition-colors duration-150 hover:bg-[var(--overlay-wash)]",
+        "flex items-center gap-3 transition-colors duration-150 hover:bg-[var(--overlay-wash)]",
+        compact ? "h-[var(--home-row,48px)]" : "py-[13px]",
         dense ? "px-3.5" : "px-[22px]",
         active && "bg-[var(--overlay-wash)]",
         fresh && "trade-in",
       )}
     >
-      {rwa ? null : (
+      {rwa ? (
+        compact ? (
+          <span
+            aria-hidden="true"
+            className="grid h-[var(--home-logo,28px)] w-[var(--home-logo,28px)] shrink-0 place-items-center rounded-full bg-[var(--overlay-wash)] text-[length:var(--home-t-small,12px)] font-extrabold text-muted"
+          >
+            {symbol.slice(0, 2)}
+          </span>
+        ) : null
+      ) : (
         <Avatar
+          className={
+            compact ? "!h-[var(--home-logo,28px)] !w-[var(--home-logo,28px)]" : undefined
+          }
           name={symbol}
           src={token?.imageUrl}
           src64={token?.imageUrl64}
           fallbacks={token?.imageFallbacks}
           seed={token?.address}
           color={token?.imageColor}
-          size={40}
+          size={compact ? 28 : 40}
           eager={eager}
         />
       )}
 
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-[15px] font-extrabold tracking-[-0.015em]">
+          <span
+            className={cn(
+              "truncate font-extrabold tracking-[-0.015em]",
+              compact ? "text-[length:var(--home-t-body,14px)] leading-[1.25]" : "text-[15px]",
+            )}
+          >
             {symbol}
           </span>
           {rwa ? (
             <VerifiedTick />
           ) : (
             <>
-              <PairTicker ticker={asset.pairedTicker} />
+              {pairChip ? (
+                // 11px on Home, its floor for small text; 10.5px elsewhere.
+                <PairTicker
+                  ticker={asset.pairedTicker}
+                  className={compact ? "!text-[11px]" : undefined}
+                />
+              ) : null}
               {asset.tradeable === false ? (
                 <span
                   title="Pool liquidity is below the tradeable floor"
@@ -117,7 +155,14 @@ export function AssetRow({
             </>
           )}
         </div>
-        <div className="tabular-nums mt-[3px] flex items-center gap-2.5 truncate text-[12.5px] font-semibold">
+        <div
+          className={cn(
+            "tabular-nums flex items-center gap-2.5 truncate font-semibold",
+            compact
+              ? "mt-[2px] text-[length:var(--home-t-small,12px)] leading-[1.25]"
+              : "mt-[3px] text-[12.5px]",
+          )}
+        >
           {rwa ? (
             <span className="text-faint">
               {SECTOR_LABEL.get(asset.sector) ?? asset.name}
@@ -135,14 +180,26 @@ export function AssetRow({
         </div>
       </div>
 
-      <Sparkline
-        series={asset.series}
-        positive={positive}
-        className="h-[28px] w-[52px] shrink-0"
-      />
+      {sparkline ? (
+        <Sparkline
+          series={asset.series}
+          positive={positive}
+          className={cn("shrink-0", compact ? "h-[20px] w-[56px]" : "h-[28px] w-[52px]")}
+        />
+      ) : null}
 
-      <div className="flex shrink-0 flex-col items-end gap-[3px] text-right">
-        <span className="tabular-nums text-[15px] font-extrabold tracking-[-0.02em]">
+      <div
+        className={cn(
+          "flex shrink-0 flex-col items-end text-right",
+          compact ? "gap-[2px]" : "gap-[3px]",
+        )}
+      >
+        <span
+          className={cn(
+            "tabular-nums font-extrabold tracking-[-0.02em]",
+            compact ? "text-[length:var(--home-t-body,14px)] leading-[1.25]" : "text-[15px]",
+          )}
+        >
           {rwa
             ? formatPriceUsd(shownPrice)
             : formatMarketCapAt(asset, shownPrice)}
@@ -151,11 +208,21 @@ export function AssetRow({
           )}
         </span>
         {!rwa && !isPriced(shownPrice) ? (
-          <span className="tabular-nums text-[12.5px] font-bold text-faint">—</span>
+          <span
+            className={cn(
+              "tabular-nums font-bold text-faint",
+              compact ? "text-[length:var(--home-t-small,12px)] leading-[1.25]" : "text-[12.5px]",
+            )}
+          >
+            —
+          </span>
         ) : (
           <PriceDelta
             value={asset.changePct}
-            className="text-[12.5px] font-bold"
+            className={cn(
+              "font-bold",
+              compact ? "text-[length:var(--home-t-small,12px)] leading-[1.25]" : "text-[12.5px]",
+            )}
           />
         )}
       </div>
@@ -176,6 +243,9 @@ export function AssetList({
   chartTimeframe,
   flush = false,
   dense = false,
+  compact = false,
+  sparkline = true,
+  pairChip = true,
   activePath,
 }: {
   assets: Asset[];
@@ -189,6 +259,12 @@ export function AssetList({
   flush?: boolean;
   /** Pass-through to each row. See `AssetRow`. */
   dense?: boolean;
+  /** Pass-through to each row. See `AssetRow`. */
+  compact?: boolean;
+  /** Pass-through to each row. See `AssetRow`. */
+  sparkline?: boolean;
+  /** Pass-through to each row. See `AssetRow`. */
+  pairChip?: boolean;
   /** The current route, so the row for the asset on screen can say so. */
   activePath?: string;
 }) {
@@ -221,6 +297,9 @@ export function AssetList({
             eager={i < 15}
             chartTimeframe={chartTimeframe}
             dense={dense}
+            compact={compact}
+            sparkline={sparkline}
+            pairChip={pairChip}
             active={current === assetPath(asset.kind, asset.id).toLowerCase()}
           />
         </li>

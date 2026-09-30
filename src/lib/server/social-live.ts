@@ -1,4 +1,9 @@
-import type {AssetComment, CommentPositionView, Profile} from "@/lib/types";
+import type {
+  AssetComment,
+  CommentPositionView,
+  FollowingComment,
+  Profile,
+} from "@/lib/types";
 import {fallbackHandle, handleIlike, normalizeHandle} from "@/lib/handle";
 import {isAddress, normalizeAddress} from "@/lib/address";
 import {db, hasDatabase} from "./db";
@@ -695,4 +700,72 @@ export async function followerProfilesOfId(userId: string): Promise<Profile[]> {
   const counts = await followerCountsFor(rows.map((row) => row.id));
 
   return rows.map((row) => toProfile(row, counts.get(row.id) ?? 0));
+}
+
+/**
+ * The newest comments by the people `userId` follows, across every asset.
+ *
+ * For Home. Read failures throw rather than coming back empty, so the card can
+ * say it could not load instead of implying nobody said anything.
+ */
+export async function commentsFromFollowing(
+  userId: string,
+  limit = 3,
+): Promise<FollowingComment[]> {
+  if (!hasDatabase) return [];
+
+  const {data: edges, error: edgesError} = await db()
+    .from("follows")
+    .select("following_id")
+    .eq("follower_id", userId);
+  if (edgesError) throw edgesError;
+
+  const ids = (edges ?? []).map((row) => String(row.following_id));
+  if (ids.length === 0) return [];
+
+  const {data, error} = await db()
+    .from("comments")
+    .select(
+      "id, asset_id, body, created_at, users!comments_user_id_fkey(handle, display_name, pfp_url)",
+    )
+    .in("user_id", ids)
+    .order("created_at", {ascending: false})
+    .limit(limit);
+  if (error) throw error;
+  const rows = data ?? [];
+
+  // Tokens are keyed by address, RWAs by ticker; a token needs its symbol.
+  const tokenIds = [
+    ...new Set(rows.map((row) => String(row.asset_id)).filter((id) => isAddress(id))),
+  ];
+  const symbols = new Map<string, string>();
+  if (tokenIds.length > 0) {
+    const {getTokenRows} = await import("./live/universeStore");
+    for (const token of await getTokenRows(tokenIds)) {
+      if (token.symbol) symbols.set(normalizeAddress(token.address), token.symbol);
+    }
+  }
+
+  return rows.map((row) => {
+    const user = one((row as {users?: CommentAuthor | CommentAuthor[]}).users);
+    const assetId = String(row.asset_id);
+    const token = isAddress(assetId);
+    return {
+      id: String(row.id),
+      body: String(row.body),
+      createdAt: String(row.created_at),
+      author: {
+        handle: user?.handle ?? "trader",
+        displayName: user?.display_name ?? user?.handle ?? "Trader",
+        pfpUrl: user?.pfp_url ?? null,
+      },
+      asset: {
+        kind: token ? "token" : "rwa",
+        id: token ? normalizeAddress(assetId) : assetId,
+        label: token
+          ? (symbols.get(normalizeAddress(assetId)) ?? "a token")
+          : assetId.toUpperCase(),
+      },
+    };
+  });
 }

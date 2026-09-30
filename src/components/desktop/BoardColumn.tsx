@@ -71,7 +71,7 @@ export function ColumnSegments<T extends string>({
   label,
   size = "sm",
 }: {
-  options: readonly {value: T; label: string}[];
+  options: readonly {value: T; label: string; badge?: ReactNode}[];
   value: T;
   onChange: (value: T) => void;
   label: string;
@@ -94,7 +94,7 @@ export function ColumnSegments<T extends string>({
           aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
           className={cn(
-            "whitespace-nowrap rounded-full font-extrabold transition-colors",
+            "inline-flex items-center gap-1 whitespace-nowrap rounded-full font-extrabold transition-colors",
             size === "md" ? "px-3 py-1.5 text-[12px]" : "px-[9px] py-1 text-[11px]",
             value === option.value
               ? "bg-[var(--bg-input)] text-ink"
@@ -102,6 +102,7 @@ export function ColumnSegments<T extends string>({
           )}
         >
           {option.label}
+          {option.badge}
         </button>
       ))}
     </div>

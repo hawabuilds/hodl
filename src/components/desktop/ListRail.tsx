@@ -1,14 +1,19 @@
 "use client";
 
-import {useMemo, useState} from "react";
+import {useMemo} from "react";
 import {usePathname} from "next/navigation";
 
 import {AssetList} from "../AssetRow";
+import {useActivity, useAlertPrefs} from "@/hooks/useActivity";
 import {useMarket} from "@/hooks/useMarket";
 import {useNewTokens, type NewTokenFilters} from "@/hooks/useNewTokens";
 import {useWatchlist, useWatchlistAssets} from "@/hooks/useWatchlist";
+import {unreadFollowing} from "@/lib/alerts";
+import {setRailList, useRailList, type RailList} from "@/lib/alertBus";
 import {sortTokens} from "@/lib/feedSorts";
 import {BoardColumn, ColumnNote, ColumnSegments} from "./BoardColumn";
+import {FollowingFeed} from "./FollowingFeed";
+import {UnreadCount} from "./UnreadCount";
 
 /**
  * The list beside a token page, so the next token is one click away.
@@ -26,23 +31,33 @@ import {BoardColumn, ColumnNote, ColumnSegments} from "./BoardColumn";
  *
  * Only the visible list polls. Trending is the market query every screen
  * already shares, so it costs nothing extra; New and Watchlist wake only when
- * chosen.
+ * chosen. Following reads the activity query the shell keeps polling for the
+ * bell and the pop-ups, which is also what keeps its count current while
+ * another list is showing.
  */
 
-const LISTS = [
+const LISTS: readonly {value: RailList; label: string}[] = [
   {value: "trending", label: "Trending"},
   {value: "new", label: "New"},
+  {value: "following", label: "Following"},
   {value: "watchlist", label: "Watchlist"},
-] as const;
-
-type List = (typeof LISTS)[number]["value"];
+];
 
 /** Stable, so the New feed keeps one query key rather than a fresh one per render. */
 const ALL_LAUNCHPADS: NewTokenFilters = {};
 
 export function ListRail() {
   const pathname = usePathname() ?? "";
-  const [list, setList] = useState<List>("trending");
+  const list = useRailList();
+  const {activity} = useActivity();
+  const {prefs} = useAlertPrefs();
+  // Opening the tab reads it, so the count only shows while it is closed.
+  const unread = activity && list !== "following" ? unreadFollowing(activity, prefs) : 0;
+  const options = LISTS.map((option) =>
+    option.value === "following"
+      ? {...option, badge: <UnreadCount count={unread} target="following" />}
+      : option,
+  );
 
   const market = useMarket("trending");
   const trending = useMemo(() => sortTokens(market.tokens, "trending"), [market.tokens]);
@@ -55,7 +70,7 @@ export function ListRail() {
 
   const empty =
     list === "watchlist" && watchCount === 0
-      ? "Star a token or stock and it pins here."
+      ? "Star a token or RWA and it pins here."
       : list === "new"
         ? fresh.isLoading
           ? "Loading new pairs…"
@@ -73,10 +88,12 @@ export function ListRail() {
         // The segmented control already names the list; a title beside it
         // repeated the word and pushed the controls into truncating it.
         controls={
-          <ColumnSegments label="List" options={LISTS} value={list} onChange={setList} />
+          <ColumnSegments label="List" options={options} value={list} onChange={setRailList} />
         }
       >
-        {shown.length > 0 ? (
+        {list === "following" ? (
+          <FollowingFeed />
+        ) : shown.length > 0 ? (
           <AssetList
             assets={shown}
             flush

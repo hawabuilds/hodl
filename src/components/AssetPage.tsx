@@ -1,6 +1,7 @@
 "use client";
 
-import {useMemo, useState, useEffect} from "react";
+import {useCallback, useMemo, useState, useEffect} from "react";
+import {useCommentTarget} from "@/lib/alertBus";
 import {changePctForPoints, mergeTradesIntoChart} from "@/lib/chartLive";
 import {firstPrintContext, hoveredCandleChangePct} from "@/lib/chartLwc";
 import {TIMEFRAME_MS, chartWindowMs} from "@/lib/chartPlot";
@@ -110,6 +111,18 @@ export function AssetPage({
   const tfOptions: readonly Timeframe[] =
     kind === "rwa" ? RWA_TIMEFRAMES : TIMEFRAMES;
   const [panel, setPanel] = useState<PanelKey>("trades");
+  // A Following row, the bell or a pop-up links here with #comments or
+  // #comment-<id>: open on Comments, at that comment. Desktop only for now.
+  const [commentTarget, setCommentTarget] = useState<string | null>(null);
+  const openComments = useCallback(
+    (commentId: string | null) => {
+      if (!desktop) return;
+      setPanel("comments");
+      setCommentTarget(commentId);
+    },
+    [desktop],
+  );
+  useCommentTarget(openComments, `${kind}:${id}`);
   const [scrubbed, setScrubbed] = useState<ChartPoint | null>(null);
   const [orderSide, setOrderSide] = useState<"buy" | "sell" | null>(null);
   const [chartStyle, setChartStyle] = useState<ChartStyle>("line");
@@ -495,6 +508,7 @@ export function AssetPage({
             assetId={asset.id}
             symbol={symbol}
             imageUrl={tokenArt?.imageUrl ?? null}
+            focusCommentId={commentTarget}
           />
         ) : asset.kind === "token" ? (
           <InfoPanel token={asset} />

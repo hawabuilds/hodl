@@ -59,7 +59,10 @@ export function TabBar() {
         {TABS.map((tab) => {
           const Icon = ICONS[tab.key];
           const active =
-            current === tab.href || current.startsWith(`${tab.href}/`);
+            current === tab.href ||
+            current.startsWith(`${tab.href}/`) ||
+            // The Tokens and RWAs lists open from Home's "See all" links.
+            (tab.key === "home" && (current === "/tokens" || current === "/rwas"));
           const warm = tab.key === "news" ? prefetchNews : undefined;
           return (
             <Link
