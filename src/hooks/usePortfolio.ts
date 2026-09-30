@@ -101,7 +101,10 @@ export function usePortfolio(range: PortfolioRange = "1D") {
 
   const history = useQuery({
     queryKey: ["portfolio-history", walletKey, range],
-    enabled: wallets.length > 0 && book.isSuccess,
+    // Starts beside the holdings read rather than after it: history is stored
+    // snapshots and needs nothing from the book. The live point is added below
+    // only once the book is in.
+    enabled: wallets.length > 0,
     staleTime: PORTFOLIO_TTL_MS,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
@@ -128,9 +131,12 @@ export function usePortfolio(range: PortfolioRange = "1D") {
 
   const points = useMemo(() => {
     const snapshots = history.data?.snapshots ?? [];
+    // Until the holdings are read, the value is not known: a live point at 0
+    // would draw a drop that never happened.
+    if (!book.isSuccess) return snapshots;
     const live: ChartPoint = {t: Date.now(), price: totalValue};
     const last = snapshots[snapshots.length - 1];
-    if (!last) return book.isSuccess ? [live] : [];
+    if (!last) return [live];
     if (live.t - last.t < 1_000) {
       return [...snapshots.slice(0, -1), live];
     }

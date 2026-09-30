@@ -16,6 +16,29 @@ const REFRESH_MS = 20_000;
  * as the list nears its end. Pages stay cached a while, so going into a token
  * and back finds the same rows already there.
  */
+/** One page of a public tab (Trending, New): a GET the edge can serve. */
+export async function fetchPublicTokensPage(
+  input: {tab: "trending" | "new"; order: TokensOrder; stock: string | null},
+  cursor: TokensCursor | null,
+  signal?: AbortSignal,
+): Promise<TokensPage> {
+  const params = new URLSearchParams({
+    tab: input.tab,
+    sort: input.order.sort,
+    dir: input.order.desc ? "desc" : "asc",
+  });
+  if (input.stock) params.set("stock", input.stock);
+  if (cursor) params.set("cursor", JSON.stringify(cursor));
+  const res = await fetch(`/api/tokens/table?${params}`, {signal});
+  if (!res.ok) throw new Error("Couldn't load tokens.");
+  return (await res.json()) as TokensPage;
+}
+
+/** The cache key `useTokensTable` uses for a public tab. */
+export function publicTokensKey(tab: "trending" | "new", order: TokensOrder, stock: string | null) {
+  return ["tokens-table", tab, order.sort, order.desc, stock ?? "", "", ""] as const;
+}
+
 export function useTokensTable(input: {tab: TokensTab; order: TokensOrder; stock: string | null}) {
   const session = useSession();
   const user = useUser();
@@ -47,6 +70,10 @@ export function useTokensTable(input: {tab: TokensTab; order: TokensOrder; stock
     placeholderData: keepPreviousData,
     enabled: input.tab !== "watchlist" || watch.length > 0,
     queryFn: async ({pageParam, signal}): Promise<TokensPage & {signedOut?: boolean}> => {
+      // Trending and New are the same for everyone: a GET the edge can serve.
+      if (input.tab === "trending" || input.tab === "new") {
+        return fetchPublicTokensPage({tab: input.tab, order: input.order, stock: input.stock}, pageParam, signal);
+      }
       const headers: Record<string, string> = {"content-type": "application/json"};
       if (input.tab === "following") {
         const token = await session.getAccessToken();

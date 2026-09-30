@@ -23,6 +23,8 @@ import {
 } from "@/lib/newsWindow";
 import {newsArticlePath} from "@/lib/routes";
 import type {FeedItem, NewsTopic, NewsWindow} from "@/lib/types";
+import {NewsImage} from "@/components/ui/NewsImage";
+import type {NewsThumbWidth} from "@/lib/newsThumb";
 
 const WINDOWS: FilterOption<NewsWindow>[] = [
   {value: "latest", label: "Latest"},
@@ -225,9 +227,12 @@ function StoryImage({
   item,
   className,
   priority = false,
+  width = 720,
 }: {
   item: FeedItem;
   className?: string;
+  /** Our stored copy's width: 720 for leads and cards, 240 for small rows. */
+  width?: NewsThumbWidth;
   /** Skips lazy-loading for art that is on screen the moment the tab opens. */
   priority?: boolean;
 }) {
@@ -243,14 +248,13 @@ function StoryImage({
     // art below the fold, but the lead story's photo is the first thing on
     // screen, so deferring it the same way only added a wait nothing needed.
     <div className={cn("overflow-hidden bg-[var(--overlay-wash)]", className)}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <NewsImage
         src={item.imageUrl}
-        alt=""
+        width={width}
         loading={priority ? "eager" : "lazy"}
         fetchPriority={priority ? "high" : "auto"}
         onLoad={() => setLoaded(true)}
-        onError={() => setFailed(true)}
+        onFail={() => setFailed(true)}
         className={cn(
           "h-full w-full object-cover transition-opacity duration-300",
           loaded ? "opacity-100" : "opacity-0",
@@ -319,6 +323,7 @@ function StoryRow({
           item={item}
           className="h-[78px] w-[78px] shrink-0 rounded-[14px]"
           priority={priority}
+          width={240}
         />
       </Link>
     </li>

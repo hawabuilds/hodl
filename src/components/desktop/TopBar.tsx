@@ -8,6 +8,7 @@ import {APP_NAME} from "@/config/app";
 import {useUser} from "@/hooks/useUser";
 import {cn} from "@/lib/cn";
 import {requestCreate} from "@/lib/createIntent";
+import {usePrefetchPage} from "@/hooks/usePrefetchPage";
 import {SettingsMenu} from "../SettingsMenu";
 import {Avatar} from "../ui/Avatar";
 import {RocketIcon} from "../ui/Icons";
@@ -36,6 +37,8 @@ const NAV = [
 
 export function TopBar() {
   const pathname = usePathname() ?? "";
+  // A nav link's page data starts on hover, so the click lands on a filled page.
+  const warmPage = usePrefetchPage();
   const {displayName, handle, pfpUrl} = useUser();
 
   return (
@@ -63,6 +66,8 @@ export function TopBar() {
                 key={item.href}
                 href={item.href}
                 prefetch
+                onMouseEnter={() => warmPage(item.href)}
+                onFocus={() => warmPage(item.href)}
                 aria-current={active ? "page" : undefined}
                 className={cn(
                   "rounded-full px-3 py-[7px] text-[13px] font-bold transition-colors",

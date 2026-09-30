@@ -47,6 +47,20 @@ export function publicJson<T>(
   });
 }
 
+/**
+ * Edge caching for page data that is the same for every reader (market lists,
+ * the Tokens table's public tabs, the RWAs list): fresh for 10s, then served
+ * stale for up to 10 minutes while one request refreshes it in the background.
+ * Only the first visitor after a long quiet spell waits on the function.
+ */
+export const PAGE_EDGE = {maxAge: 10, swr: 600} as const;
+
+/** A stable cache key for a query string: same params in any order, same key. */
+export function queryKey(prefix: string, params: URLSearchParams): string {
+  const pairs = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
+  return `${prefix}:${new URLSearchParams(pairs).toString()}`;
+}
+
 export function badRequest(message: string) {
   return json({error: message}, 400);
 }

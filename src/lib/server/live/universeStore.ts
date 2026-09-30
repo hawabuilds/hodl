@@ -599,37 +599,40 @@ async function listStatsOrderedPage(
   const statRows = (hot ?? []) as TokenStatRow[];
   if (statRows.length === 0) return {rows: [], stats: new Map(), next: null};
 
-  let tokensQuery: any = db()
-    .from("tokens")
-    .select("*")
-    .in("address", normalizeAddresses(statRows.map((row) => row.address)))
-    .eq("status", "listed")
-    .not("launchpad", "is", null);
-  tokensQuery = applyUniverseFilter(tokensQuery);
-  tokensQuery = applyThreeStateFilter(tokensQuery, "is_tradeable");
-  tokensQuery = applyAgeBounds(tokensQuery, query.minAgeHours, query.maxAgeHours);
-  if (query.launchpad) tokensQuery = tokensQuery.eq("launchpad", query.launchpad);
-  if (query.quoteKind) tokensQuery = tokensQuery.eq("quote_kind", query.quoteKind);
-  if (query.rewardsOnly) tokensQuery = applyRewardsAmountFilter(tokensQuery);
-
-  let {data, error} = await tokensQuery;
-  if (error && /is_tradeable|liquidity_usd/i.test(error.message)) {
-    console.error("tokens tradeable columns missing — run scripts/schema-tradeable.sql");
-    tokensQuery = applyUniverseFilter(
-      db()
-        .from("tokens")
-        .select("*")
-        .in("address", normalizeAddresses(statRows.map((row) => row.address)))
-        .eq("status", "listed")
-        .not("launchpad", "is", null),
-    );
+  // Up to 400 candidates: in one `in (…)` list that is a ~18k-character URL,
+  // past the request header limit, which failed the whole token half of the
+  // market page. Batches of 100, like `listedRowsFor`, run side by side.
+  const candidates = normalizeAddresses(statRows.map((row) => row.address));
+  const batches: string[][] = [];
+  for (let i = 0; i < candidates.length; i += 100) batches.push(candidates.slice(i, i + 100));
+  const listedFor = async (slice: string[], withTradeable: boolean) => {
+    let tokensQuery: any = db()
+      .from("tokens")
+      .select("*")
+      .in("address", slice)
+      .eq("status", "listed")
+      .not("launchpad", "is", null);
+    tokensQuery = applyUniverseFilter(tokensQuery);
+    if (withTradeable) tokensQuery = applyThreeStateFilter(tokensQuery, "is_tradeable");
     tokensQuery = applyAgeBounds(tokensQuery, query.minAgeHours, query.maxAgeHours);
     if (query.launchpad) tokensQuery = tokensQuery.eq("launchpad", query.launchpad);
     if (query.quoteKind) tokensQuery = tokensQuery.eq("quote_kind", query.quoteKind);
     if (query.rewardsOnly) tokensQuery = applyRewardsAmountFilter(tokensQuery);
-    const retry = await tokensQuery;
-    data = retry.data;
-    error = retry.error;
+    return (await tokensQuery) as {data: TokenRow[] | null; error: {message: string} | null};
+  };
+  const readAll = async (withTradeable: boolean) => {
+    const results = await Promise.all(batches.map((slice) => listedFor(slice, withTradeable)));
+    const failed = results.find((result) => result.error);
+    return {
+      data: failed ? null : results.flatMap((result) => result.data ?? []),
+      error: failed?.error ?? null,
+    };
+  };
+
+  let {data, error} = await readAll(true);
+  if (error && /is_tradeable|liquidity_usd/i.test(error.message)) {
+    console.error("tokens tradeable columns missing — run scripts/schema-tradeable.sql");
+    ({data, error} = await readAll(false));
   }
   if (error) throw error;
   const byAddress = new Map(

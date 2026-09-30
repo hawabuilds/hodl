@@ -20,7 +20,7 @@ export interface NewTokenFilters {
   maxAge?: number | null;
 }
 
-interface Page {
+export interface NewTokensPage {
   tokens: TokenAsset[];
   cursor: string | null;
   hasMore: boolean;
@@ -61,6 +61,12 @@ function queryString(filters: NewTokenFilters, cursor: string | null): string {
   return params.toString();
 }
 
+/** What a page of new listings goes through before a card reads it (shared with Home's bundle). */
+export function acceptNewTokensPage(page: NewTokensPage): NewTokensPage {
+  rememberTokens(page.tokens);
+  return {...page, tokens: page.tokens.map(applyCachedToken)};
+}
+
 export function useNewTokens(filters: NewTokenFilters, enabled: boolean) {
   const seen = useRef(new Set<string>());
   const [live, setLive] = useState<TokenAsset[]>([]);
@@ -71,14 +77,12 @@ export function useNewTokens(filters: NewTokenFilters, enabled: boolean) {
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     initialPageParam: null as string | null,
-    queryFn: async ({pageParam}): Promise<Page> => {
+    queryFn: async ({pageParam}): Promise<NewTokensPage> => {
       const res = await fetch(`/api/tokens/new?${queryString(filters, pageParam)}`, {
         cache: "no-store",
       });
       if (!res.ok) throw new Error("Could not load new tokens.");
-      const page = (await res.json()) as Page;
-      rememberTokens(page.tokens);
-      return {...page, tokens: page.tokens.map(applyCachedToken)};
+      return acceptNewTokensPage((await res.json()) as NewTokensPage);
     },
     getNextPageParam: (last) => (last.hasMore ? last.cursor : undefined),
   });
@@ -100,7 +104,7 @@ export function useNewTokens(filters: NewTokenFilters, enabled: boolean) {
           cache: "no-store",
         });
         if (!res.ok) return;
-        const body = (await res.json()) as Page;
+        const body = (await res.json()) as NewTokensPage;
         rememberTokens(body.tokens);
         const {fresh, gainedArt} = splitNewFeedPoll(body.tokens, seen.current);
         if (fresh.length === 0 && gainedArt.length === 0) return;

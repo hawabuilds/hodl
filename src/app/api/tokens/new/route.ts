@@ -1,5 +1,6 @@
 import type {NextRequest} from "next/server";
-import {json} from "@/lib/server/http";
+import {PAGE_EDGE, json, publicJson, queryKey} from "@/lib/server/http";
+import {cached} from "@/lib/server/live/cache";
 import {hasDatabase} from "@/lib/server/db";
 import {loadDecoratedFeedPage} from "@/lib/server/live/feedDecorate";
 import type {QuoteKind} from "@/lib/universe";
@@ -7,11 +8,26 @@ import type {QuoteKind} from "@/lib/universe";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+/** How long a built page of new listings is reused before one request rebuilds it. */
+const NEW_TTL_MS = 8_000;
+
+/** Newest listings. The same for every reader: built every few seconds, held at the edge. */
 export async function GET(request: NextRequest) {
   if (!hasDatabase) {
     return json({error: "Token store is not configured.", empty: true}, 503);
   }
+  try {
+    const body = await cached(queryKey("page:tokens-new", request.nextUrl.searchParams), NEW_TTL_MS, () =>
+      buildNew(request),
+    );
+    return publicJson(body, PAGE_EDGE);
+  } catch (error) {
+    console.error("tokens/new failed", error);
+    return json({error: "Couldn't load new tokens. Retrying.", empty: false}, 503);
+  }
+}
 
+async function buildNew(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const rawCursor = params.get("cursor") ?? "";
   const [cursorListedAt, cursorAddress] = rawCursor.includes("|")
@@ -22,7 +38,7 @@ export async function GET(request: NextRequest) {
   const limit = Number(params.get("limit") ?? 50);
   const started = Date.now();
 
-  try {
+  {
     const page = await loadDecoratedFeedPage({
       sort: "new",
       cursorListedAt,
@@ -47,15 +63,12 @@ export async function GET(request: NextRequest) {
     console.info(
       `tokens/new page=${page.tokens.length} decorateMs=${page.decorateMs} totalMs=${ms}`,
     );
-    return json({
+    return {
       tokens: page.tokens,
       cursor: page.cursor,
       hasMore: page.hasMore,
       ms,
       decorateMs: page.decorateMs,
-    });
-  } catch (error) {
-    console.error("tokens/new failed", error);
-    return json({error: "Couldn't load new tokens. Retrying.", empty: false}, 503);
+    };
   }
 }

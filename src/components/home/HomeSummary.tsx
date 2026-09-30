@@ -10,9 +10,11 @@ import {AssetList} from "@/components/AssetRow";
 import {PillRail} from "@/components/PillRail";
 import {PriceChart} from "@/components/PriceChart";
 import {Avatar} from "@/components/ui/Avatar";
+import {NewsImage} from "@/components/ui/NewsImage";
 import {VerifiedTick} from "@/components/ui/Badges";
 import {PriceDelta} from "@/components/ui/PriceDelta";
 import {useChart} from "@/hooks/useAsset";
+import {useHomeBundle} from "@/hooks/useHomeBundle";
 import {useMarket} from "@/hooks/useMarket";
 import {useNewsFeed} from "@/hooks/useNewsFeed";
 import {useNewTokens} from "@/hooks/useNewTokens";
@@ -109,6 +111,18 @@ export function HomeSummary() {
   // Back from a chart page returns here, not to a list.
   useEffect(() => rememberHomePath("/home"), []);
 
+  // One request for every public card, and the personal one started beside
+  // it; the page shows once both are in (or after 1.5s, whichever is first),
+  // so the cards appear together instead of one by one.
+  const bundleReady = useHomeBundle();
+  const following = useFollowingComments();
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setWaited(true), 1_500);
+    return () => window.clearTimeout(timer);
+  }, []);
+  const ready = bundleReady && (!following.isLoading || waited);
+
   // `/create` lands here with `?create=1`; the desktop shell owns the sheet.
   useEffect(() => {
     if (searchParams.get("create") !== "1") return;
@@ -123,6 +137,9 @@ export function HomeSummary() {
         "mx-auto flex w-full max-w-[1600px] flex-col gap-[var(--home-gap)] p-[var(--home-gap)]",
       )}
     >
+      {ready ? null : <HomeSkeleton />}
+      {ready ? (
+      <>
       <CardBoundary title="Most token volume today">
         <FeaturedRwaCard />
       </CardBoundary>
@@ -151,8 +168,39 @@ export function HomeSummary() {
           </CardBoundary>
         </div>
       </div>
-
+      </>
+      ) : null}
     </div>
+  );
+}
+
+/** The whole page as one skeleton: the same grid and card shells as the real page. */
+function HomeSkeleton() {
+  return (
+    <>
+      <FeaturedSkeleton />
+      <div className="grid gap-[var(--home-gap)] lg:grid-cols-3">
+        {["Trending tokens", "Just launched", "RWAs on the move"].map((title) => (
+          <SummaryCard key={title} title={title} className="h-full">
+            <div className={ROW_LIMITS}>
+              <RowsSkeleton count={ROWS} />
+            </div>
+          </SummaryCard>
+        ))}
+      </div>
+      <div className="grid gap-[var(--home-gap)] lg:grid-cols-12">
+        <div className="min-w-0 lg:col-span-7">
+          <SummaryCard title="News on the RWAs behind the tokens" className="h-full">
+            <RowsSkeleton count={3} />
+          </SummaryCard>
+        </div>
+        <div className="min-w-0 lg:col-span-5">
+          <SummaryCard title="From people you follow" className="h-full">
+            <RowsSkeleton count={3} />
+          </SummaryCard>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -469,12 +517,11 @@ function Thumbnail({src}: {src: string | null | undefined}) {
   return (
     <span className="h-[var(--home-thumb-h)] w-[var(--home-thumb-w)] shrink-0 overflow-hidden rounded-[8px] bg-[var(--overlay-wash)]">
       {src && !failed ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <NewsImage
           src={src}
-          alt=""
+          width={240}
           loading="lazy"
-          onError={() => setFailed(true)}
+          onFail={() => setFailed(true)}
           className="h-full w-full object-cover"
         />
       ) : null}

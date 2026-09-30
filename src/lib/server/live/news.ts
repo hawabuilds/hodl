@@ -10,6 +10,7 @@ import {
 import {RWA_REGISTRY} from "./robinhood";
 import {posts} from "./x";
 import {ogImages} from "./og";
+import {storeNewsThumbs} from "./newsThumbs";
 
 /**
  * Finnhub, for the news tab.
@@ -418,6 +419,12 @@ async function buildWire(): Promise<FeedItem[]> {
       error instanceof Error ? error.message : error,
     );
   }
+  // Small copies of the new pictures, so pages show a 240px or 720px WebP
+  // instead of a publisher's original. This build already runs behind a
+  // served copy, so no reader waits on it.
+  await storeNewsThumbs(enriched).catch((error) =>
+    console.warn("news thumbs failed", error instanceof Error ? error.message : error),
+  );
   return enriched;
 }
 

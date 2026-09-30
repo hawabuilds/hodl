@@ -7,7 +7,7 @@ import {MARKET_REFRESH_MS} from "@/config/market";
 import type {RwaAsset, TokenAsset} from "@/lib/types";
 import type {MarketSort} from "@/app/api/market/route";
 
-interface MarketResponse {
+export interface MarketResponse {
   rwas: RwaAsset[];
   tokens: TokenAsset[];
   seeded: boolean;
@@ -27,6 +27,22 @@ export interface MarketFilters {
 }
 
 /** The home feed — prices and market caps track DexScreener on this cadence. */
+/** The cache key `useMarket(sort)` reads with no filters. */
+export function marketQueryKey(sort: MarketSort) {
+  return ["market", sort, null, null, null, null, null, null, null, null] as const;
+}
+
+/**
+ * What a market response goes through before a card reads it: its prices are
+ * published to the shared live price, its tokens remembered. Shared with
+ * Home's one-request bundle so a primed card is the same as a fetched one.
+ */
+export function acceptMarket(data: MarketResponse) {
+  publishPrices(feedReadings([...data.tokens, ...data.rwas], data.asOf ?? Date.now()));
+  rememberTokens(data.tokens);
+  return {...data, tokens: data.tokens.map(applyCachedToken)};
+}
+
 export function useMarket(sort: MarketSort = "volume", filters: MarketFilters = {}) {
   const minLiq = filters.minLiq ?? null;
   const maxLiq = filters.maxLiq ?? null;
@@ -53,21 +69,11 @@ export function useMarket(sort: MarketSort = "volume", filters: MarketFilters = 
       if (maxAge) params.set("maxAge", String(maxAge));
       const res = await fetch(`/api/market?${params}`, {cache: "no-store"});
       if (!res.ok) throw new Error("Could not load the market.");
-      const data = (await res.json()) as MarketResponse;
-
       // Publish into the shared price so feed rows and chart pages read one
       // number. Each is stamped with when it was read, not when it was fetched,
       // so neither a cached payload nor a weeks-old store price can walk back
       // over a fill the tape published.
-      publishPrices(
-        feedReadings([...data.tokens, ...data.rwas], data.asOf ?? Date.now()),
-      );
-      rememberTokens(data.tokens);
-
-      return {
-        ...data,
-        tokens: data.tokens.map(applyCachedToken),
-      };
+      return acceptMarket((await res.json()) as MarketResponse);
     },
   });
 

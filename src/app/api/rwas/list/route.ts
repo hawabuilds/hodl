@@ -1,12 +1,33 @@
-import {json} from "@/lib/server/http";
+import {PAGE_EDGE, json, publicJson} from "@/lib/server/http";
 import {rwasBoardPage} from "@/lib/server/rwasBoard";
 import {parseCategory, parseRwaSort} from "@/lib/rwaBoard";
 
 export const dynamic = "force-dynamic";
 
+/** All stocks, a category, a sort: the same for every reader, so a GET the edge can hold. */
+export async function GET(request: Request) {
+  const params = new URL(request.url).searchParams;
+  const offset = Number(params.get("offset") ?? 0);
+  try {
+    return publicJson(
+      await rwasBoardPage({
+        tab: "all",
+        category: parseCategory(params.get("category")),
+        sort: parseRwaSort(params.get("sort")),
+        offset: Number.isFinite(offset) ? offset : 0,
+        watch: [],
+      }),
+      PAGE_EDGE,
+    );
+  } catch (error) {
+    console.error("rwas list page failed", error);
+    return json({error: "Couldn't load stocks."}, 503);
+  }
+}
+
 /**
- * One page of the desktop RWAs list. POST so a watchlist of any size fits in
- * the body; the rows themselves are the same for everyone.
+ * One page of the watchlist view. POST so a watchlist of any size fits in the
+ * body; the rows themselves are the same for everyone.
  */
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;

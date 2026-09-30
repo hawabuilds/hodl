@@ -1,5 +1,6 @@
 import type {NextRequest} from "next/server";
-import {json} from "@/lib/server/http";
+import {PAGE_EDGE, json, publicJson, queryKey} from "@/lib/server/http";
+import {cached} from "@/lib/server/live/cache";
 import {hasDatabase} from "@/lib/server/db";
 import {listRwas} from "@/lib/server/live/market";
 import {loadDecoratedFeedPage} from "@/lib/server/live/feedDecorate";
@@ -35,25 +36,37 @@ function sortRwas(rwas: RwaAsset[], sort: MarketSort): RwaAsset[] {
   return copy.sort((a, b) => b.volume24hUsd - a.volume24hUsd);
 }
 
+/** How long a built market page is reused before one request rebuilds it. */
+const MARKET_TTL_MS = 10_000;
+
 /**
  * Home feed page. Decorates only the rows this tab will paint.
  * A timeout here is an error — never a seeded list.
+ *
+ * The same for every reader, so it is built once per query every 10s and held
+ * at the edge; the DexScreener round trip in the build happens behind a
+ * served copy, not in front of a reader.
  */
 export async function GET(request: NextRequest) {
+  if (!hasDatabase) {
+    return json({error: "Market store is not configured.", empty: true}, 503);
+  }
+  try {
+    const body = await cached(queryKey("page:market", request.nextUrl.searchParams), MARKET_TTL_MS, () =>
+      buildMarket(request),
+    );
+    return publicJson(body, PAGE_EDGE);
+  } catch (error) {
+    console.error("market page failed", error);
+    return json({error: "Couldn't load the market. Retrying.", empty: false}, 503);
+  }
+}
+
+async function buildMarket(request: NextRequest) {
   const started = Date.now();
   const sort = (request.nextUrl.searchParams.get("sort") ?? "volume") as MarketSort;
 
-  if (!hasDatabase) {
-    return json(
-      {
-        error: "Market store is not configured.",
-        empty: true,
-      },
-      503,
-    );
-  }
-
-  try {
+  {
     const minLiq = Number(request.nextUrl.searchParams.get("minLiq"));
     const maxLiq = Number(request.nextUrl.searchParams.get("maxLiq"));
     const minMcap = Number(request.nextUrl.searchParams.get("minMcap"));
@@ -94,22 +107,19 @@ export async function GET(request: NextRequest) {
     console.info(
       `market page sort=${sort} rwas=${rwas.length} tokens=${page.tokens.length} decorateMs=${page.decorateMs} totalMs=${ms}`,
     );
-    return json({
+    // A half that failed is a failed build: throwing keeps the last good copy
+    // in the cache (served while the next build tries again) instead of
+    // caching a page with no tokens, or no stocks, for everyone.
+    if (rwaSettled.status === "rejected" || pageSettled.status === "rejected") {
+      throw new Error("market sources failed");
+    }
+    return {
       rwas: sortRwas(rwas, sort),
       tokens: page.tokens,
       seeded: false,
       asOf: Date.now(),
       ms,
       decorateMs: page.decorateMs,
-    });
-  } catch (error) {
-    console.error("market page failed", error);
-    return json(
-      {
-        error: "Couldn't load the market. Retrying.",
-        empty: false,
-      },
-      503,
-    );
+    };
   }
 }

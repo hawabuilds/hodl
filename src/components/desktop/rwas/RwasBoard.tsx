@@ -4,6 +4,7 @@ import {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type
 import Link from "next/link";
 import {usePathname, useRouter, useSearchParams} from "next/navigation";
 
+import {usePrefetchAsset} from "@/hooks/usePrefetchAsset";
 import {useRwasList, useRwasOverview} from "@/hooks/useRwasBoard";
 import {cn} from "@/lib/cn";
 import {formatVolumeUsd, formatPriceUsd} from "@/lib/priceState";
@@ -26,6 +27,7 @@ import {
 import type {RwaSession} from "@/lib/rwaMove";
 import {Sparkline} from "../../Sparkline";
 import {Avatar} from "../../ui/Avatar";
+import {NewsImage} from "../../ui/NewsImage";
 import {ChevronDownIcon, XIcon} from "../../ui/Icons";
 
 /**
@@ -184,6 +186,7 @@ function Movers({
   loading: boolean;
 }) {
   const [direction, setDirection] = useState<"up" | "down">("up");
+  const prefetch = usePrefetchAsset();
   const list = direction === "up" ? up : down;
   return (
     <section aria-label="Top movers" className="flex flex-col gap-4">
@@ -214,6 +217,7 @@ function Movers({
                 <Link
                   key={row.ticker}
                   href={assetPath("rwa", row.id)}
+                  onMouseEnter={() => prefetch("rwa", row.id)}
                   className="flex flex-col gap-4 rounded-2xl border border-[var(--overlay-wash)] bg-surface-base p-[18px] transition-colors hover:border-[var(--overlay-wash-hover)] hover:bg-[var(--overlay-wash)]"
                 >
                   <div className="flex min-w-0 items-center gap-2.5">
@@ -363,8 +367,7 @@ function News({items, moves, loading}: {items: RwaNewsItem[]; moves: Moves; load
                   </div>
                   <div className="grid h-[84px] w-[120px] shrink-0 place-items-center overflow-hidden rounded-xl bg-[var(--overlay-wash)]">
                     {item.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element -- publisher artwork from any host
-                      <img src={item.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      <NewsImage src={item.imageUrl} width={240} loading="lazy" className="h-full w-full object-cover" />
                     ) : item.ticker ? (
                       // No artwork of its own: the stock's logo stands in.
                       <Avatar name={item.ticker} src={item.logoUrl} seed={item.ticker} size={40} />
@@ -616,6 +619,7 @@ function sortedFact(row: RwaBoardRow, sort: RwaSort): string | null {
 
 function StockRow({row, sort, move}: {row: RwaBoardRow; sort: RwaSort; move: Move | undefined}) {
   const router = useRouter();
+  const prefetch = usePrefetchAsset();
   const href = assetPath("rwa", row.id);
   const price = move?.priceUsd ?? row.priceUsd;
   const change = move?.changePct ?? row.changePct;
@@ -625,6 +629,7 @@ function StockRow({row, sort, move}: {row: RwaBoardRow; sort: RwaSort; move: Mov
       role="link"
       tabIndex={0}
       onClick={() => router.push(href)}
+      onMouseEnter={() => prefetch("rwa", row.id)}
       onKeyDown={(event) => {
         if (event.key === "Enter") router.push(href);
       }}

@@ -10,17 +10,39 @@ import type {RwaBoardPage, RwaCategory, RwaSort, RwasOverview} from "@/lib/rwaBo
 const LIST_REFRESH_MS = 60_000;
 const OVERVIEW_REFRESH_MS = 30_000;
 
+export const RWAS_OVERVIEW_KEY = ["rwas-overview"] as const;
+
+export async function fetchRwasOverview(): Promise<RwasOverview> {
+  const res = await fetch("/api/rwas/overview");
+  if (!res.ok) throw new Error("Couldn't load the overview.");
+  return (await res.json()) as RwasOverview;
+}
+
+/** All stocks, one page: a GET the edge can serve. */
+export async function fetchAllRwasPage(
+  category: RwaCategory | "all",
+  sort: RwaSort,
+  offset: number,
+  signal?: AbortSignal,
+): Promise<RwaBoardPage> {
+  const params = new URLSearchParams({category, sort, offset: String(offset)});
+  const res = await fetch(`/api/rwas/list?${params}`, {signal});
+  if (!res.ok) throw new Error("Couldn't load stocks.");
+  return (await res.json()) as RwaBoardPage;
+}
+
+/** The cache key `useRwasList` uses for the All tab. */
+export function allRwasKey(category: RwaCategory | "all", sort: RwaSort) {
+  return ["rwas-list", "all", category, sort, ""] as const;
+}
+
 /** Movers, Robinhood's posts, the latest news, and every stock's price and move. */
 export function useRwasOverview() {
   return useQuery({
-    queryKey: ["rwas-overview"],
+    queryKey: RWAS_OVERVIEW_KEY,
     refetchInterval: OVERVIEW_REFRESH_MS,
     staleTime: 15_000,
-    queryFn: async (): Promise<RwasOverview> => {
-      const res = await fetch("/api/rwas/overview");
-      if (!res.ok) throw new Error("Couldn't load the overview.");
-      return (await res.json()) as RwasOverview;
-    },
+    queryFn: fetchRwasOverview,
   });
 }
 
@@ -52,6 +74,8 @@ export function useRwasList(input: {tab: "all" | "watchlist"; category: RwaCateg
     placeholderData: keepPreviousData,
     enabled: !noWatch,
     queryFn: async ({pageParam, signal}): Promise<RwaBoardPage> => {
+      // All stocks are the same for everyone: a GET the edge can serve.
+      if (input.tab === "all") return fetchAllRwasPage(input.category, input.sort, pageParam, signal);
       const res = await fetch("/api/rwas/list", {
         method: "POST",
         headers: {"content-type": "application/json"},

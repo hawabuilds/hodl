@@ -31,7 +31,7 @@ export async function ensureBucket(): Promise<void> {
   }
 }
 
-function readyBucket(): Promise<void> {
+export function readyBucket(): Promise<void> {
   bucketReady ??= ensureBucket();
   return bucketReady;
 }
