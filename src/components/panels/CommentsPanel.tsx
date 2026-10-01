@@ -177,7 +177,7 @@ export function CommentsPanel({
                   ? `Hold ${symbol} to comment`
                   : "Sign in to post"
             }
-            className="max-h-[64px] min-h-[38px] flex-1 resize-none rounded-2xl bg-[var(--bg-input)] px-3 py-2.5 text-[13px] leading-[1.4] text-ink shadow-inset-soft outline-none transition-[box-shadow,background-color] placeholder:text-faint focus:shadow-inset-focus disabled:cursor-not-allowed disabled:opacity-55"
+            className="max-h-[64px] min-h-[38px] flex-1 resize-none rounded-2xl bg-[var(--bg-input)] px-3 py-2.5 text-[13px] max-lg:text-[16px] leading-[1.4] text-ink shadow-inset-soft outline-none transition-[box-shadow,background-color] placeholder:text-faint focus:shadow-inset-focus disabled:cursor-not-allowed disabled:opacity-55"
           />
           <button
             type="button"

@@ -187,6 +187,10 @@ export const TokenTableRowView = memo(function TokenTableRowView({
         )}
       >
         {Number.isFinite(change) ? `${up ? "▲" : "▼"} ${Math.abs(change).toFixed(2)}%` : "—"}
+        {/* The column is 24h; a token younger than that shows its move since launch. */}
+        {asset.changeWindow === "launch" ? (
+          <span className="block text-[10.5px] font-semibold text-faint">since launch</span>
+        ) : null}
       </span>
       <span className="tabular-nums text-right text-[14px] font-semibold">
         {formatLiquidityUsd(asset.liquidityUsd)}

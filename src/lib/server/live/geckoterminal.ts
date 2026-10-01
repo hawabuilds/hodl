@@ -127,7 +127,7 @@ async function refreshKeyUsage(): Promise<void> {
  */
 async function get<T>(
   path: string,
-  opts: {caller: GeckoCaller; tier?: "auto" | "free"},
+  opts: {caller: GeckoCaller; tier?: "auto" | "free" | "pro"},
 ): Promise<GeckoGet<T>> {
   const tryPro = opts.tier !== "free" && Boolean(API_KEY);
   // Someone is waiting on a chart or a tape; background sweeps are not.
@@ -155,6 +155,11 @@ async function get<T>(
       });
     }
     if (pro.body) return {data: pro.body, error: null, host: "pro"};
+    // Background work stays on the paid plan: the free host's 30 a minute is
+    // for the live site's last resort, not a job that can simply wait.
+    if (opts.tier === "pro") {
+      return {data: null, error: `CoinGecko returned ${pro.status || "a network error"}.`, host: "pro"};
+    }
     if (shouldFallbackToFree(pro.status) || pro.status === 0) {
       console.warn("coingecko pro rejected; falling back to free host", {
         caller: opts.caller,
@@ -624,6 +629,7 @@ async function candlesAt(
   token: string | null,
   limit: number,
   beforeMs?: number,
+  background = false,
 ): Promise<ChartPoint[]> {
   const bucket = BUCKETS[timeframe];
   const beforeKey =
@@ -642,7 +648,7 @@ async function candlesAt(
 
     const fetched = await get<OhlcvResponse>(
       `/networks/${NETWORK}/pools/${pool}/ohlcv/${bucket.path}?${params}`,
-      {caller: "chart", tier: "auto"},
+      background ? {caller: "spark", tier: "pro"} : {caller: "chart", tier: "auto"},
     );
     if (!fetched.data) {
       throw new Error(fetched.error ?? "Could not load candles.");
@@ -721,6 +727,16 @@ export async function candles(
   return {points: [], error: lastError, resolvedTimeframe: timeframe};
 }
 
+/** Candles for background work (mini charts): one bucket, paid plan only. */
+export async function backgroundCandles(
+  pool: string,
+  timeframe: Timeframe,
+  token: string | null,
+  limit: number,
+): Promise<ChartPoint[]> {
+  return candlesAt(pool, timeframe, token, limit, undefined, true);
+}
+
 interface TradesResponse {
   data?: {
     /** `network_block_tx_logIndex_timestamp`. The log index makes a fill unique. */
@@ -753,6 +769,8 @@ export async function trades(
   /** The asset whose page this is, so amounts describe the right side. */
   tokenAddress: string,
   limit = 40,
+  /** Background work (mini charts): the paid plan only, no free fallback. */
+  background = false,
 ): Promise<{trades: Trade[]; error: string | null}> {
   const wanted = tokenAddress.toLowerCase();
   const key = `gt:trades:${pool}:${wanted}`;
@@ -764,7 +782,7 @@ export async function trades(
     });
     const fetched = await get<TradesResponse>(
       `/networks/${NETWORK}/pools/${pool}/trades?${params}`,
-      {caller: "tape", tier: "free"},
+      background ? {caller: "spark", tier: "pro"} : {caller: "tape", tier: "free"},
     );
     if (!fetched.data) {
       throw new Error(fetched.error ?? "Could not load trades.");

@@ -13,6 +13,8 @@ export interface AssetBundle {
   asset: Asset;
   seeded: boolean;
   chart: {
+    /** The timeframe sent: the one asked for, or the page's own default. */
+    timeframe?: Timeframe;
     points: ChartPoint[];
     changePct: number;
     error?: string | null;
@@ -29,15 +31,17 @@ export interface AssetBundle {
 /** How long a finished bundle stays claimable by the page's first queries. */
 const CLAIM_MS = 1_000;
 
-const inflight = new Map<string, {timeframe: Timeframe; promise: Promise<AssetBundle | null>}>();
+const inflight = new Map<string, {promise: Promise<AssetBundle | null>}>();
 
-export function startAssetBundle(kind: AssetKind, key: string, timeframe: Timeframe): void {
+/** Without a timeframe the server sends the page's default for this asset. */
+export function startAssetBundle(kind: AssetKind, key: string, timeframe?: Timeframe | null): void {
   const scope = `${kind}:${key}`;
   if (inflight.has(scope)) return;
-  const promise = fetch(`/api/asset/${kind}/${encodeURIComponent(key)}/bundle?tf=${timeframe}`)
+  const query = timeframe ? `?tf=${timeframe}` : "";
+  const promise = fetch(`/api/asset/${kind}/${encodeURIComponent(key)}/bundle${query}`)
     .then((res) => (res.ok ? (res.json() as Promise<AssetBundle>) : null))
     .catch(() => null);
-  inflight.set(scope, {timeframe, promise});
+  inflight.set(scope, {promise});
   void promise.finally(() => setTimeout(() => inflight.delete(scope), CLAIM_MS));
 }
 
@@ -48,6 +52,8 @@ export async function fromAssetBundle(
   timeframe?: Timeframe,
 ): Promise<AssetBundle | null> {
   const held = inflight.get(`${kind}:${key}`);
-  if (!held || (timeframe && held.timeframe !== timeframe)) return null;
-  return held.promise;
+  if (!held) return null;
+  const bundle = await held.promise;
+  if (timeframe && bundle?.chart.timeframe && bundle.chart.timeframe !== timeframe) return null;
+  return bundle;
 }

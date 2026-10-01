@@ -21,6 +21,42 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/*
+ * Phones and tablets: a native app, not a web page.
+ *
+ * The app frame is exactly the screen (100dvh) and its content area is the
+ * only thing that scrolls, so the page itself must never move: no rubber-band,
+ * no pull-to-refresh, no pinch or double-tap zoom. `html` carries the app
+ * colour too — without its own background, the strip under Safari's toolbars
+ * and the home bar showed Safari's grey rather than the app. Desktop (1024px
+ * and up) is untouched.
+ */
+@media (max-width: 1023.98px) {
+  html,
+  body {
+    background-color: var(--bg-base);
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .app-frame {
+    touch-action: pan-x pan-y;
+  }
+
+  a,
+  button,
+  input,
+  label,
+  select,
+  summary,
+  textarea,
+  [role="button"],
+  [role="link"],
+  [role="tab"] {
+    touch-action: manipulation;
+  }
+}
+
 /* Large display headlines only — body stays 400 */
 .display-light {
   font-weight: 300;

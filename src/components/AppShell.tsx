@@ -76,7 +76,7 @@ export function AppShell({children}: {children: ReactNode}) {
         tall; 96px left the last row 24px above it, still inside the bar's
         shadow and blur, so it read as hidden behind it. 120px clears it by 48.
       */}
-      <div className="scroll-quiet min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-[22px] pb-[calc(120px+env(safe-area-inset-bottom))]">
+      <div className="scroll-quiet min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-[22px] pb-[calc(120px+env(safe-area-inset-bottom))]">
         {children}
       </div>
 

@@ -20,6 +20,7 @@ import {
   type TokenRow,
   type TokenStatRow,
 } from "@/lib/server/live/universeStore";
+import {attachSparks} from "./live/sparks";
 
 /**
  * The desktop Tokens table: one page of one tab, sorted on the server.
@@ -245,6 +246,7 @@ async function buildRows(addresses: string[], tradedAt?: Map<string, string>): P
   } catch (error) {
     console.error("tokens table decorate failed; serving stored rows", error);
   }
+  decorated = await attachSparks(decorated);
   const byAddress = new Map(decorated.map((asset) => [normalizeAddress(asset.address), asset]));
   return addresses.flatMap((address) => {
     const asset = byAddress.get(address);

@@ -287,7 +287,7 @@ function RangeInputs({
         // The global focus ring is a green rectangle, which reads as a
         // validation state on a field you are simply typing in. The label
         // carries a quiet ring instead, matching the trade inputs.
-        className="tabular-nums w-full min-w-0 bg-transparent text-[13px] font-bold outline-none placeholder:font-semibold placeholder:text-faint focus:outline-none focus-visible:outline-none"
+        className="tabular-nums w-full min-w-0 bg-transparent text-[13px] max-lg:text-[16px] font-bold outline-none placeholder:font-semibold placeholder:text-faint focus:outline-none focus-visible:outline-none"
       />
       {suffix ? (
         <span className="text-[12px] font-bold text-faint">{suffix}</span>

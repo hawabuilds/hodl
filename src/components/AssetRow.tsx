@@ -223,13 +223,24 @@ export function AssetRow({
             —
           </span>
         ) : (
-          <PriceDelta
-            value={asset.changePct}
+          <span
             className={cn(
-              "font-bold",
-              compact ? "text-[length:var(--home-t-small,12px)] leading-[1.25]" : "text-[12.5px]",
+              "flex items-baseline",
+              // A phone row has no width to spare beside the %: its label
+              // sits under it. Home's wider cards keep it alongside.
+              compact
+                ? "gap-1 text-[length:var(--home-t-small,12px)] leading-[1.25]"
+                : "flex-col items-end text-[12.5px] leading-[1.2]",
             )}
-          />
+          >
+            <PriceDelta value={asset.changePct} className="font-bold" />
+            {/* What the % (and the line beside it) covers. */}
+            {token?.changeWindow ? (
+              <span className={cn("font-semibold text-faint", compact ? "text-[10.5px]" : "text-[10px] leading-[1.1]")}>
+                {token.changeWindow === "launch" ? "since launch" : "24h"}
+              </span>
+            ) : null}
+          </span>
         )}
       </div>
     </Link>

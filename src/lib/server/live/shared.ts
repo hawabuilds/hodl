@@ -154,6 +154,72 @@ export async function claimShared(key: string, ttlMs: number): Promise<boolean> 
   }
 }
 
+/** A field-per-key hash read: only the fields asked for, in one command. */
+export async function readFieldsShared<T>(key: string, fields: string[]): Promise<Map<string, T>> {
+  const found = new Map<string, T>();
+  if (fields.length === 0) return found;
+  const raw = await command<(string | null)[]>(["HMGET", key, ...fields], READ_TIMEOUT_MS);
+  raw?.forEach((value, i) => {
+    if (typeof value !== "string") return;
+    try {
+      found.set(fields[i], decodeFromShared<T>(value));
+    } catch {
+      // Unreadable is absent.
+    }
+  });
+  return found;
+}
+
+/** Every field of a hash, decoded. */
+export async function readAllFieldsShared<T>(key: string): Promise<Map<string, T>> {
+  const found = new Map<string, T>();
+  const raw = await command<string[]>(["HGETALL", key], READ_TIMEOUT_MS);
+  if (!raw) return found;
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    try {
+      found.set(raw[i], decodeFromShared<T>(raw[i + 1]));
+    } catch {
+      // Unreadable is absent.
+    }
+  }
+  return found;
+}
+
+/** Sets many hash fields in one command; the whole hash lives `ttlSeconds`. */
+export async function writeFieldsShared(
+  key: string,
+  entries: [string, unknown][],
+  ttlSeconds: number,
+): Promise<void> {
+  if (entries.length === 0) return;
+  await command(["HSET", key, ...entries.flatMap(([field, value]) => [field, encodeForShared(value)])], READ_TIMEOUT_MS);
+  await command(["EXPIRE", key, ttlSeconds]);
+}
+
+export async function deleteFieldsShared(key: string, fields: string[]): Promise<void> {
+  if (fields.length === 0) return;
+  await command(["HDEL", key, ...fields]);
+}
+
+/** Adds to a counter that lives `ttlSeconds`; the new total, or null if Redis did not answer. */
+export async function countShared(key: string, by: number, ttlSeconds: number): Promise<number | null> {
+  const total = await command<number>(["INCRBY", key, by]);
+  if (total === by) await command(["EXPIRE", key, ttlSeconds]);
+  return typeof total === "number" ? total : null;
+}
+
+/** Adds members to a set that lives `ttlSeconds`. */
+export async function addToSetShared(key: string, members: string[], ttlSeconds: number): Promise<void> {
+  if (members.length === 0) return;
+  await command(["SADD", key, ...members]);
+  await command(["EXPIRE", key, ttlSeconds]);
+}
+
+/** Takes (and removes) up to `count` members of a set. */
+export async function takeFromSetShared(key: string, count: number): Promise<string[]> {
+  return (await command<string[]>(["SPOP", key, count])) ?? [];
+}
+
 export async function writeShared(
   key: string,
   value: unknown,

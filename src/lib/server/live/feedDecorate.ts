@@ -17,6 +17,7 @@ import {
   effectiveTrendingBounds,
   rankTrendingTokens,
 } from "@/lib/trendingScore";
+import {attachSparks} from "./sparks";
 
 function round(value: number, dp = 6): number {
   const f = 10 ** dp;
@@ -133,7 +134,6 @@ export function applyDexPair(asset: TokenAsset, pair: DexPair): TokenAsset {
         : providerCap != null
           ? Math.round(Number(providerCap))
           : fromSupply;
-  const series = seriesFrom(pair, asset.address);
 
   return {
     ...asset,
@@ -145,7 +145,7 @@ export function applyDexPair(asset: TokenAsset, pair: DexPair): TokenAsset {
     tradeable,
     marketCapUsd,
     windows: windowsFromPair(pair, volume24hUsd ?? 0, changePct),
-    series: series.length > 0 ? series.map((value) => round(value, 10)) : asset.series,
+    series: asset.series,
   };
 }
 
@@ -271,7 +271,8 @@ export async function loadDecoratedFeedPage(query: TokenPageQuery): Promise<{
       )
     : bounded;
   return {
-    tokens,
+    // Each row's stored mini chart, and the % that line shows (one Redis call).
+    tokens: await attachSparks(tokens),
     cursor: page.next,
     hasMore: Boolean(page.next),
     decorateMs: Date.now() - started,

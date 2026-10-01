@@ -15,6 +15,7 @@ import {
 } from "@/lib/rwaBoard";
 import type {RwaSession} from "@/lib/rwaMove";
 import type {SectorId} from "@/lib/sectors";
+import {anchorDayLine} from "@/lib/spark";
 import type {FeedItem} from "@/lib/types";
 import {db, hasDatabase} from "./db";
 import {cached, stale} from "./live/cache";
@@ -99,7 +100,7 @@ export async function boardRows(): Promise<{rows: RwaBoardRow[]; session: RwaSes
       categories: categoriesFor(entry.ticker, (entry.sector ?? "software") as SectorId),
       priceUsd: price != null ? round(price, 4) : null,
       changePct: move ? round(move.changePct, 2) : null,
-      series: thinSeries(lines[entry.ticker] ?? []),
+      series: anchorDayLine(thinSeries(lines[entry.ticker] ?? []), price, move?.changePct ?? null).map((v) => round(v, 4)),
       volumeUsd: quote && quote.volume24hUsd > 0 ? Math.round(quote.volume24hUsd) : null,
       marketCapUsd: caps[entry.ticker] ?? null,
       chainVolumeUsd: quote ? Math.round(quote.chainVolumeUsd) : null,

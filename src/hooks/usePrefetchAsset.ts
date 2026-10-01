@@ -18,13 +18,15 @@ export function usePrefetchAsset() {
   const warmed = useRef(new Set<string>());
 
   return useCallback(
-    (kind: AssetKind, id: string, timeframe: Timeframe = "1h") => {
+    (kind: AssetKind, id: string, timeframe?: Timeframe) => {
       const assetId = kind === "token" ? normalizeAddress(id) : id;
-      const key = `${kind}:${assetId}:${timeframe}`;
+      const key = `${kind}:${assetId}:${timeframe ?? "default"}`;
       if (warmed.current.has(key)) return;
       warmed.current.add(key);
 
-      const url = `/api/asset/${kind}/${encodeURIComponent(assetId)}/bundle?tf=${timeframe}`;
+      // No timeframe: the server sends the page's own default (it depends on
+      // the token's age), and the chart is cached under the one it sent.
+      const url = `/api/asset/${kind}/${encodeURIComponent(assetId)}/bundle${timeframe ? `?tf=${timeframe}` : ""}`;
 
       void (async () => {
         try {
@@ -35,6 +37,7 @@ export function usePrefetchAsset() {
             asset: Asset;
             seeded: boolean;
             chart: {
+              timeframe?: Timeframe;
               points: ChartPoint[];
               changePct: number;
               error?: string | null;
@@ -53,11 +56,12 @@ export function usePrefetchAsset() {
             asset: bundle.asset,
             seeded: bundle.seeded,
           });
-          queryClient.setQueryData(["chart", kind, assetId, timeframe], {
+          const shown = bundle.chart.timeframe ?? timeframe ?? "1h";
+          queryClient.setQueryData(["chart", kind, assetId, shown], {
             points: bundle.chart.points,
             changePct: bundle.chart.changePct,
             error: bundle.chart.error ?? null,
-            resolvedTimeframe: bundle.chart.resolvedTimeframe ?? timeframe,
+            resolvedTimeframe: bundle.chart.resolvedTimeframe ?? shown,
           });
           queryClient.setQueryData(["trades", kind, assetId], {
             trades: bundle.trades.trades,

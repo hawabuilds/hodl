@@ -25,7 +25,7 @@ import {shortAddress} from "@/lib/format";
 import {PriceDelta} from "./ui/PriceDelta";
 import {lastHomePath} from "@/lib/homeState";
 import {sectorFor} from "@/lib/sectors";
-import {defaultChartTimeframe} from "@/lib/chartTimeframe";
+import {defaultChartTimeframe, parseRequestedTimeframe} from "@/lib/chartTimeframe";
 import type {AssetKind, ChartPoint, ChartStyle, Timeframe} from "@/lib/types";
 import {RWA_TIMEFRAMES, TIMEFRAMES} from "@/lib/types";
 import {AssetSkeleton} from "./AssetPageSkeleton";
@@ -108,7 +108,9 @@ export function AssetPage({
     bundleStarted.current = bundleScope;
     const key = kind === "token" ? normalizeAddress(id) : id;
     if (!queryClient.getQueryData(["asset", kind, key])) {
-      startAssetBundle(kind, key, defaultChartTimeframe({kind, listedAt: null, requested: requestedTimeframe}));
+      // No timeframe in the URL: the server picks the page's default (it
+      // knows the token's age), so the chart it sends is the one shown.
+      startAssetBundle(kind, key, parseRequestedTimeframe(requestedTimeframe, kind));
     }
   }
   const {asset, isLoading, error} = useAsset(kind, id);
@@ -152,7 +154,18 @@ export function AssetPage({
     setChartStyle(readChartStyle());
   }, []);
 
-  const chart = useChart(kind, id, timeframe);
+  // The chart waits for the asset: its default timeframe depends on the
+  // token's age, and both arrive in the same bundle anyway.
+  const chart = useChart(kind, id, timeframe, Boolean(asset));
+  // The header, chart and trades appear together: the page's one skeleton
+  // stays up until the chart is in too, for at most 1.5s, rather than showing
+  // an empty chart box that fills in after.
+  const [chartWaitOver, setChartWaitOver] = useState(false);
+  useEffect(() => {
+    setChartWaitOver(false);
+    const timer = window.setTimeout(() => setChartWaitOver(true), 1_500);
+    return () => window.clearTimeout(timer);
+  }, [scope]);
   const hourly = useHourlyReference(kind, id);
   const trades = useTrades(kind, id, true);
   // A stock's news sits under the order ticket on a desktop, so it loads with
@@ -216,6 +229,8 @@ export function AssetPage({
       </div>
     );
   }
+
+  if (chart.isLoading && !chart.error && !chartWaitOver) return <AssetSkeleton />;
 
   const tokenArt = asset.kind === "token" ? applyCachedLogo(asset) : null;
 

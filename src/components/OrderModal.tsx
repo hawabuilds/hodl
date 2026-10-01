@@ -1292,7 +1292,7 @@ function SlippageConfig({
               setCustom(next);
               save(Number.parseFloat(next));
             }}
-            className="tabular-nums w-full min-w-0 border-none bg-transparent text-[12.5px] font-extrabold text-ink outline-none placeholder:font-bold placeholder:text-faint focus-visible:outline-none"
+            className="tabular-nums w-full min-w-0 border-none bg-transparent text-[12.5px] max-lg:text-[16px] font-extrabold text-ink outline-none placeholder:font-bold placeholder:text-faint focus-visible:outline-none"
           />
           {custom ? (
             <span className="text-[12.5px] font-extrabold text-faint">%</span>

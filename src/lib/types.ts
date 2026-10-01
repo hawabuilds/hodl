@@ -189,6 +189,11 @@ export interface TokenAsset {
   socials: SocialLinks;
   description: string;
   series: number[];
+  /**
+   * What the row's % and mini chart cover: since launch for a token under 24h
+   * old, else the last 24h. Set with the stored line (server/live/sparks.ts).
+   */
+  changeWindow?: "launch" | "24h";
 }
 
 /** Windows the feed can be ranked and filtered over. */

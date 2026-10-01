@@ -103,7 +103,7 @@ async function fetchChart(kind: AssetKind, key: string, timeframe: Timeframe): P
   return (await res.json()) as ChartResponse;
 }
 
-export function useChart(kind: AssetKind, id: string, timeframe: Timeframe) {
+export function useChart(kind: AssetKind, id: string, timeframe: Timeframe, enabled = true) {
   const key = kind === "token" ? normalizeAddress(id) : id;
   const scope = `${kind}:${key}:${timeframe}`;
   const [older, setOlder] = useState<ChartPoint[]>([]);
@@ -118,6 +118,7 @@ export function useChart(kind: AssetKind, id: string, timeframe: Timeframe) {
 
   const query = useQuery({
     queryKey: ["chart", kind, key, timeframe],
+    enabled,
     refetchInterval: 60_000,
     // A new timeframe keeps the last one on screen until its own data lands,
     // like Trador. Only for the same asset: another token's chart standing in

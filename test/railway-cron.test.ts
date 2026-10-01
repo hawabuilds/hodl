@@ -35,6 +35,6 @@ describe("railway cron", () => {
 
   it("lists every migrated endpoint", () => {
     const paths = RAILWAY_CRON_JOBS.filter((job) => job.auth).map((job) => job.path).sort();
-    assert.deepEqual(paths, ["/api/cron/prices", "/api/cron/rewards", "/api/cron/stats"]);
+    assert.deepEqual(paths, ["/api/cron/prices", "/api/cron/rewards", "/api/cron/sparks", "/api/cron/stats"]);
   });
 });

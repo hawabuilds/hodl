@@ -33,7 +33,7 @@ export function SearchBar({
         aria-label={label ?? placeholder}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="min-w-0 flex-1 border-none bg-transparent text-[14.5px] font-medium text-ink outline-none placeholder:font-medium placeholder:text-faint focus:outline-none focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
+        className="min-w-0 flex-1 border-none bg-transparent text-[14.5px] max-lg:text-[16px] font-medium text-ink outline-none placeholder:font-medium placeholder:text-faint focus:outline-none focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
       />
     </div>
   );

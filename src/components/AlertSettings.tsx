@@ -110,7 +110,7 @@ export function AlertSettings({open, onClose}: {open: boolean; onClose: () => vo
                     setMinDraft(event.target.value.replace(/[^0-9.]/g, ""));
                   }}
                   aria-describedby="alerts-min-note"
-                  className="min-h-[44px] min-w-0 flex-1 bg-transparent text-[14px] font-bold tabular-nums text-ink outline-none"
+                  className="min-h-[44px] min-w-0 flex-1 bg-transparent text-[14px] max-lg:text-[16px] font-bold tabular-nums text-ink outline-none"
                 />
               </span>
               <span id="alerts-min-note" className="mt-1.5 block text-[11.5px] text-faint">

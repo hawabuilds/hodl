@@ -19,6 +19,7 @@ const JOB_ORDER = [
   "/api/news",
   "/api/cron/stats",
   "/api/cron/prices",
+  "/api/cron/sparks",
   "/api/cron/rewards",
   "/api/market",
 ] as const;

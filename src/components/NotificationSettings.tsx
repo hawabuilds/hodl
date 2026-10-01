@@ -184,7 +184,7 @@ export function NotificationSettings({open, onClose}: {open: boolean; onClose: (
                 onChange={(event) =>
                   void save({...prefs, minPositionUsd: Math.max(0, Number(event.target.value) || 0)})
                 }
-                className="mt-1 w-full rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[14px] text-ink shadow-inset-soft focus:shadow-inset-focus"
+                className="mt-1 w-full rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[14px] max-lg:text-[16px] text-ink shadow-inset-soft focus:shadow-inset-focus"
               />
             </label>
             <label className="block text-[12px] font-semibold text-muted">
@@ -194,13 +194,13 @@ export function NotificationSettings({open, onClose}: {open: boolean; onClose: (
                   type="time"
                   value={prefs.quietStart ?? ""}
                   onChange={(event) => void save({...prefs, quietStart: event.target.value || null})}
-                  className="flex-1 rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[14px] text-ink shadow-inset-soft focus:shadow-inset-focus"
+                  className="flex-1 rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[14px] max-lg:text-[16px] text-ink shadow-inset-soft focus:shadow-inset-focus"
                 />
                 <input
                   type="time"
                   value={prefs.quietEnd ?? ""}
                   onChange={(event) => void save({...prefs, quietEnd: event.target.value || null})}
-                  className="flex-1 rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[14px] text-ink shadow-inset-soft focus:shadow-inset-focus"
+                  className="flex-1 rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[14px] max-lg:text-[16px] text-ink shadow-inset-soft focus:shadow-inset-focus"
                 />
               </div>
             </label>

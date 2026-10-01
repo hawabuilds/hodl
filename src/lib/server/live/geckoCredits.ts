@@ -9,11 +9,12 @@
  * right now" across chart / tape / sweep, not a billing invoice.
  */
 
-export type GeckoCaller = "chart" | "tape" | "sweep" | "image" | "other";
+export type GeckoCaller = "chart" | "tape" | "sweep" | "image" | "spark" | "other";
 export type GeckoHost = "pro" | "free";
 
 const EMPTY: Record<GeckoCaller, number> = {
   chart: 0,
+  spark: 0,
   tape: 0,
   sweep: 0,
   image: 0,

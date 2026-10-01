@@ -179,8 +179,19 @@ const lastGoodWrittenAt = new Map<string, number>();
  * however old, while the build carries on behind them. Only a page that has
  * never once been built can still fail.
  */
+/**
+ * Bumped when what a page holds changes shape (v2: token rows carry their
+ * real mini chart). Copies saved by older code are then simply not read, so a
+ * deploy never serves the old format as a "last good" page.
+ */
+const PAGE_CACHE_VERSION = "v2";
+
+function pageCacheKey(key: string): string {
+  return `${key}@${PAGE_CACHE_VERSION}`;
+}
+
 export async function cachedPage<T>(
-  key: string,
+  pageKey: string,
   ttlMs: number,
   load: () => Promise<T>,
   options?: CacheOptions & {
@@ -188,6 +199,7 @@ export async function cachedPage<T>(
     standIn?: () => Promise<T | null>;
   },
 ): Promise<T> {
+  const key = pageCacheKey(pageKey);
   const lastGoodKey = `last-good:${key}`;
   const build = cached(
     key,
@@ -246,11 +258,11 @@ export async function cachedPage<T>(
  */
 export async function lastBuiltAt(keys: string[]): Promise<Map<string, number>> {
   if (!SHARED_CACHE) return new Map();
-  return readManyShared<number>(keys.map((key) => `built-at:${key}`)).then(
+  return readManyShared<number>(keys.map((key) => `built-at:${pageCacheKey(key)}`)).then(
     (found) =>
       new Map(
         keys.flatMap((key) => {
-          const at = found.get(`built-at:${key}`);
+          const at = found.get(`built-at:${pageCacheKey(key)}`);
           return typeof at === "number" ? [[key, at] as const] : [];
         }),
       ),
@@ -259,9 +271,9 @@ export async function lastBuiltAt(keys: string[]): Promise<Map<string, number>> 
 
 /** Another page's last good copy, if one has ever been built (see cachedPage). */
 export async function readLastGood<T>(key: string): Promise<T | null> {
-  const local = lastGoodLocal.get(key) as T | undefined;
+  const local = lastGoodLocal.get(pageCacheKey(key)) as T | undefined;
   if (local != null) return local;
-  return SHARED_CACHE ? readShared<T>(`last-good:${key}`) : null;
+  return SHARED_CACHE ? readShared<T>(`last-good:${pageCacheKey(key)}`) : null;
 }
 
 /**

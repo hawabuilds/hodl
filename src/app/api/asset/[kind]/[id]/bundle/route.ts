@@ -1,7 +1,8 @@
 import type {NextRequest} from "next/server";
 import {json, notFound, parseKind, parseTimeframe, publicJson} from "@/lib/server/http";
 import {cached} from "@/lib/server/live/cache";
-import {fetchAssetPage} from "@/lib/server/sources";
+import {fetchAsset, fetchAssetPage} from "@/lib/server/sources";
+import {defaultChartTimeframe} from "@/lib/chartTimeframe";
 export const dynamic = "force-dynamic";
 
 const BUNDLE_TTL_MS = 5_000;
@@ -14,7 +15,17 @@ export async function GET(
   const kind = parseKind(params.kind);
   if (!kind) return notFound("Unknown asset kind.");
 
-  const timeframe = parseTimeframe(request.nextUrl.searchParams.get("tf"));
+  // No `tf`: the page's own default, which depends on the token's age — so
+  // the chart sent is the one the page opens on, and nothing loads after it.
+  const requested = request.nextUrl.searchParams.get("tf");
+  let timeframe = parseTimeframe(requested);
+  if (!requested) {
+    const asset = await fetchAsset(kind, params.id).then((found) => found.data).catch(() => null);
+    timeframe = defaultChartTimeframe({
+      kind,
+      listedAt: asset?.kind === "token" ? asset.listedAt : null,
+    });
+  }
   // A chart page's first paint, the same for every reader: rebuilt at most
   // every 5s per server and shared through Redis and the edge, so opening a
   // page rarely waits on GeckoTerminal or the chain. The asset inside keeps
@@ -39,7 +50,7 @@ export async function GET(
   return publicJson({
     asset: data.asset,
     seeded,
-    chart: {...data.chart, seeded},
+    chart: {...data.chart, timeframe, seeded},
     trades: {...data.trades, seeded},
   }, {maxAge: 5, swr: 60});
 }

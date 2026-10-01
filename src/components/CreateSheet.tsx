@@ -346,7 +346,7 @@ export function CreateSheet({open, onClose}: {open: boolean; onClose: () => void
                 onChange={(event) => setName(event.target.value.slice(0, MAX_NAME))}
                 placeholder="Name"
                 aria-label="Token name"
-                className="h-[34px] rounded-xl bg-[var(--bg-input)] px-3 text-[13.5px] font-bold text-ink shadow-inset-soft outline-none placeholder:font-semibold placeholder:text-faint focus:shadow-inset-focus"
+                className="h-[34px] rounded-xl bg-[var(--bg-input)] px-3 text-[13.5px] max-lg:text-[16px] font-bold text-ink shadow-inset-soft outline-none placeholder:font-semibold placeholder:text-faint focus:shadow-inset-focus"
               />
               <input
                 value={symbol}
@@ -360,7 +360,7 @@ export function CreateSheet({open, onClose}: {open: boolean; onClose: () => void
                 }
                 placeholder="TICKER"
                 aria-label="Ticker"
-                className="h-[34px] rounded-xl bg-[var(--bg-input)] px-3 text-[13.5px] font-extrabold uppercase tracking-[0.02em] text-ink shadow-inset-soft outline-none placeholder:font-semibold placeholder:text-faint focus:shadow-inset-focus"
+                className="h-[34px] rounded-xl bg-[var(--bg-input)] px-3 text-[13.5px] max-lg:text-[16px] font-extrabold uppercase tracking-[0.02em] text-ink shadow-inset-soft outline-none placeholder:font-semibold placeholder:text-faint focus:shadow-inset-focus"
               />
             </div>
           </div>
@@ -375,7 +375,7 @@ export function CreateSheet({open, onClose}: {open: boolean; onClose: () => void
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search stocks"
               aria-label="Search stocks"
-              className="h-[26px] w-[140px] rounded-full bg-[var(--bg-input)] px-3 text-[11.5px] font-semibold text-ink shadow-inset-soft outline-none placeholder:text-faint focus:shadow-inset-focus"
+              className="h-[26px] w-[140px] rounded-full bg-[var(--bg-input)] px-3 text-[11.5px] max-lg:text-[16px] font-semibold text-ink shadow-inset-soft outline-none placeholder:text-faint focus:shadow-inset-focus"
             />
           </div>
           <div className="rail -mx-5 flex gap-1.5 overflow-x-auto overscroll-x-contain px-5">
@@ -499,7 +499,7 @@ export function CreateSheet({open, onClose}: {open: boolean; onClose: () => void
                   }
                   placeholder="0"
                   aria-label="First buy amount"
-                  className="w-full min-w-0 bg-transparent pl-2.5 text-right text-[12px] font-bold text-ink outline-none placeholder:text-faint"
+                  className="w-full min-w-0 bg-transparent pl-2.5 text-right text-[12px] max-lg:text-[16px] font-bold text-ink outline-none placeholder:text-faint"
                 />
                 <span className="pl-1 text-[10px] font-bold text-faint">
                   {pair?.label ?? "ETH"}
@@ -518,7 +518,7 @@ export function CreateSheet({open, onClose}: {open: boolean; onClose: () => void
                 placeholder="Description (optional)"
                 aria-label="Description"
                 rows={2}
-                className="resize-none rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[12.5px] font-semibold text-ink shadow-inset-soft outline-none placeholder:text-faint focus:shadow-inset-focus"
+                className="resize-none rounded-xl bg-[var(--bg-input)] px-3 py-2 text-[12.5px] max-lg:text-[16px] font-semibold text-ink shadow-inset-soft outline-none placeholder:text-faint focus:shadow-inset-focus"
               />
               {(["x", "telegram", "website"] as const).map((key) => (
                 <input
@@ -533,7 +533,7 @@ export function CreateSheet({open, onClose}: {open: boolean; onClose: () => void
                         : "https://…"
                   }
                   aria-label={key}
-                  className="h-[32px] rounded-xl bg-[var(--bg-input)] px-3 text-[12.5px] font-semibold text-ink shadow-inset-soft outline-none placeholder:text-faint focus:shadow-inset-focus"
+                  className="h-[32px] rounded-xl bg-[var(--bg-input)] px-3 text-[12.5px] max-lg:text-[16px] font-semibold text-ink shadow-inset-soft outline-none placeholder:text-faint focus:shadow-inset-focus"
                 />
               ))}
             </div>

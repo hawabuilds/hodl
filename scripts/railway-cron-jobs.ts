@@ -21,6 +21,7 @@ export const RAILWAY_CRON_JOBS: CronJob[] = [
   {path: "/api/cron/prices", auth: true},
   {path: "/api/cron/rewards", auth: true},
   {path: "/api/cron/stats", auth: true},
+  {path: "/api/cron/sparks", auth: true},
   // The public page routes, at exactly the URLs the site requests, so each
   // page's cache and its last good copy are rebuilt here rather than by a
   // visitor after a deploy or a quiet spell.

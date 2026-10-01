@@ -1,5 +1,6 @@
 import type {SectorId} from "@/lib/sectors";
 import type {Asset, RwaAsset, TokenAsset} from "@/lib/types";
+import {anchorDayLine} from "@/lib/spark";
 import {
   allRwaPairs,
   community,
@@ -335,7 +336,7 @@ export async function listRwas(): Promise<RwaAsset[]> {
         (supplies.get(entry.address.toLowerCase()) ?? 0) * quote.priceUsd,
       ),
       circulatingSupply: supplies.get(entry.address.toLowerCase()) ?? null,
-      series: series.map((v) => round(v, 4)),
+      series: anchorDayLine(series, quote.priceUsd, changePct).map((v) => round(v, 4)),
     });
   }
 
@@ -523,7 +524,6 @@ async function listTokensFromProviders(): Promise<TokenAsset[]> {
     ) ?? (side.tokenIsBase ? Number(pair.priceUsd ?? 0) : 0);
     if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
 
-    const series = seriesFrom(pair);
     const version = (pair.labels ?? [])[0] ?? pair.dexId;
     const launchpad = launchpads.get(address) ?? null;
     const onChain = chainGraduated.has(address);
@@ -588,7 +588,8 @@ async function listTokensFromProviders(): Promise<TokenAsset[]> {
       launchpad,
       socials: socialsFrom(pair),
       description: `${token.name} trades against ${quoteSymbol} on Uniswap ${version}.`,
-      series: series.map((v) => round(v, 10)),
+      // Real lines are attached by the lists (live/sparks.ts); never a guess here.
+      series: [],
     });
   }
 
@@ -653,7 +654,6 @@ function tokenFromSide(
     return null;
   }
 
-  const series = seriesFrom(pair, address);
   const version = (pair.labels ?? [])[0] ?? pair.dexId;
   const launchpad = launchpads.get(address) ?? null;
   const onChain = chainGraduated.has(address);
@@ -712,7 +712,7 @@ function tokenFromSide(
     launchpad: launchpad,
     socials: socialsFrom(pair),
     description: `${token.name} trades against ${quoteSymbol} on Uniswap ${version}.`,
-    series: series.map((v) => round(v, 10)),
+    series: [],
   };
 }
 
@@ -791,7 +791,7 @@ async function buildRwaAsset(entry: RegistryEntry): Promise<RwaAsset | null> {
       (supplies.get(address) ?? 0) * quote.priceUsd,
     ),
     circulatingSupply: supplies.get(address) ?? null,
-    series: series.map((v) => round(v, 4)),
+    series: anchorDayLine(series, quote.priceUsd, changePct).map((v) => round(v, 4)),
   };
 }
 
@@ -877,7 +877,6 @@ async function decorateFromProviders(asset: TokenAsset): Promise<TokenAsset> {
         tradeable: isTradeableFromLiquidity(liquidityUsd),
       };
     }
-    const series = seriesFrom(deepest, asset.address);
     const pooled = oriented != null && oriented > 0;
     // The pool gave liquidity and volume but no price. The store's price is not
     // put beside them until it has been checked — unchecked, this is how a
@@ -900,7 +899,7 @@ async function decorateFromProviders(asset: TokenAsset): Promise<TokenAsset> {
       tradeable: isTradeableFromLiquidity(liquidityUsd),
       rwaPaired: asset.rwaPaired || tokenHasStockPair(asset.address, pools),
       imageUrl: asset.imageUrl,
-      series: series.length > 0 ? series.map((value) => round(value, 10)) : asset.series,
+      series: asset.series,
     };
   } catch (error) {
     console.error("token page decorate failed; serving checked store row", error);

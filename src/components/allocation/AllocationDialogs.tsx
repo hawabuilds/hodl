@@ -139,7 +139,7 @@ export function EditTargetsDialog({
                         value={Number.isFinite(value) ? value : 0}
                         onChange={(event) => setWeight(key, Number(event.target.value))}
                         aria-label={`${holding.symbol} target percent`}
-                        className="tabular-nums h-9 w-16 rounded-lg bg-[var(--overlay-wash)] px-2 text-right text-[13px] font-bold text-ink outline-none focus:ring-2 focus:ring-brand-500"
+                        className="tabular-nums h-9 w-16 rounded-lg bg-[var(--overlay-wash)] px-2 text-right text-[13px] max-lg:text-[16px] font-bold text-ink outline-none focus:ring-2 focus:ring-brand-500"
                       />
                       <span className="text-[12px] font-semibold text-faint">%</span>
                     </span>
