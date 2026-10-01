@@ -12,6 +12,7 @@
  * In-process, so it resets on a cold start and is not shared between serverless
  * instances. That is deliberate: it is a throttle, not a database.
  */
+import {waitUntil} from "@vercel/functions";
 import {claimShared, readManyShared, readShared, SHARED_CACHE, writeShared} from "./shared";
 import {recordCacheHit, recordCacheMiss} from "./rpcMeter";
 
@@ -21,6 +22,21 @@ interface Entry<T> {
 }
 
 const store = new Map<string, Entry<unknown>>();
+
+/**
+ * Lets work outlive the response that started it. On Vercel a function is
+ * frozen once it has answered, so a rebuild started behind a served copy —
+ * every page build slower than PAGE_PATIENCE_MS, every stale-while-refresh —
+ * was cut off and never finished: the page's saved copy simply aged. Outside
+ * Vercel this does nothing, and the work runs on as before.
+ */
+function keepAlive(work: Promise<unknown>): void {
+  try {
+    waitUntil(work.catch(() => {}));
+  } catch {
+    // No request context (a script, a test): nothing to keep alive.
+  }
+}
 
 /** Requests in flight, so ten simultaneous callers make one upstream call. */
 const inflight = new Map<string, Promise<unknown>>();
@@ -191,8 +207,8 @@ export async function cachedPage<T>(
         const now = Date.now();
         if (SHARED_CACHE && now - (lastGoodWrittenAt.get(key) ?? 0) >= LAST_GOOD_EVERY_MS) {
           lastGoodWrittenAt.set(key, now);
-          void writeShared(lastGoodKey, value, LAST_GOOD_SECONDS);
-          void writeShared(`built-at:${key}`, now, LAST_GOOD_SECONDS);
+          keepAlive(writeShared(lastGoodKey, value, LAST_GOOD_SECONDS));
+          keepAlive(writeShared(`built-at:${key}`, now, LAST_GOOD_SECONDS));
         }
       }
       return value;
@@ -337,7 +353,7 @@ function refresh<T>(
         // copy: its job is to spare the *next* cold instance the rebuild, so it
         // needs to outlive the freshness window rather than match it.
         if (SHARED_CACHE) {
-          void writeShared(key, value, sharedTtlSeconds(ttlMs, options));
+          keepAlive(writeShared(key, value, sharedTtlSeconds(ttlMs, options)));
         }
       }
       return value;
@@ -350,6 +366,7 @@ function refresh<T>(
   // A background refresh must not surface as an unhandled rejection; the
   // stored value simply stays until a later attempt succeeds.
   promise.catch(() => {});
+  keepAlive(promise);
   return promise;
 }
 

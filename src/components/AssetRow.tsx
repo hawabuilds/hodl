@@ -15,6 +15,7 @@ import {assetHref, assetPath} from "@/lib/routes";
 import type {Asset, Timeframe} from "@/lib/types";
 import {Sparkline} from "./Sparkline";
 import {Avatar} from "./ui/Avatar";
+import {TokenAvatar} from "./ui/TokenAvatar";
 import {PairTicker, VerifiedTick} from "./ui/Badges";
 import {PriceDelta} from "./ui/PriceDelta";
 
@@ -112,7 +113,8 @@ export function AssetRow({
           />
         ) : null
       ) : (
-        <Avatar
+        <TokenAvatar
+          launchpad={token?.launchpad}
           className={
             compact ? "!h-[var(--home-logo,28px)] !w-[var(--home-logo,28px)]" : undefined
           }

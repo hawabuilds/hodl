@@ -12,6 +12,7 @@ import {
 } from "@/components/FeedFilters";
 import {StickyPageHeader} from "@/components/AppShell";
 import {HomeTabs, type HomeTab} from "@/components/HomeTabs";
+import {HomeBanner} from "./HomeBanner";
 import {RocketIcon, StarIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
 import {useNewTokens} from "@/hooks/useNewTokens";
@@ -305,6 +306,8 @@ function HomeFeed({route, desktop}: {route: "tokens" | "rwas"; desktop: boolean}
             Create
           </button>
         </div>
+
+        {desktop ? null : <HomeBanner onCreate={() => setCreateOpen(true)} />}
 
         <HomeTabs value={tab} onChange={setTab} />
 

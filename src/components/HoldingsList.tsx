@@ -8,7 +8,8 @@ import {formatLiquidityUsd, formatPriceUsd} from "@/lib/priceState";
 import type {Holding} from "@/lib/types";
 import {loadedLogoFor} from "@/lib/tokenLogoCache";
 import {tokenFor} from "@/lib/tokenCache";
-import {Avatar} from "./ui/Avatar";
+import {TokenAvatar} from "./ui/TokenAvatar";
+import {useTokenLaunchpad} from "@/hooks/useTokenLaunchpad";
 import {VerifiedTick} from "./ui/Badges";
 import {PriceDelta} from "./ui/PriceDelta";
 
@@ -125,8 +126,10 @@ function positionReturn(holding: Holding) {
 
 /** A token's artwork. Stocks have none, and are never given a stand-in. */
 function HoldingAvatar({holding, size}: {holding: Holding; size: number}) {
+  const launchpad = useTokenLaunchpad(holding.kind === "token" ? holding.assetId : null);
   return (
-    <Avatar
+    <TokenAvatar
+      launchpad={launchpad}
       name={holding.symbol}
       src={
         holding.kind === "token"

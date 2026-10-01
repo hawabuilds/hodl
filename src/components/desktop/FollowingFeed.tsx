@@ -17,6 +17,8 @@ import {relativeTime} from "@/lib/format";
 import {profilePath} from "@/lib/routes";
 import {AssetLink} from "../AssetLink";
 import {Avatar} from "../ui/Avatar";
+import {TokenAvatar} from "../ui/TokenAvatar";
+import {useTokenLaunchpad} from "@/hooks/useTokenLaunchpad";
 import {ColumnNote, ColumnSegments} from "./BoardColumn";
 
 /**
@@ -221,6 +223,7 @@ export function AssetChip({asset, className}: {asset: ActivityAsset; className?:
 }
 
 export function AssetLogo({asset, size}: {asset: ActivityAsset; size: number}) {
+  const launchpad = useTokenLaunchpad(asset.kind === "token" ? asset.id : null);
   if (asset.kind === "rwa" && !asset.imageUrl) {
     return (
       <span
@@ -233,7 +236,8 @@ export function AssetLogo({asset, size}: {asset: ActivityAsset; size: number}) {
     );
   }
   return (
-    <Avatar
+    <TokenAvatar
+      launchpad={launchpad}
       name={asset.symbol}
       src={asset.imageUrl}
       seed={asset.kind === "token" ? asset.id : undefined}

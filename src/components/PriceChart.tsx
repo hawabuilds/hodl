@@ -10,7 +10,6 @@ import {
   LineStyle,
   createChart,
   type IChartApi,
-  type IPriceLine,
   type ISeriesApi,
   type Time,
   type UTCTimestamp,
@@ -53,13 +52,8 @@ interface PriceChartProps {
   positive?: boolean;
   /** Up or down across the bars in view, as the line is coloured. */
   onTrend?: (up: boolean) => void;
-  /**
-   * A token or stock page: the last price as a dotted line with its label on
-   * the axis, and a small pulsing dot at the end of the line.
-   */
+  /** A token or stock page: the hovered bar's time shows on the time axis. */
   live?: boolean;
-  /** Dashed rule at the window open, the way a brokerage marks previous close. */
-  showBaseline?: boolean;
   /**
    * Requested window, used only for gap-break policy (1m/5m stay one
    * polyline; coarser pills still break on a silent stretch). The x-axis
@@ -179,7 +173,6 @@ export function PriceChart({
   positive,
   onTrend,
   live = false,
-  showBaseline = true,
   windowMs,
   emptyLabel = "Not enough history yet",
   className,
@@ -191,7 +184,6 @@ export function PriceChart({
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<SeriesApi | null>(null);
-  const baselineRef = useRef<IPriceLine | null>(null);
   const pointsRef = useRef(points);
   const prevPointsRef = useRef<ChartPoint[]>([]);
   const styleRef = useRef(style);
@@ -301,8 +293,8 @@ export function PriceChart({
         fontFamily: "inherit",
         ...lwcLayoutOptions(),
       },
-      // No background grid: the axis labels carry the scale, and the dotted
-      // last-price line is the only horizontal line on the chart.
+      // No lines across the chart at all — no grid, no previous-close rule, no
+      // last-price line. The axis labels carry the scale.
       grid: {
         vertLines: {visible: false},
         horzLines: {visible: false},
@@ -371,7 +363,6 @@ export function PriceChart({
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
-      baselineRef.current = null;
       prevPointsRef.current = [];
       fittedKeyRef.current = "";
     };
@@ -398,20 +389,17 @@ export function PriceChart({
         formatter: (value: number) => formatAxisUsd(value, minMove),
       },
     };
-    // The last price as a dotted line across the chart, labelled on the axis,
-    // so "where is it now" never needs a hover.
+    // No last-price line, no price tag on the axis for it, no live dot: the
+    // header above the chart already says where the price is now.
     const lastPrice = {
-      priceLineVisible: live,
-      lastValueVisible: live,
-      priceLineStyle: LineStyle.Dotted,
-      priceLineWidth: 1 as const,
+      priceLineVisible: false,
+      lastValueVisible: false,
     };
 
     if (seriesChanged) {
       if (seriesRef.current) {
         chart.removeSeries(seriesRef.current);
         seriesRef.current = null;
-        baselineRef.current = null;
       }
       seriesRef.current =
         style === "candles"
@@ -426,11 +414,7 @@ export function PriceChart({
               bottomColor: "transparent",
               lineWidth: 2,
               ...lastPrice,
-              priceLineColor: lineColor,
-              // A small dot that pulses at the end of the line: it is live.
-              lastPriceAnimation: live
-                ? LastPriceAnimationMode.Continuous
-                : LastPriceAnimationMode.Disabled,
+              lastPriceAnimation: LastPriceAnimationMode.Disabled,
               crosshairMarkerRadius: 4,
               ...scaleOpts,
             });
@@ -439,7 +423,6 @@ export function PriceChart({
       seriesRef.current.applyOptions({
         lineColor,
         topColor: `${lineColor}33`,
-        priceLineColor: lineColor,
         ...scaleOpts,
       });
     } else if (seriesRef.current) {
@@ -483,36 +466,12 @@ export function PriceChart({
     }
     prevPointsRef.current = points;
 
-    if (showBaseline && points[0]) {
-      const first = points[0].price;
-      if (baselineRef.current) {
-        baselineRef.current.applyOptions({
-          price: first,
-          color: colors.faint,
-          axisLabelVisible: false,
-          title: "",
-        });
-      } else {
-        baselineRef.current = series.createPriceLine({
-          price: first,
-          color: colors.faint,
-          lineStyle: LineStyle.Dashed,
-          lineWidth: 1,
-          axisLabelVisible: false,
-          title: "",
-        });
-      }
-    } else if (baselineRef.current) {
-      series.removePriceLine(baselineRef.current);
-      baselineRef.current = null;
-    }
-
     if (shouldFit) {
       fittedKeyRef.current = identityKey;
       applyFit();
     }
     refreshTrend();
-  }, [applyFit, floorPrice, live, minMove, points, refreshTrend, seriesData, showBaseline, style, theme, up, windowMs]);
+  }, [applyFit, floorPrice, live, minMove, points, refreshTrend, seriesData, style, theme, up, windowMs]);
 
   const resetView = useCallback(() => {
     applyFit();

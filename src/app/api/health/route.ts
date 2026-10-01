@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
  */
 
 /** Page caches worth watching: the ones every visitor's first screen reads. */
-/** `onDemand`: built only when someone uses it (search), so "never" is not a problem. */
+/** `onDemand`: rebuilt only when someone uses it (search), so its age says nothing about health. */
 const PAGES: {label: string; key: string; staleAfterS: number; onDemand?: boolean}[] = [
   {label: "Market · trending", key: "page:market:sort=trending", staleAfterS: 600},
   {label: "Market · volume", key: "page:market:sort=volume", staleAfterS: 600},
@@ -68,7 +68,7 @@ async function check() {
   const pages = PAGES.map((page) => {
     const at = built.get(page.key);
     const age = at ? Math.max(0, Math.round((now - at) / 1000)) : null;
-    const ok = age == null ? Boolean(page.onDemand) : age <= page.staleAfterS;
+    const ok = page.onDemand ? true : age != null && age <= page.staleAfterS;
     return {label: page.label, ageS: age, ok};
   });
   const indexer = {

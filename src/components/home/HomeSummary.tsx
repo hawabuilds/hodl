@@ -320,7 +320,6 @@ function FeaturedChart({rwa}: {rwa: RwaAsset}) {
             positive={positive}
             windowMs={chartWindowMs(source.timeframe)}
             emptyLabel="Not enough history for this range"
-            showBaseline
             height="var(--home-chart)"
           />
         )}

@@ -14,7 +14,8 @@ import {
 import {cn} from "@/lib/cn";
 import {money} from "@/lib/format";
 import type {Holding} from "@/lib/types";
-import {Avatar} from "../ui/Avatar";
+import {TokenAvatar} from "../ui/TokenAvatar";
+import {useTokenLaunchpad} from "@/hooks/useTokenLaunchpad";
 import {Modal} from "../ui/Modal";
 import {Sheet, SheetTitle} from "../ui/Sheet";
 
@@ -125,7 +126,7 @@ export function EditTargetsDialog({
                 <li key={key}>
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <span className="flex min-w-0 items-center gap-2">
-                      <Avatar name={holding.symbol} src={holding.logoUrl} seed={key} size={22} />
+                      <HoldingLogo holding={holding} seed={key} size={22} />
                       <span className="truncate text-[14px] font-extrabold">{holding.symbol}</span>
                     </span>
                     <span className="flex items-center gap-1">
@@ -188,7 +189,7 @@ function LegRow({leg}: {leg: PlannedLeg}) {
               : null;
   return (
     <li className={cn("flex items-center gap-2.5 rounded-xl px-2 py-2", state.kind === "skip" && "opacity-60")}>
-      <Avatar name={leg.holding.symbol} src={leg.holding.logoUrl} seed={leg.key} size={28} />
+      <HoldingLogo holding={leg.holding} seed={leg.key} size={28} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[13.5px] font-extrabold">Buy {leg.holding.symbol}</span>
@@ -333,4 +334,10 @@ export function TopUpDialog({
       </p>
     </Dialog>
   );
+}
+
+/** A holding's picture, with its launchpad badge when it is a token. */
+function HoldingLogo({holding, seed, size}: {holding: Holding; seed: string; size: number}) {
+  const launchpad = useTokenLaunchpad(holding.kind === "token" ? holding.assetId : null);
+  return <TokenAvatar launchpad={launchpad} name={holding.symbol} src={holding.logoUrl} seed={seed} size={size} />;
 }

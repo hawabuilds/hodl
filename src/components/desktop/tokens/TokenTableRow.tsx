@@ -12,9 +12,8 @@ import {formatLiquidityUsd, formatMarketCapAt, formatVolumeUsd} from "@/lib/pric
 import {assetPath} from "@/lib/routes";
 import {countLabel, type TokensTableRow} from "@/lib/tokensTable";
 import {applyCachedToken} from "@/lib/tokenCache";
-import {LaunchpadMark} from "../../LaunchpadMark";
 import {Sparkline} from "../../Sparkline";
-import {Avatar} from "../../ui/Avatar";
+import {TokenAvatar} from "../../ui/TokenAvatar";
 import {GlobeIcon, TelegramIcon, XIcon} from "../../ui/Icons";
 
 /**
@@ -140,25 +139,16 @@ export const TokenTableRowView = memo(function TokenTableRowView({
     >
       {/* Token */}
       <div className="flex min-w-0 items-center gap-3">
-        <div className="relative h-10 w-10 shrink-0">
-          <Avatar
-            name={asset.symbol}
-            src={asset.imageUrl}
-            src64={asset.imageUrl64}
-            fallbacks={asset.imageFallbacks}
-            seed={asset.address}
-            color={asset.imageColor}
-            size={40}
-          />
-          {asset.launchpad ? (
-            <span
-              title={`Launched on ${asset.launchpad.name}`}
-              className="absolute -bottom-[3px] -right-[3px] rounded-full ring-2 ring-surface-base"
-            >
-              <LaunchpadMark launchpad={asset.launchpad} size={18} className="!rounded-full" />
-            </span>
-          ) : null}
-        </div>
+        <TokenAvatar
+          launchpad={asset.launchpad}
+          name={asset.symbol}
+          src={asset.imageUrl}
+          src64={asset.imageUrl64}
+          fallbacks={asset.imageFallbacks}
+          seed={asset.address}
+          color={asset.imageColor}
+          size={40}
+        />
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <Link

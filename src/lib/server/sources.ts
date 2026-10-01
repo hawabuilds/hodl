@@ -455,6 +455,7 @@ export async function fetchNews(
           source: item.source,
           publishedAt: item.publishedAt,
           summary: item.summary,
+          imageUrl: item.imageUrl ?? null,
         })),
         seeded: false,
       };

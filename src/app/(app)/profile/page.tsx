@@ -1,6 +1,6 @@
 "use client";
 
-import {useRef, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import {ConnectionsSheet} from "@/components/ConnectionsSheet";
 import {EditProfileSheet} from "@/components/EditProfileSheet";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
@@ -50,6 +50,12 @@ export default function ProfilePage() {
   const wide = useIsWideDesktop();
   // Below 1400px Holdings and Allocation share one panel, switched by its title.
   const [lowerView, setLowerView] = useState<"holdings" | "allocation">("holdings");
+  // `?view=allocation` (the Home banner's "Rebalance" slide) opens on allocation.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("view") !== "allocation") return;
+    setChartView("allocation");
+    setLowerView("allocation");
+  }, []);
   const [editOpen, setEditOpen] = useState(false);
   const [scrubbed, setScrubbed] = useState<ChartPoint | null>(null);
   const [connections, setConnections] = useState<"followers" | "following" | null>(
@@ -303,7 +309,6 @@ export default function ProfilePage() {
                 points={points}
                 height="clamp(150px, 24vh, 240px)"
                 positive={positive}
-                showBaseline={false}
                 onScrub={setScrubbed}
                 className="mt-3"
               />
@@ -445,7 +450,6 @@ export default function ProfilePage() {
                 points={points}
                 height={140}
                 positive={positive}
-                showBaseline={false}
                 onScrub={setScrubbed}
                 className="mt-3"
               />

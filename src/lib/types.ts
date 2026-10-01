@@ -306,6 +306,8 @@ export interface NewsItem {
   publishedAt: string;
   /** Finnhub teaser copy, when the wire sent one. */
   summary: string | null;
+  /** The story's own picture, when it has one (see NewsImage for the stored copy). */
+  imageUrl?: string | null;
 }
 
 // ---------------------------------------------------------------------------

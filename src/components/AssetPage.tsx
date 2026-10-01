@@ -37,7 +37,8 @@ import {SegmentedToggle} from "./ui/SegmentedToggle";
 import {TradeBar} from "./TradeBar";
 import {WatchStar} from "./WatchStar";
 import {applyCachedLogo} from "@/lib/tokenLogoCache";
-import {Avatar} from "./ui/Avatar";
+import {TokenAvatar} from "./ui/TokenAvatar";
+import {NewsCard} from "./panels/NewsCard";
 import {PanelError} from "./panels/TradesPanel";
 import {PairMarket, TaxChip, TypeBadge, VerifiedTick} from "./ui/Badges";
 import {
@@ -154,7 +155,10 @@ export function AssetPage({
   const chart = useChart(kind, id, timeframe);
   const hourly = useHourlyReference(kind, id);
   const trades = useTrades(kind, id, true);
-  const news = useNews(id, kind === "rwa" && panel === "detail");
+  // A stock's news sits under the order ticket on a desktop, so it loads with
+  // the page there; on a phone it waits for its tab.
+  const newsInAside = desktop && kind === "rwa";
+  const news = useNews(id, kind === "rwa" && (panel === "detail" || newsInAside));
 
   const symbol = asset?.kind === "rwa" ? asset.ticker : (asset?.symbol ?? "");
   const contractAddress =
@@ -186,18 +190,20 @@ export function AssetPage({
 
   // On desktop a token's Info sits permanently beside the ticket, so it is not
   // also a tab; a stock's News has no such home and stays one.
-  const infoInPane = desktop && kind === "token";
+  // On a desktop a token's Info and a stock's News live in the right column,
+  // so neither is a tab under the chart there.
+  const detailInAside = (desktop && kind === "token") || newsInAside;
   const tabs: PanelTab<PanelKey>[] = useMemo(
     () => [
       {value: "trades", label: "Trades"},
       {value: "comments", label: "Comments"},
-      ...(infoInPane
+      ...(detailInAside
         ? []
         : [{value: "detail" as const, label: kind === "rwa" ? "News" : "Info"}]),
     ],
-    [kind, infoInPane],
+    [kind, detailInAside],
   );
-  const shownPanel: PanelKey = infoInPane && panel === "detail" ? "trades" : panel;
+  const shownPanel: PanelKey = detailInAside && panel === "detail" ? "trades" : panel;
 
   if (!asset) {
     if (isLoading) return <AssetSkeleton />;
@@ -365,7 +371,8 @@ export function AssetPage({
           </div>
         ) : (
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            <Avatar
+            <TokenAvatar
+              launchpad={asset.launchpad}
               name={symbol}
               src={tokenArt?.imageUrl}
               src64={tokenArt?.imageUrl64}
@@ -426,7 +433,8 @@ export function AssetPage({
         </div>
       ) : (
         <div className="mt-3 flex items-start gap-3">
-          <Avatar
+          <TokenAvatar
+            launchpad={asset.launchpad}
             name={symbol}
             src={tokenArt?.imageUrl}
             src64={tokenArt?.imageUrl64}
@@ -499,7 +507,6 @@ export function AssetPage({
           windowMs={chartWindowMs(chart.resolvedTimeframe)}
           emptyLabel={`Not enough history for ${timeframe}`}
           style={chartStyle}
-          showBaseline={asset.kind !== "token"}
           floorPrice={launchContext?.price ?? livePoints[0]?.price}
           onNeedOlder={chart.hasMore ? chart.loadOlder : undefined}
           onScrub={onScrub}
@@ -591,7 +598,9 @@ export function AssetPage({
             <div className="rounded-[14px] border border-[var(--overlay-wash)] bg-surface-base px-[22px] py-4">
               <InfoPanel token={asset} />
             </div>
-          ) : null}
+          ) : (
+            <NewsCard items={news.items} isLoading={news.isLoading} error={news.error} onRetry={news.retry} />
+          )}
         </aside>
       </div>
     );

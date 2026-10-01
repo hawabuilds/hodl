@@ -144,7 +144,7 @@ export function SearchBox() {
           onClick={(event) => {
             if ((event.target as HTMLElement).closest("a[href]")) close();
           }}
-          className="scroll-quiet absolute left-0 right-0 top-[calc(100%+8px)] z-50 max-h-[min(640px,calc(100dvh-120px))] min-w-[420px] overflow-y-auto rounded-2xl bg-surface-popup py-1.5 shadow-panel"
+          className="scroll-quiet absolute left-0 right-0 top-[calc(100%+8px)] z-50 max-h-[min(640px,calc(100dvh-120px))] min-w-[420px] overflow-y-auto rounded-2xl bg-surface-popup py-1.5 shadow-panel [--avatar-ring:var(--surface-popup)]"
         >
           <SearchResults query={query} />
         </div>
