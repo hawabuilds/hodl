@@ -5,7 +5,15 @@ import Link from "next/link";
 import {usePathname, useRouter, useSearchParams} from "next/navigation";
 
 import {usePrefetchAsset} from "@/hooks/usePrefetchAsset";
-import {useRwasList, useRwasOverview} from "@/hooks/useRwasBoard";
+import {useQueryClient} from "@tanstack/react-query";
+import {
+  RWAS_OVERVIEW_KEY,
+  allRwasKey,
+  fetchAllRwasPage,
+  fetchRwasOverview,
+  useRwasList,
+  useRwasOverview,
+} from "@/hooks/useRwasBoard";
 import {cn} from "@/lib/cn";
 import {formatVolumeUsd, formatPriceUsd} from "@/lib/priceState";
 import {newsTime, relativeTime} from "@/lib/format";
@@ -70,7 +78,72 @@ function useView() {
 
 const sessionWord = (session: RwaSession) => (session === "today" ? "today" : "last session");
 
+/** Longest the page holds its one skeleton for both halves before showing what it has. */
+const FIRST_PAINT_WAIT_MS = 1_500;
+
+/**
+ * The page's movers and news, and its stock list, are two requests. Shown as
+ * each arrived, the page filled in twice; it now holds one skeleton until
+ * both are in (or 1.5s pass), then shows everything at once. A page already
+ * in the cache (a return visit, or hover prefetch) shows straight away.
+ */
 export function RwasBoard() {
+  const queryClient = useQueryClient();
+  const {tab, category, sort} = useView();
+  const [ready, setReady] = useState(() => queryClient.getQueryData(RWAS_OVERVIEW_KEY) != null);
+
+  useEffect(() => {
+    if (ready) return;
+    let live = true;
+    const both = Promise.allSettled([
+      queryClient.prefetchQuery({queryKey: RWAS_OVERVIEW_KEY, queryFn: fetchRwasOverview}),
+      tab === "all"
+        ? queryClient.prefetchInfiniteQuery({
+            queryKey: allRwasKey(category, sort),
+            initialPageParam: 0,
+            queryFn: ({pageParam, signal}) => fetchAllRwasPage(category, sort, pageParam as number, signal),
+          })
+        : Promise.resolve(),
+    ]);
+    const cap = new Promise((resolve) => setTimeout(resolve, FIRST_PAINT_WAIT_MS));
+    void Promise.race([both, cap]).then(() => {
+      if (live) setReady(true);
+    });
+    return () => {
+      live = false;
+    };
+    // Only the first paint waits; later view changes load in place.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return ready ? <RwasBoardBody /> : <RwasBoardSkeleton />;
+}
+
+function RwasBoardSkeleton() {
+  const block = "animate-pulse rounded-2xl bg-[var(--overlay-wash)]";
+  return (
+    <div
+      aria-busy="true"
+      className="mx-auto grid w-full max-w-[1200px] grid-cols-[minmax(0,1fr)_400px] items-start gap-10 px-10 pb-10 pt-8"
+    >
+      <div className="flex min-w-0 flex-col gap-10">
+        <div className="flex flex-col gap-1.5">
+          <h1 className="text-[32px] font-extrabold leading-none tracking-[-0.025em]">RWAs</h1>
+          <p className="text-[15px] text-muted">Real stocks you can trade any time, and the tokens paired with them.</p>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          {Array.from({length: 6}, (_, i) => (
+            <div key={i} className={cn(block, "h-[158px]")} />
+          ))}
+        </div>
+        <div className={cn(block, "h-[372px]")} />
+      </div>
+      <div className={cn(block, "h-[640px]")} />
+    </div>
+  );
+}
+
+function RwasBoardBody() {
   const overview = useRwasOverview();
   const session: RwaSession = overview.data?.session ?? "today";
   const moves: Moves = overview.data?.moves ?? {};

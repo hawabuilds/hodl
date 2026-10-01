@@ -15,6 +15,7 @@ import {mergeChartPoints} from "@/lib/chartLwc";
 import {normalizeAddress} from "@/lib/address";
 import {compareTradesNewestFirst} from "@/lib/tradeOrder";
 import {applyCachedToken, rememberTokens, tokenFor} from "@/lib/tokenCache";
+import {fromAssetBundle} from "./assetBundle";
 
 const TAPE_LIMIT = 300;
 
@@ -57,6 +58,11 @@ export function useAsset(kind: AssetKind, id: string) {
     },
     refetchInterval: MARKET_REFRESH_MS,
     queryFn: async () => {
+      const bundle = await fromAssetBundle(kind, key);
+      if (bundle?.asset) {
+        if (bundle.asset.kind === "token") rememberTokens([bundle.asset]);
+        return {asset: bundle.asset, seeded: bundle.seeded};
+      }
       const res = await fetch(`/api/asset/${kind}/${key}`, {cache: "no-store"});
       if (!res.ok) throw new Error("Could not load this asset.");
       const data = (await res.json()) as {asset: Asset; seeded: boolean};
@@ -86,6 +92,10 @@ interface ChartResponse {
 }
 
 async function fetchChart(kind: AssetKind, key: string, timeframe: Timeframe): Promise<ChartResponse> {
+  const bundle = await fromAssetBundle(kind, key, timeframe);
+  if (bundle?.chart) {
+    return {...bundle.chart, resolvedTimeframe: bundle.chart.resolvedTimeframe ?? timeframe};
+  }
   const res = await fetch(`/api/asset/${kind}/${key}/chart?tf=${timeframe}`, {
     cache: "no-store",
   });
@@ -187,6 +197,8 @@ export function useTrades(kind: AssetKind, id: string, enabled: boolean) {
     refetchInterval: (q) => q.state.data?.pollMs ?? 2_000,
     structuralSharing: false,
     queryFn: async () => {
+      const bundle = await fromAssetBundle(kind, key);
+      if (bundle?.trades) return bundle.trades;
       const res = await fetch(`/api/asset/${kind}/${key}/trades`);
       if (!res.ok) throw new Error("Could not load recent trades.");
       return (await res.json()) as {

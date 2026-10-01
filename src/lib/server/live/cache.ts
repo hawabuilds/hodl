@@ -12,7 +12,7 @@
  * In-process, so it resets on a cold start and is not shared between serverless
  * instances. That is deliberate: it is a throttle, not a database.
  */
-import {readShared, SHARED_CACHE, writeShared} from "./shared";
+import {claimShared, readManyShared, readShared, SHARED_CACHE, writeShared} from "./shared";
 import {recordCacheHit, recordCacheMiss} from "./rpcMeter";
 
 interface Entry<T> {
@@ -135,6 +135,119 @@ export async function cached<T>(
   return refresh(key, ttlMs, load, options);
 }
 
+/** How long a page's last good copy is kept: long enough to outlast any quiet spell. */
+const LAST_GOOD_SECONDS = 24 * 60 * 60;
+/** A page's last good copy is rewritten at most this often, to spare Redis commands. */
+const LAST_GOOD_EVERY_MS = 60_000;
+/** How long a reader waits on a fresh answer before being given the last good copy. */
+const PAGE_PATIENCE_MS = 1_500;
+/**
+ * A page is rebuilt at most once in this window across every server: whoever
+ * claims it builds, the rest read that build's shared copy. Without this each
+ * serverless instance rebuilt every page on its own every few seconds, which
+ * is what kept the database's CPU pinned.
+ */
+const PAGE_REBUILD_MS = 60_000;
+
+const lastGoodLocal = new Map<string, unknown>();
+const lastGoodWrittenAt = new Map<string, number>();
+
+/**
+ * `cached`, for whole pages that must never answer with an error.
+ *
+ * On a fresh server (after a deploy, or a quiet spell longer than the shared
+ * copy lives) `cached` has nothing to serve and the first reader waits on the
+ * whole build — and gets an error if it fails. Here every good build is also
+ * kept as a *last good copy* for a day, and a reader who would wait longer
+ * than PAGE_PATIENCE_MS, or whose build failed, gets that copy instead,
+ * however old, while the build carries on behind them. Only a page that has
+ * never once been built can still fail.
+ */
+export async function cachedPage<T>(
+  key: string,
+  ttlMs: number,
+  load: () => Promise<T>,
+  options?: CacheOptions & {
+    /** For a page never built yet: something to show meanwhile (null = nothing). */
+    standIn?: () => Promise<T | null>;
+  },
+): Promise<T> {
+  const lastGoodKey = `last-good:${key}`;
+  const build = cached(
+    key,
+    ttlMs,
+    async () => {
+      if (SHARED_CACHE && !(await claimShared(`rebuild:${key}`, Math.max(ttlMs, PAGE_REBUILD_MS)))) {
+        // Another server is building (or built) this page in this window.
+        const theirs =
+          (await readShared<T>(key)) ??
+          (lastGoodLocal.get(key) as T | undefined) ??
+          (await readShared<T>(lastGoodKey));
+        if (theirs != null && isUsableCachedValue(theirs, allowsEmpty(options))) return theirs;
+      }
+      const value = await load();
+      if (isUsableCachedValue(value, allowsEmpty(options))) {
+        lastGoodLocal.set(key, value);
+        const now = Date.now();
+        if (SHARED_CACHE && now - (lastGoodWrittenAt.get(key) ?? 0) >= LAST_GOOD_EVERY_MS) {
+          lastGoodWrittenAt.set(key, now);
+          void writeShared(lastGoodKey, value, LAST_GOOD_SECONDS);
+          void writeShared(`built-at:${key}`, now, LAST_GOOD_SECONDS);
+        }
+      }
+      return value;
+    },
+    options,
+  );
+  build.catch(() => {});
+
+  // A cached answer, or a quick build, is used as it is.
+  const quick = await Promise.race([
+    build.then(
+      (value) => ({value}),
+      () => undefined,
+    ),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), PAGE_PATIENCE_MS)),
+  ]);
+  if (quick) return quick.value;
+
+  // Slow (null) or failed (undefined): the last good copy, however old.
+  const lastGood =
+    (lastGoodLocal.get(key) as T | undefined) ??
+    (SHARED_CACHE ? await readShared<T>(lastGoodKey) : null);
+  if (lastGood != null && isUsableCachedValue(lastGood, allowsEmpty(options))) return lastGood;
+
+  // Never built anywhere: a stand-in if the page has one, else wait for this
+  // build (or its error).
+  const standIn = options?.standIn ? await options.standIn().catch(() => null) : null;
+  if (standIn != null) return standIn;
+  return build;
+}
+
+/**
+ * When each page's last good copy was built (ms since epoch), for the health
+ * page. Recorded with the copy, so it is at most a minute behind the newest build.
+ */
+export async function lastBuiltAt(keys: string[]): Promise<Map<string, number>> {
+  if (!SHARED_CACHE) return new Map();
+  return readManyShared<number>(keys.map((key) => `built-at:${key}`)).then(
+    (found) =>
+      new Map(
+        keys.flatMap((key) => {
+          const at = found.get(`built-at:${key}`);
+          return typeof at === "number" ? [[key, at] as const] : [];
+        }),
+      ),
+  );
+}
+
+/** Another page's last good copy, if one has ever been built (see cachedPage). */
+export async function readLastGood<T>(key: string): Promise<T | null> {
+  const local = lastGoodLocal.get(key) as T | undefined;
+  if (local != null) return local;
+  return SHARED_CACHE ? readShared<T>(`last-good:${key}`) : null;
+}
+
 /**
  * A short cache that never leaves this process.
  *
@@ -255,6 +368,8 @@ export function forget(key: string): void {
 export function resetLiveCacheForTests(): void {
   store.clear();
   inflight.clear();
+  lastGoodLocal.clear();
+  lastGoodWrittenAt.clear();
 }
 
 /**

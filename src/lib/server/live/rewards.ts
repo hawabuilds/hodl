@@ -57,6 +57,7 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T> {
     headers: {"content-type": "application/json"},
     cache: "no-store",
     body: JSON.stringify({jsonrpc: "2.0", id: 1, method, params}),
+    signal: AbortSignal.timeout(10_000),
   });
   const body = (await res.json()) as {result?: T; error?: {message: string}};
   if (body.error) throw new Error(body.error.message);
@@ -320,7 +321,7 @@ async function quotePricesFor(tickers: string[]): Promise<Map<string, number>> {
     try {
       const res = await fetch(
         `https://api.robinhood.com/rhj/prices/${encodeURIComponent(ticker)}`,
-        {cache: "no-store"},
+        {cache: "no-store", signal: AbortSignal.timeout(8_000)},
       );
       if (!res.ok) continue;
       const body = (await res.json()) as {

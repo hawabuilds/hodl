@@ -1,4 +1,5 @@
-import {PAGE_EDGE, json, publicJson} from "@/lib/server/http";
+import {PAGE_EDGE, json, publicJson, queryKey} from "@/lib/server/http";
+import {cachedPage} from "@/lib/server/live/cache";
 import {rwasBoardPage} from "@/lib/server/rwasBoard";
 import {parseCategory, parseRwaSort} from "@/lib/rwaBoard";
 
@@ -10,13 +11,15 @@ export async function GET(request: Request) {
   const offset = Number(params.get("offset") ?? 0);
   try {
     return publicJson(
-      await rwasBoardPage({
-        tab: "all",
-        category: parseCategory(params.get("category")),
-        sort: parseRwaSort(params.get("sort")),
-        offset: Number.isFinite(offset) ? offset : 0,
-        watch: [],
-      }),
+      await cachedPage(queryKey("page:rwas-list", params), 10_000, () =>
+        rwasBoardPage({
+          tab: "all",
+          category: parseCategory(params.get("category")),
+          sort: parseRwaSort(params.get("sort")),
+          offset: Number.isFinite(offset) ? offset : 0,
+          watch: [],
+        }),
+      ),
       PAGE_EDGE,
     );
   } catch (error) {

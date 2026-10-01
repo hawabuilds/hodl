@@ -6,6 +6,7 @@ import {
   NEWS_WINDOW_MS,
 } from "@/lib/newsWindow";
 import {json, publicJson} from "@/lib/server/http";
+import {cachedPage} from "@/lib/server/live/cache";
 import {newestAgeMs} from "@/lib/server/live/news";
 import {fetchFeed} from "@/lib/server/sources";
 import {
@@ -91,7 +92,13 @@ export async function GET(request: NextRequest) {
   const topic =
     (NEWS_TOPICS.find((t) => t === params.get("topic")) as NewsTopic) ?? "all";
 
-  const {data, seeded, builtAt} = await loadFeed();
+  // The whole wire as one page: a slow or failed build hands readers the last
+  // good wire instead of an error. A wire without articles is not kept.
+  const {data, seeded, builtAt} = await cachedPage("page:news-feed", 30_000, async () => {
+    const feed = await loadFeed();
+    if (!feed.data.some((item) => item.kind === "article")) throw new Error("news wire empty");
+    return feed;
+  }).catch(() => loadFeed());
 
   const cutoff = Date.now() - NEWS_WINDOW_MS[window];
   const items = data

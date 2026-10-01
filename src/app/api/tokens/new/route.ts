@@ -1,12 +1,12 @@
 import type {NextRequest} from "next/server";
 import {PAGE_EDGE, json, publicJson, queryKey} from "@/lib/server/http";
-import {cached} from "@/lib/server/live/cache";
+import {cachedPage} from "@/lib/server/live/cache";
 import {hasDatabase} from "@/lib/server/db";
 import {loadDecoratedFeedPage} from "@/lib/server/live/feedDecorate";
 import type {QuoteKind} from "@/lib/universe";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /** How long a built page of new listings is reused before one request rebuilds it. */
 const NEW_TTL_MS = 8_000;
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     return json({error: "Token store is not configured.", empty: true}, 503);
   }
   try {
-    const body = await cached(queryKey("page:tokens-new", request.nextUrl.searchParams), NEW_TTL_MS, () =>
+    const body = await cachedPage(queryKey("page:tokens-new", request.nextUrl.searchParams), NEW_TTL_MS, () =>
       buildNew(request),
     );
     return publicJson(body, PAGE_EDGE);

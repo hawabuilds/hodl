@@ -1,8 +1,9 @@
 import {PAGE_EDGE, json, publicJson, queryKey} from "@/lib/server/http";
-import {cached} from "@/lib/server/live/cache";
+import {cachedPage, readLastGood} from "@/lib/server/live/cache";
 import {callerId} from "@/lib/server/auth";
 import {tokensTablePage} from "@/lib/server/tokensTable";
-import {decodeCursor, parseSort, parseTab} from "@/lib/tokensTable";
+import {decodeCursor, parseSort, parseTab, type TokensPage} from "@/lib/tokensTable";
+import type {TokenAsset} from "@/lib/types";
 
 /** How long a built public page (Trending, New) is reused before one request rebuilds it. */
 const PUBLIC_TTL_MS = 10_000;
@@ -28,25 +29,56 @@ export async function GET(request: Request) {
     cursor = null;
   }
   try {
-    const body = await cached(queryKey("page:tokens-table", params), PUBLIC_TTL_MS, () =>
-      tokensTablePage({
-        tab,
-        sort,
-        desc: params.get("dir") !== "asc",
-        stock: cleanStock(params.get("stock")),
-        cursor,
-        watch: [],
-        callerId: null,
-      }),
+    const body = await cachedPage(
+      queryKey("page:tokens-table", params),
+      PUBLIC_TTL_MS,
+      () =>
+        tokensTablePage({
+          tab,
+          sort,
+          desc: params.get("dir") !== "asc",
+          stock: cleanStock(params.get("stock")),
+          cursor,
+          watch: [],
+          callerId: null,
+        }),
+      {standIn: () => (cursor || params.get("stock") ? Promise.resolve(null) : standInPage(tab, sort))},
     );
     return publicJson(body, PAGE_EDGE);
   } catch (error) {
     console.error("tokens table page failed", error);
+    // Never built yet: stand in with the same tokens from the Market or New
+    // listings copy (also used above while the first build is slow), so the
+    // table shows rows rather than an error.
+    const standIn = cursor || params.get("stock") ? null : await standInPage(tab, sort).catch(() => null);
+    if (standIn) return json(standIn);
     return json({error: "Couldn't load tokens."}, 503);
   }
 }
 
+async function standInPage(tab: "trending" | "new", sort: string): Promise<TokensPage | null> {
+  const key =
+    tab === "new"
+      ? queryKey("page:tokens-new", new URLSearchParams({limit: "50"}))
+      : queryKey("page:market", new URLSearchParams({sort: "trending"}));
+  const copy = await readLastGood<{tokens?: TokenAsset[]}>(key);
+  const tokens = [...(copy?.tokens ?? [])];
+  if (tokens.length === 0) return null;
+  if (sort === "vol") tokens.sort((a, b) => (b.volume24hUsd ?? 0) - (a.volume24hUsd ?? 0));
+  return {
+    rows: tokens.map((asset) => ({
+      asset,
+      buys: asset.windows?.["24h"]?.buys ?? null,
+      sells: asset.windows?.["24h"]?.sells ?? null,
+      tradedAt: null,
+    })),
+    next: null,
+    pairs: [],
+  };
+}
+
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 /**
  * One page of the desktop Tokens table. POST so a watchlist of any size fits

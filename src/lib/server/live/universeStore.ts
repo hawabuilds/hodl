@@ -994,7 +994,10 @@ export async function refreshTradeableFlags(
           row.liquidity_usd != null && Number.isFinite(Number(row.liquidity_usd))
             ? Number(row.liquidity_usd)
             : null;
-        return db()
+        // Only rows whose liquidity actually moved (more than 5%, or into or
+        // out of unmeasured) are rewritten. Rewriting every priced token's
+        // wide row each pass was most of the database's disk writes.
+        let request: any = db()
           .from("tokens")
           .update(
             {
@@ -1004,6 +1007,13 @@ export async function refreshTradeableFlags(
             {count: "exact"},
           )
           .eq("address", address);
+        request =
+          liq == null
+            ? request.not("liquidity_usd", "is", null)
+            : request.or(
+                `liquidity_usd.is.null,liquidity_usd.lt.${liq * 0.95},liquidity_usd.gt.${liq * 1.05}`,
+              );
+        return request;
       }),
     );
     for (const {error, count} of results) {
@@ -1328,6 +1338,8 @@ export interface PricingCoverage {
 
 /**
  * Listed eligible vs measured mcap (priced_at AND last_mcap > 0).
+ * Planner estimates, not exact counts: this only feeds a log line, and four
+ * exact counts over the tokens table every price pass cost seconds each.
  * Null last_mcap is not counted as priced or as zero.
  */
 export async function pricingCoverage(): Promise<PricingCoverage> {
@@ -1336,7 +1348,7 @@ export async function pricingCoverage(): Promise<PricingCoverage> {
 
   let listedQuery: any = db()
     .from("tokens")
-    .select("address", {count: "exact", head: true})
+    .select("address", {count: "planned", head: true})
     .eq("status", "listed")
     .not("launchpad", "is", null);
   listedQuery = applyUniverseFilter(listedQuery);
@@ -1345,16 +1357,16 @@ export async function pricingCoverage(): Promise<PricingCoverage> {
     listedQuery,
     db()
       .from("token_stats")
-      .select("address", {count: "exact", head: true})
+      .select("address", {count: "planned", head: true})
       .not("priced_at", "is", null)
       .gt("last_mcap", 0),
     db()
       .from("token_stats")
-      .select("address", {count: "exact", head: true})
+      .select("address", {count: "planned", head: true})
       .eq("price_status", "no_pool"),
     db()
       .from("token_stats")
-      .select("address", {count: "exact", head: true})
+      .select("address", {count: "planned", head: true})
       .eq("price_status", "failed"),
   ]);
 

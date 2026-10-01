@@ -391,19 +391,37 @@ export const WORKER_POOL_MAX = 5;
  * client checked out and release every other checkout after the batch.
  * Do not log the connection string.
  */
+/**
+ * Limits on every statement a pooled worker connection runs. Without them a
+ * stalled database let one query, or a transaction left open, hold a
+ * connection for minutes — which is how the pooler ran out of connections on
+ * 30 Sep. The advisory-lock session is idle between checks, so none of these
+ * touch it.
+ */
+export const WORKER_STATEMENT_TIMEOUT_MS = 30_000;
+const WORKER_LOCK_TIMEOUT_MS = 10_000;
+const WORKER_IDLE_IN_TRANSACTION_MS = 60_000;
+
 export async function createAdminPool(
   opts: {
     max?: number;
     connectionTimeoutMillis?: number;
     idleTimeoutMillis?: number;
+    statementTimeoutMillis?: number;
   } = {},
 ): Promise<pg.Pool> {
   const config = await adminPgConfig();
+  const statementTimeout = opts.statementTimeoutMillis ?? WORKER_STATEMENT_TIMEOUT_MS;
   return new pg.Pool({
     ...config,
     max: opts.max ?? WORKER_POOL_MAX,
     connectionTimeoutMillis: opts.connectionTimeoutMillis ?? 30_000,
     idleTimeoutMillis: opts.idleTimeoutMillis ?? 10_000,
     allowExitOnIdle: false,
+    statement_timeout: statementTimeout,
+    lock_timeout: WORKER_LOCK_TIMEOUT_MS,
+    idle_in_transaction_session_timeout: WORKER_IDLE_IN_TRANSACTION_MS,
+    // Client-side backstop for a server that stops answering altogether.
+    query_timeout: statementTimeout + 5_000,
   });
 }

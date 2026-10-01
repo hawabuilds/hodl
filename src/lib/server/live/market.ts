@@ -21,7 +21,7 @@ import {holderRewardsFor} from "./holderRewards";
 import {graduatedFrom, marketProvesGraduated} from "./graduation";
 import {taxesFor} from "./taxes";
 import {totalSupplies} from "./chain";
-import {cached, stale} from "./cache";
+import {cached, cachedPage, readLastGood, stale} from "./cache";
 import {readShared} from "./shared";
 import {tokenImages as geckoTokenImages, holderCountFor} from "./geckoterminal";
 import {deployImagesFor} from "./deployImages";
@@ -1007,25 +1007,79 @@ async function loadAsset(
   };
 }
 
+/**
+ * One asset for its page. Kept as a last good copy like every page (see
+ * cachedPage), so a page seen once never fails on a slow database again; a
+ * token never built yet stands in with its row from the token lists' copies
+ * (taxes then unmeasured) while the first build runs.
+ */
 export async function getAsset(
   kind: "rwa" | "token",
   id: string,
 ): Promise<Asset | null> {
-  return cached(
-    `asset:${kind}:${kind === "token" ? normalizeAddress(id) : id.toLowerCase()}`,
+  const address = kind === "token" ? normalizeAddress(id) : null;
+  return cachedPage(
+    `asset:${kind}:${address ?? id.toLowerCase()}`,
     10_000,
     () => loadAsset(kind, id),
+    address ? {standIn: () => tokenFromListCopies(address)} : undefined,
   );
 }
 
-const SEARCH_INDEX_TTL_MS = 60_000;
+/** The token lists whose last good copies can stand in for an unbuilt token page. */
+const LIST_COPY_KEYS = [
+  "page:market:sort=trending",
+  "page:market:sort=volume",
+  "page:tokens-new:limit=50",
+  "page:tokens-table:dir=desc&sort=vol&tab=trending",
+  "page:tokens-table:dir=desc&sort=age&tab=new",
+];
+
+async function tokenFromListCopies(address: string): Promise<TokenAsset | null> {
+  const copies = await Promise.all(
+    LIST_COPY_KEYS.map((key) =>
+      readLastGood<{tokens?: TokenAsset[]; rows?: {asset: TokenAsset}[]}>(key).catch(() => null),
+    ),
+  );
+  for (const copy of copies) {
+    const found = [...(copy?.tokens ?? []), ...(copy?.rows ?? []).map((row) => row.asset)].find(
+      (token) => normalizeAddress(token.address) === address,
+    );
+    if (found) return {...found, buyTaxPct: null, sellTaxPct: null, feeSplit: null};
+  }
+  return null;
+}
+
+const SEARCH_INDEX_TTL_MS = 10 * 60_000;
 
 /** RWA universe tokens for search. */
 export async function searchableTokens(): Promise<TokenAsset[]> {
-  return cached("market:search-index", SEARCH_INDEX_TTL_MS, async () => {
-    const tokens = await listTokens();
-    return tokens.filter(qualifiesForSearch);
-  });
+  return cachedPage(
+    "market:search-index",
+    SEARCH_INDEX_TTL_MS,
+    async () => {
+      const tokens = await listTokens();
+      return tokens.filter(qualifiesForSearch);
+    },
+    {standIn: listCopyTokens},
+  );
+}
+
+/** Every token in the lists' last good copies: search's stand-in until its index builds. */
+async function listCopyTokens(): Promise<TokenAsset[] | null> {
+  const copies = await Promise.all(
+    LIST_COPY_KEYS.map((key) =>
+      readLastGood<{tokens?: TokenAsset[]; rows?: {asset: TokenAsset}[]}>(key).catch(() => null),
+    ),
+  );
+  const byAddress = new Map<string, TokenAsset>();
+  for (const copy of copies) {
+    for (const token of [...(copy?.tokens ?? []), ...(copy?.rows ?? []).map((row) => row.asset)]) {
+      byAddress.set(normalizeAddress(token.address), token);
+    }
+  }
+  const tokens = [...byAddress.values()].filter(qualifiesForSearch);
+  return tokens.length > 0 ? tokens : null;
 }
 
 /**

@@ -1,6 +1,9 @@
 "use client";
 
-import {useCallback, useMemo, useState, useEffect} from "react";
+import {useCallback, useMemo, useRef, useState, useEffect} from "react";
+import {useQueryClient} from "@tanstack/react-query";
+import {normalizeAddress} from "@/lib/address";
+import {startAssetBundle} from "@/hooks/assetBundle";
 import {useCommentTarget} from "@/lib/alertBus";
 import {mergeTradesIntoChart} from "@/lib/chartLive";
 import {changeFromViewStart, headerChange, tokenHeaderPrice} from "@/lib/chartHeader";
@@ -94,6 +97,19 @@ export function AssetPage({
 }) {
   const router = useRouter();
   const desktop = useIsDesktop();
+  // Opened directly, with nothing cached: one bundle request feeds the asset,
+  // chart and trades queries below (see hooks/assetBundle). Started in render
+  // so it is in flight before those queries fetch.
+  const queryClient = useQueryClient();
+  const bundleScope = `${kind}:${kind === "token" ? normalizeAddress(id) : id}`;
+  const bundleStarted = useRef<string | null>(null);
+  if (bundleStarted.current !== bundleScope) {
+    bundleStarted.current = bundleScope;
+    const key = kind === "token" ? normalizeAddress(id) : id;
+    if (!queryClient.getQueryData(["asset", kind, key])) {
+      startAssetBundle(kind, key, defaultChartTimeframe({kind, listedAt: null, requested: requestedTimeframe}));
+    }
+  }
   const {asset, isLoading, error} = useAsset(kind, id);
   const listedAt = asset?.kind === "token" ? asset.listedAt : null;
   const autoTimeframe = defaultChartTimeframe({

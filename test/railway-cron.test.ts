@@ -2,22 +2,21 @@ import {describe, it} from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {join} from "node:path";
-import {jobsForTick, RAILWAY_CRON_JOBS} from "../scripts/railway-cron-jobs.ts";
+import {jobsForTick, PAGE_WARM_PATHS, RAILWAY_CRON_JOBS} from "../scripts/railway-cron-jobs.ts";
 
 describe("railway cron", () => {
-  it("runs prices, rewards, stats, and news every tick", () => {
+  it("runs prices, rewards, stats, and every page warm-up every tick", () => {
     const paths = jobsForTick(7).map((job) => job.path);
     assert.ok(paths.includes("/api/cron/prices"));
     assert.ok(paths.includes("/api/cron/rewards"));
     assert.ok(paths.includes("/api/cron/stats"));
-    assert.ok(paths.includes("/api/news"));
-    assert.ok(!paths.includes("/api/market"));
+    for (const path of PAGE_WARM_PATHS) assert.ok(paths.includes(path), path);
   });
 
-  it("warms market on the half hour", () => {
-    assert.ok(jobsForTick(0).some((job) => job.path === "/api/market"));
-    assert.ok(jobsForTick(30).some((job) => job.path === "/api/market"));
-    assert.ok(!jobsForTick(15).some((job) => job.path === "/api/market"));
+  it("warms pages without the cron secret", () => {
+    for (const job of RAILWAY_CRON_JOBS) {
+      assert.equal(job.auth, job.path.startsWith("/api/cron/"), job.path);
+    }
   });
 
   it("vercel.json leaves crons empty (Railway owns scheduling)", () => {
@@ -35,13 +34,7 @@ describe("railway cron", () => {
   });
 
   it("lists every migrated endpoint", () => {
-    const paths = RAILWAY_CRON_JOBS.map((job) => job.path).sort();
-    assert.deepEqual(paths, [
-      "/api/cron/prices",
-      "/api/cron/rewards",
-      "/api/cron/stats",
-      "/api/market",
-      "/api/news",
-    ]);
+    const paths = RAILWAY_CRON_JOBS.filter((job) => job.auth).map((job) => job.path).sort();
+    assert.deepEqual(paths, ["/api/cron/prices", "/api/cron/rewards", "/api/cron/stats"]);
   });
 });

@@ -105,6 +105,7 @@ async function refreshKeyUsage(): Promise<void> {
     const res = await fetch(KEY_URL, {
       headers: {accept: "application/json", ...authHeaders()},
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return;
     const body = (await res.json()) as {

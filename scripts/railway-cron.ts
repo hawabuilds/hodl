@@ -11,7 +11,10 @@
  */
 import {jobsForTick, type CronJob} from "./railway-cron-jobs.ts";
 
-/** Lightest first to reduce concurrent load on the app (news → stats → prices → rewards). */
+/**
+ * Page warm-ups first (cheap once warm, and what visitors wait on), then the
+ * write jobs lightest first (stats → prices → rewards).
+ */
 const JOB_ORDER = [
   "/api/news",
   "/api/cron/stats",
@@ -32,9 +35,8 @@ const JOB_TIMEOUT_MS = Math.max(
 
 function sortJobsForTick(jobs: CronJob[]): CronJob[] {
   const rank = new Map(JOB_ORDER.map((path, index) => [path, index]));
-  return [...jobs].sort(
-    (a, b) => (rank.get(a.path) ?? JOB_ORDER.length) - (rank.get(b.path) ?? JOB_ORDER.length),
-  );
+  const order = (job: CronJob) => (job.auth ? (rank.get(job.path) ?? JOB_ORDER.length) : -1);
+  return [...jobs].sort((a, b) => order(a) - order(b));
 }
 
 function baseUrl(): string {

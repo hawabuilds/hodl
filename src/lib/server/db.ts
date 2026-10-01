@@ -8,6 +8,13 @@ export const hasDatabase = url.length > 0 && serviceRoleKey.length > 0;
 let client: SupabaseClient | null = null;
 
 /**
+ * No database request waits longer than this. PostgREST's own statement limit
+ * is 8s; this also covers a gateway or connection that never answers, which
+ * otherwise held a page build (and its serverless function) for minutes.
+ */
+const DB_REQUEST_TIMEOUT_MS = 15_000;
+
+/**
  * Service-role client. Bypasses row-level security, so it must only ever be
  * reached from server code that has already established who the caller is —
  * see `requireCaller` in `auth.ts`.
@@ -25,8 +32,14 @@ export function db(): SupabaseClient {
     // redeploys, so a row changed in Postgres keeps serving its old value with
     // no way to tell from the response that anything is stale.
     global: {
-      fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-        fetch(input, {...init, cache: "no-store"}),
+      fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+        const timeout = AbortSignal.timeout(DB_REQUEST_TIMEOUT_MS);
+        return fetch(input, {
+          ...init,
+          cache: "no-store",
+          signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
+        });
+      },
     },
   });
   return client;

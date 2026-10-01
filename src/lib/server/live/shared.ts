@@ -131,6 +131,29 @@ export async function readShared<T>(key: string): Promise<T | null> {
  * Deliberately not awaited by callers: the value is already in hand, and making
  * a reader wait on the write would spend the latency this exists to save.
  */
+/**
+ * Claim `key` for `ttlMs` across every instance (SET NX). True when this
+ * caller holds it — or when Redis cannot be asked, so a Redis outage never
+ * stops pages from rebuilding. False when another instance holds it.
+ */
+export async function claimShared(key: string, ttlMs: number): Promise<boolean> {
+  if (!URL_ || !TOKEN) return true;
+  try {
+    const res = await fetch(URL_, {
+      method: "POST",
+      headers: {authorization: `Bearer ${TOKEN}`, "content-type": "application/json"},
+      body: JSON.stringify(["SET", key, "1", "NX", "PX", Math.round(ttlMs)]),
+      cache: "no-store",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!res.ok) return true;
+    const json = (await res.json()) as {result?: string | null};
+    return json.result === "OK";
+  } catch {
+    return true;
+  }
+}
+
 export async function writeShared(
   key: string,
   value: unknown,

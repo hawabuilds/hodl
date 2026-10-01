@@ -212,11 +212,10 @@ export async function decorateTokenAssets(
     return decorated;
   });
 
-  try {
-    await upsertStats(stats);
-  } catch (error) {
+  // Saved behind the page, not before it: the reader already has the numbers.
+  void upsertStats(stats).catch((error) => {
     console.error("feed decorate stats persist failed", error);
-  }
+  });
 
   return out;
 }

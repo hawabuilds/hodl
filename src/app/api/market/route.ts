@@ -1,6 +1,6 @@
 import type {NextRequest} from "next/server";
 import {PAGE_EDGE, json, publicJson, queryKey} from "@/lib/server/http";
-import {cached} from "@/lib/server/live/cache";
+import {cachedPage} from "@/lib/server/live/cache";
 import {hasDatabase} from "@/lib/server/db";
 import {listRwas} from "@/lib/server/live/market";
 import {loadDecoratedFeedPage} from "@/lib/server/live/feedDecorate";
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
     return json({error: "Market store is not configured.", empty: true}, 503);
   }
   try {
-    const body = await cached(queryKey("page:market", request.nextUrl.searchParams), MARKET_TTL_MS, () =>
+    const body = await cachedPage(queryKey("page:market", request.nextUrl.searchParams), MARKET_TTL_MS, () =>
       buildMarket(request),
     );
     return publicJson(body, PAGE_EDGE);

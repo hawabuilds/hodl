@@ -31,6 +31,10 @@ export function NewsImage({
     // eslint-disable-next-line @next/next/no-img-element -- publisher artwork from any host; our copy is already sized
     <img
       alt=""
+      // Off-screen stories wait until they are scrolled near; a caller that
+      // shows one above the fold can pass loading="eager".
+      loading="lazy"
+      decoding="async"
       {...img}
       src={stage === "thumb" && thumb ? thumb : src}
       onError={() => {

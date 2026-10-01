@@ -1,9 +1,8 @@
 import type {Asset, Profile, RwaAsset, TokenAsset} from "@/lib/types";
 import {RWA_REGISTRY, RWA_BY_TICKER} from "./robinhood";
-import {listRwas} from "./market";
+import {listRwas, searchableTokens} from "./market";
 import {
   getTokenRow,
-  searchTokenRows,
   statsFor,
   rowToAsset,
 } from "./universeStore";
@@ -13,6 +12,24 @@ import {showsThreeState} from "@/lib/threeState";
 import {qualifyAndInsert} from "./qualify";
 import {hasDatabase} from "../db";
 import {searchCategory} from "@/lib/searchable";
+
+/**
+ * Tokens matching the query, from the cached search index (rebuilt at most
+ * every few minutes, with a last good copy). Searching the tokens table per
+ * keystroke was an `ilike` scan of every row — a full-table read for each
+ * letter typed, by every reader.
+ */
+async function tokenCandidates(q: string): Promise<TokenAsset[]> {
+  if (!hasDatabase) return [];
+  const wanted = q.toLowerCase();
+  const index = await searchableTokens().catch(() => [] as TokenAsset[]);
+  return index.filter(
+    (token) =>
+      normalizeAddress(token.address) === wanted ||
+      scoreName(token.symbol, q) > 0 ||
+      scoreName(token.name, q) > 0,
+  );
+}
 
 export interface GroupedSearch {
   query: string;
@@ -132,11 +149,7 @@ export async function searchUniverse(
     }
   }
 
-  const tokenRows = hasDatabase ? await searchTokenRows(q) : [];
-  const stats = await statsFor(tokenRows.map((row) => row.address));
-  const tokenHits = tokenRows
-    .filter((row) => listedRow(row))
-    .map((row) => rowToAsset(row, stats.get(normalizeAddress(row.address))))
+  const tokenHits = (await tokenCandidates(q))
     .map((token) => ({
       token,
       score:
