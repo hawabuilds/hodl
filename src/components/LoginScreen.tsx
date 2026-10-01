@@ -3,6 +3,7 @@
 import {useEffect, useState} from "react";
 import Image from "next/image";
 import {useRouter} from "next/navigation";
+import {APP_X_URL} from "@/config/app";
 import {useIsDesktop} from "@/hooks/useBreakpoint";
 import {useUser} from "@/hooks/useUser";
 import {LandingPreview} from "./LandingPreview";
@@ -18,7 +19,7 @@ import {Modal} from "./ui/Modal";
  */
 export function LoginScreen() {
   const router = useRouter();
-  const {ready, authenticated, login, isDemo} = useUser();
+  const {ready, authenticated, login} = useUser();
   const [modalOpen, setModalOpen] = useState(false);
   const desktop = useIsDesktop();
 
@@ -32,7 +33,7 @@ export function LoginScreen() {
   };
 
   return (
-    <div className="flex h-full flex-col justify-center bg-surface-base px-8 pb-[max(48px,env(safe-area-inset-bottom))] lg:px-14 lg:pb-0">
+    <div className="relative flex h-full flex-col justify-center bg-surface-base px-8 pb-[max(48px,env(safe-area-inset-bottom))] lg:px-14 lg:pb-0">
       {/* On a phone the pitch is the screen. On a desktop it takes the left
           of the window and the live market fills the right, rather than one
           phone-width column adrift in the middle. */}
@@ -73,15 +74,24 @@ export function LoginScreen() {
               Coming soon
             </button>
 
-            {isDemo ? (
-              <p className="mt-2 text-center text-[11.5px] font-medium text-faint">
-                Demo mode — set NEXT_PUBLIC_PRIVY_APP_ID for real login.
-              </p>
-            ) : null}
           </div>
         </div>
 
         {desktop ? <LandingPreview onJoin={() => setModalOpen(true)} /> : null}
+      </div>
+
+      {/* HODL on X, at the foot of the page on every screen. */}
+      <div className="absolute inset-x-0 bottom-[max(16px,env(safe-area-inset-bottom))] flex justify-center lg:bottom-8">
+        <a
+          href={APP_X_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="HODL on X"
+          title="HODL on X"
+          className="grid h-10 w-10 place-items-center rounded-full text-muted transition-colors hover:bg-[var(--overlay-wash)] hover:text-ink"
+        >
+          <XIcon className="h-[18px] w-[18px]" />
+        </a>
       </div>
 
       <Modal

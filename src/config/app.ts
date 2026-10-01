@@ -1,4 +1,7 @@
 export const APP_NAME = "HODL";
+
+/** HODL on X, linked from the landing page. */
+export const APP_X_URL = "https://x.com/hodl_fan";
 export const APP_TAGLINE = "Every tokenized stock, and everything trading against it";
 export const APP_SUBTITLE =
   "Trending Robinhood RWAs and the tokens with RWA liquidity, in one feed.";
