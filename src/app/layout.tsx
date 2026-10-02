@@ -5,6 +5,7 @@ import {appOrigin} from "@/config/appUrl";
 import {Providers} from "@/components/providers/Providers";
 import {OVERLAY_ROOT_ID} from "@/components/ui/OverlayPortal";
 import "./globals.css";
+import {Analytics} from "@vercel/analytics/next";
 
 /**
  * Inter for interface copy: 400 body, 300 large display, 500/700 headings.
@@ -98,6 +99,7 @@ export default function RootLayout({
             <div id={OVERLAY_ROOT_ID} />
           </div>
         </Providers>
+        <Analytics />
       </body>
     </html>
   );

@@ -50,7 +50,7 @@ let pairSqlWarned = false;
  * no counts: the Tokens tab's older count function takes ~4s over this set,
  * past the API's statement timeout, and would stall every page.
  */
-async function pairStats(): Promise<Record<string, PairStat>> {
+export async function pairStats(): Promise<Record<string, PairStat>> {
   if (!hasDatabase) return {};
   const key = "rwas:pair-stats:v1";
   const load = async (): Promise<Record<string, PairStat>> => {

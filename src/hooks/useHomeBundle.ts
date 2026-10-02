@@ -3,6 +3,7 @@
 import {useEffect, useState} from "react";
 import {useQueryClient, type QueryClient} from "@tanstack/react-query";
 
+import {HOME_FEATURED_KEY, acceptHomeFeatured, type HomeFeaturedResponse} from "@/hooks/useHomeFeatured";
 import {acceptMarket, marketQueryKey, type MarketResponse} from "@/hooks/useMarket";
 import {acceptNewTokensPage, type NewTokensPage} from "@/hooks/useNewTokens";
 import {newsFeedQuery} from "@/hooks/useNewsFeed";
@@ -26,6 +27,7 @@ interface HomeBundle {
   market: {trending: MarketResponse | null; volume: MarketResponse | null};
   newTokens: NewTokensPage | null;
   news: {window: string; topic: string; body: unknown} | null;
+  featured: HomeFeaturedResponse | null;
   chart: {id: string; timeframe: string; body: unknown} | null;
 }
 
@@ -57,6 +59,9 @@ export function loadHomeBundle(queryClient: QueryClient): Promise<void> {
       if (bundle.news) {
         const {queryKey} = newsFeedQuery(bundle.news.window as NewsWindow, bundle.news.topic as NewsTopic);
         queryClient.setQueryData(queryKey, bundle.news.body);
+      }
+      if (bundle.featured) {
+        queryClient.setQueryData(HOME_FEATURED_KEY, acceptHomeFeatured(bundle.featured));
       }
       if (bundle.chart) {
         queryClient.setQueryData(["chart", "rwa", bundle.chart.id, bundle.chart.timeframe], bundle.chart.body);

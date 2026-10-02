@@ -43,6 +43,7 @@ export function AssetRow({
   sparkline = true,
   pairChip = true,
   active = false,
+  wideChart = false,
 }: {
   asset: Asset;
   fresh?: boolean;
@@ -68,6 +69,11 @@ export function AssetRow({
   sparkline?: boolean;
   /** Off where every row shares the pair, as under one RWA's paired tokens. */
   pairChip?: boolean;
+  /**
+   * Name, then a chart filling the middle, then market cap and %: for a
+   * wide panel, where a fixed-width chart left a gap after the name.
+   */
+  wideChart?: boolean;
 }) {
   const prefetch = usePrefetchAsset();
   // The same shared price the chart page publishes into, so a row and the page
@@ -129,7 +135,7 @@ export function AssetRow({
         />
       )}
 
-      <div className="min-w-0 flex-1">
+      <div className={cn("min-w-0", wideChart ? "w-[34%] shrink-0" : "flex-1")}>
         <div className="flex min-w-0 items-center gap-1.5">
           <span
             className={cn(
@@ -165,7 +171,7 @@ export function AssetRow({
           className={cn(
             "tabular-nums flex items-center gap-2.5 truncate font-semibold",
             compact
-              ? "mt-[2px] text-[length:var(--home-t-small,12px)] leading-[1.25]"
+              ? "mt-[var(--home-line-gap,2px)] text-[length:var(--home-t-small,12px)] leading-[1.25]"
               : "mt-[3px] text-[12.5px]",
           )}
         >
@@ -190,14 +196,17 @@ export function AssetRow({
         <Sparkline
           series={asset.series}
           positive={positive}
-          className={cn("shrink-0", compact ? "h-[20px] w-[56px]" : "h-[28px] w-[52px]")}
+          className={cn(
+            wideChart ? "mx-2 h-[28px] min-w-[56px] flex-1" : "shrink-0",
+            !wideChart && (compact ? "h-[20px] w-[56px]" : "h-[28px] w-[52px]"),
+          )}
         />
       ) : null}
 
       <div
         className={cn(
           "flex shrink-0 flex-col items-end text-right",
-          compact ? "gap-[2px]" : "gap-[3px]",
+          compact ? "gap-[var(--home-line-gap,2px)]" : "gap-[3px]",
         )}
       >
         <span
@@ -263,6 +272,7 @@ export function AssetList({
   compact = false,
   sparkline = true,
   pairChip = true,
+  wideChart = false,
   activePath,
 }: {
   assets: Asset[];
@@ -282,6 +292,8 @@ export function AssetList({
   sparkline?: boolean;
   /** Pass-through to each row. See `AssetRow`. */
   pairChip?: boolean;
+  /** Pass-through to each row. See `AssetRow`. */
+  wideChart?: boolean;
   /** The current route, so the row for the asset on screen can say so. */
   activePath?: string;
 }) {
@@ -317,6 +329,7 @@ export function AssetList({
             compact={compact}
             sparkline={sparkline}
             pairChip={pairChip}
+            wideChart={wideChart}
             active={current === assetPath(asset.kind, asset.id).toLowerCase()}
           />
         </li>

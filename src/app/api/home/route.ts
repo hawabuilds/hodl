@@ -4,7 +4,8 @@ import {GET as chartRoute} from "@/app/api/asset/[kind]/[id]/chart/route";
 import {GET as marketRoute} from "@/app/api/market/route";
 import {GET as newsRoute} from "@/app/api/news/route";
 import {GET as newTokensRoute} from "@/app/api/tokens/new/route";
-import {RANGE_SOURCE, featuredRwa} from "@/lib/homeSummary";
+import {RANGE_SOURCE} from "@/lib/homeSummary";
+import {homeFeatured} from "@/lib/server/homeFeatured";
 import {NEWS_DEFAULT_TOPIC, NEWS_DEFAULT_WINDOW} from "@/lib/newsWindow";
 import {PAGE_EDGE, publicJson} from "@/lib/server/http";
 import type {RwaAsset, TokenAsset} from "@/lib/types";
@@ -46,7 +47,7 @@ export async function GET(request: NextRequest) {
   const origin = request.nextUrl.origin;
   const featuredTimeframe = RANGE_SOURCE["1D"].timeframe;
 
-  const [trending, volume, newTokens, news] = await Promise.all([
+  const [trending, volume, newTokens, news, featured] = await Promise.all([
     within(marketRoute(call(origin, "/api/market?sort=trending")).then((r) => body<MarketBody>(r)), PART_BUDGET_MS),
     within(marketRoute(call(origin, "/api/market?sort=volume")).then((r) => body<MarketBody>(r)), PART_BUDGET_MS),
     within(newTokensRoute(call(origin, "/api/tokens/new")).then((r) => body<unknown>(r)), PART_BUDGET_MS),
@@ -56,14 +57,15 @@ export async function GET(request: NextRequest) {
       ),
       PART_BUDGET_MS,
     ),
+    // The RWA whose paired tokens traded most today, from the tokens table.
+    within(homeFeatured(), PART_BUDGET_MS),
   ]);
 
-  // The featured stock is decided by the volume list, exactly as the card does.
-  const lead = volume ? featuredRwa(volume.tokens, volume.rwas) : null;
-  const chart = lead
+  const leadId = featured?.ticker ? featured.ticker.toLowerCase() : null;
+  const chart = leadId
     ? await within(
-        chartRoute(call(origin, `/api/asset/rwa/${lead.rwa.id}/chart?tf=${featuredTimeframe}`), {
-          params: {kind: "rwa", id: lead.rwa.id},
+        chartRoute(call(origin, `/api/asset/rwa/${leadId}/chart?tf=${featuredTimeframe}`), {
+          params: {kind: "rwa", id: leadId},
         }).then((r) => body<unknown>(r)),
         PART_BUDGET_MS,
       )
@@ -74,7 +76,8 @@ export async function GET(request: NextRequest) {
       market: {trending, volume},
       newTokens,
       news: news ? {window: NEWS_DEFAULT_WINDOW, topic: NEWS_DEFAULT_TOPIC, body: news} : null,
-      chart: chart && lead ? {id: lead.rwa.id, timeframe: featuredTimeframe, body: chart} : null,
+      featured,
+      chart: chart && leadId ? {id: leadId, timeframe: featuredTimeframe, body: chart} : null,
       builtAt: Date.now(),
     },
     PAGE_EDGE,

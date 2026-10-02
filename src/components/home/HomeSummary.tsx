@@ -15,10 +15,12 @@ import {VerifiedTick} from "@/components/ui/Badges";
 import {PriceDelta} from "@/components/ui/PriceDelta";
 import {useChart} from "@/hooks/useAsset";
 import {useHomeBundle} from "@/hooks/useHomeBundle";
+import {useHomeFeatured} from "@/hooks/useHomeFeatured";
 import {useMarket} from "@/hooks/useMarket";
 import {useNewsFeed} from "@/hooks/useNewsFeed";
 import {useNewTokens} from "@/hooks/useNewTokens";
 import {useUser} from "@/hooks/useUser";
+import {useFollows} from "@/hooks/useProfile";
 import {chartWindowMs} from "@/lib/chartPlot";
 import {cn} from "@/lib/cn";
 import {requestCreate} from "@/lib/createIntent";
@@ -27,17 +29,17 @@ import {rememberHomePath} from "@/lib/homeState";
 import {
   FEATURED_RANGES,
   RANGE_SOURCE,
-  featuredRwa,
   newsForTickers,
   sliceToRange,
   type FeaturedRange,
 } from "@/lib/homeSummary";
 import {NEWS_DEFAULT_TOPIC, NEWS_DEFAULT_WINDOW} from "@/lib/newsWindow";
 import {formatPriceUsd} from "@/lib/priceState";
-import {newsArticlePath} from "@/lib/routes";
+import {newsArticlePath, profilePath} from "@/lib/routes";
 import {sectorFor} from "@/lib/sectors";
 import {useSession} from "@/lib/session";
 import type {FollowingComment, RwaAsset} from "@/lib/types";
+import type {SuggestedTrader} from "@/lib/server/suggestedTraders";
 import {
   CardBoundary,
   CardError,
@@ -50,48 +52,38 @@ import {
 /** Stable, so the new-token feed is not re-keyed every render. */
 const ALL_LAUNCHES = {};
 
-/** Rows in each list card; a short window shows fewer (see ROW_LIMITS). */
-const ROWS = 5;
+/** Rows in each list card. */
+const ROWS = 4;
 
 /**
- * Home's sizes, as CSS variables set once on the page.
- *
- * Home follows the design's layout exactly and fits one laptop screen by
- * shrinking, never by moving anything. A window at least 880px tall (a
- * 1440x900 screen) uses the first set; a shorter desktop window (1280x800)
- * uses the second, which sits at the floor: 13px body, 11px small text, 24px
- * logos, 36px rows, a 120px chart. CSS rather than a measured height, so the
- * first paint is already right.
+ * Home's sizes, as CSS variables set once on the page: roomy cards (24px
+ * between and inside them), 62px rows with a 5px gap between a row's two
+ * lines, and the page scrolls when the window is short rather than shrinking.
  */
 // Written out whole: Tailwind only generates classes it can read in the
 // source, so a variant spliced in with `${...}` never reaches the CSS.
 const SIZES = [
-  "[--home-gap:16px] [--home-pad:20px] [--home-stack:8px]",
-  "[--home-card-pt:14px] [--home-card-px:16px] [--home-card-pb:6px]",
-  "[--home-row:40px] [--home-logo:28px] [--home-chart:136px]",
-  "[--home-t-title:15px] [--home-t-body:14px] [--home-t-small:12px]",
-  "[--home-t-name:20px] [--home-t-price:32px] [--home-feat-logo:36px]",
-  "[--home-open:36px] [--home-news-row:44px] [--home-thumb-w:52px] [--home-thumb-h:36px]",
-  "[@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-gap:12px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-pad:16px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-stack:6px]",
-  "[@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-card-pt:12px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-card-px:14px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-card-pb:4px]",
-  "[@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-row:36px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-logo:24px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-chart:120px]",
-  "[@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-t-title:14px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-t-body:13px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-t-small:11px]",
-  "[@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-t-name:17px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-t-price:26px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-feat-logo:30px]",
-  "[@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-open:30px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-news-row:38px] [@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-thumb-w:46px]",
-  "[@media(min-width:1024px)_and_(max-height:879.98px)]:[--home-thumb-h:30px]",
-].join(" ");
-
-/**
- * Past the floor, the list cards give up rows instead: 5, then 4, then 3, on
- * desktop windows too short for the full set even at the smallest sizes.
- */
-const ROW_LIMITS = [
-  "[@media(min-width:1024px)_and_(max-height:783.98px)]:[&_li:nth-child(n+5)]:hidden",
-  "[@media(min-width:1024px)_and_(max-height:747.98px)]:[&_li:nth-child(n+4)]:hidden",
+  "[--home-gap:24px] [--home-pad:24px] [--home-stack:10px]",
+  "[--home-card-pt:22px] [--home-card-px:24px] [--home-card-pb:14px]",
+  "[--home-row:62px] [--home-logo:36px] [--home-chart:180px] [--home-line-gap:5px]",
+  "[--home-t-title:16px] [--home-t-body:15px] [--home-t-small:12.5px]",
+  "[--home-t-name:20px] [--home-t-price:34px] [--home-feat-logo:40px]",
+  "[--home-open:42px] [--home-news-row:64px] [--home-thumb-w:64px] [--home-thumb-h:44px]",
 ].join(" ");
 
 const smallText = "text-[length:var(--home-t-small)] leading-[1.25]";
 const bodyText = "text-[length:var(--home-t-body)] leading-[1.25]";
+
+/**
+ * The card rows by width. Desktop Home starts at 1024px (a phone gets the
+ * feed): 2 cards a row up to 1280px, 3 from there. With three cards in two
+ * columns the third takes the whole second row rather than leaving a hole.
+ */
+const THREE_UP = "grid gap-[var(--home-gap)] lg:grid-cols-2 xl:grid-cols-3";
+const THIRD_OF_THREE = "min-w-0 lg:col-span-2 xl:col-span-1";
+const TWO_UP = "grid gap-[var(--home-gap)] lg:grid-cols-2 xl:grid-cols-12";
+const WIDE_OF_TWO = "min-w-0 xl:col-span-7";
+const NARROW_OF_TWO = "min-w-0 xl:col-span-5";
 
 /**
  * Home: a calm summary of the market, for someone arriving from Robinhood.
@@ -144,26 +136,31 @@ export function HomeSummary() {
         <FeaturedRwaCard />
       </CardBoundary>
 
-      <div className="grid gap-[var(--home-gap)] lg:grid-cols-3">
+      <div className={THREE_UP}>
         <CardBoundary title="Trending tokens" className="h-full">
           <TrendingCard />
         </CardBoundary>
         <CardBoundary title="Just launched" className="h-full">
           <JustLaunchedCard />
         </CardBoundary>
-        <CardBoundary title="RWAs on the move" className="h-full">
-          <MoversCard />
-        </CardBoundary>
+        {/* Alone on its row at 1024–1279px, so its rows sit two by two there. */}
+        <div className={cn(THIRD_OF_THREE, "lg:[&_ul]:grid lg:[&_ul]:grid-cols-2 lg:[&_ul]:gap-x-6 xl:[&_ul]:block")}>
+          <CardBoundary title="RWAs on the move" className="h-full">
+            <MoversCard />
+          </CardBoundary>
+        </div>
       </div>
 
-      <div className="grid gap-[var(--home-gap)] lg:grid-cols-12">
-        <div className="min-w-0 lg:col-span-7">
+      <div className={TWO_UP}>
+        <div className={WIDE_OF_TWO}>
           <CardBoundary title="News on the RWAs behind the tokens" className="h-full">
             <NewsCard />
           </CardBoundary>
         </div>
-        <div className="min-w-0 lg:col-span-5">
-          <CardBoundary title="From people you follow" className="h-full">
+        {/* Not stretched to the news card's height: with nobody followed it
+            is a short card, not a tall empty box. */}
+        <div className={cn(NARROW_OF_TWO, "self-start")}>
+          <CardBoundary title="From people you follow">
             <FollowingCard />
           </CardBoundary>
         </div>
@@ -179,23 +176,21 @@ function HomeSkeleton() {
   return (
     <>
       <FeaturedSkeleton />
-      <div className="grid gap-[var(--home-gap)] lg:grid-cols-3">
-        {["Trending tokens", "Just launched", "RWAs on the move"].map((title) => (
-          <SummaryCard key={title} title={title} className="h-full">
-            <div className={ROW_LIMITS}>
-              <RowsSkeleton count={ROWS} />
-            </div>
+      <div className={THREE_UP}>
+        {["Trending tokens", "Just launched", "RWAs on the move"].map((title, i) => (
+          <SummaryCard key={title} title={title} className={cn("h-full", i === 2 && THIRD_OF_THREE)}>
+            <RowsSkeleton count={ROWS} />
           </SummaryCard>
         ))}
       </div>
-      <div className="grid gap-[var(--home-gap)] lg:grid-cols-12">
-        <div className="min-w-0 lg:col-span-7">
+      <div className={TWO_UP}>
+        <div className={WIDE_OF_TWO}>
           <SummaryCard title="News on the RWAs behind the tokens" className="h-full">
             <RowsSkeleton count={3} />
           </SummaryCard>
         </div>
-        <div className="min-w-0 lg:col-span-5">
-          <SummaryCard title="From people you follow" className="h-full">
+        <div className={cn(NARROW_OF_TWO, "self-start")}>
+          <SummaryCard title="From people you follow">
             <RowsSkeleton count={3} />
           </SummaryCard>
         </div>
@@ -207,17 +202,21 @@ function HomeSkeleton() {
 /* ------------------------------------------------------------ featured */
 
 function FeaturedRwaCard() {
-  const market = useMarket("volume");
-  const lead = useMemo(
-    () => featuredRwa(market.tokens, market.rwas),
-    [market.tokens, market.rwas],
-  );
+  // Which RWA leads is decided on the server from every listed token's 24h
+  // volume (server/homeFeatured.ts); the market list supplies its quote.
+  const featured = useHomeFeatured();
+  const market = useMarket("trending");
+  const lead = useMemo(() => {
+    const ticker = featured.data?.ticker;
+    const rwa = ticker ? market.rwas.find((asset) => asset.ticker === ticker) : undefined;
+    return rwa ? {rwa, paired: featured.data?.paired ?? []} : null;
+  }, [featured.data, market.rwas]);
 
-  if (market.isLoading) return <FeaturedSkeleton />;
+  if (featured.isLoading || (market.isLoading && !lead)) return <FeaturedSkeleton />;
   if (!lead) {
     return (
       <SummaryCard title="Most token volume today">
-        {market.error ? (
+        {featured.error ? (
           <CardError />
         ) : (
           <CardNote>No RWA-paired token has traded today yet.</CardNote>
@@ -229,7 +228,7 @@ function FeaturedRwaCard() {
   return (
     <section className="overflow-hidden rounded-2xl border border-[var(--overlay-wash)] bg-surface-base lg:grid lg:grid-cols-12">
       <FeaturedChart rwa={lead.rwa} />
-      <div className="flex min-w-0 flex-col border-t border-[var(--overlay-wash)] p-[var(--home-pad)] lg:col-span-5 lg:border-l lg:border-t-0">
+      <div className="flex min-w-0 flex-col border-t border-[var(--overlay-wash)] p-[var(--home-pad)] lg:col-span-6 xl:col-span-5 lg:border-l lg:border-t-0">
         <div className="flex items-start justify-between gap-3">
           <h2 className="line-clamp-2 min-w-0 text-[length:var(--home-t-title)] font-extrabold leading-[1.25] tracking-[-0.02em]">
             Tokens paired with {lead.rwa.ticker}
@@ -240,7 +239,7 @@ function FeaturedRwaCard() {
           Tokens trading against {lead.rwa.name}
         </p>
         <div className="-mx-3.5">
-          <AssetList assets={lead.paired} flush dense compact pairChip={false} />
+          <AssetList assets={lead.paired} flush dense compact pairChip={false} wideChart />
         </div>
         <div className="min-h-[var(--home-stack)] flex-1" />
         <AssetLink
@@ -270,7 +269,7 @@ function FeaturedChart({rwa}: {rwa: RwaAsset}) {
   const sector = sectorFor(rwa.ticker);
 
   return (
-    <div className="flex min-w-0 flex-col gap-[var(--home-stack)] p-[var(--home-pad)] lg:col-span-7">
+    <div className="flex min-w-0 flex-col gap-[var(--home-stack)] p-[var(--home-pad)] lg:col-span-6 xl:col-span-7">
       <div className={cn("font-bold uppercase tracking-[0.09em] text-faint", smallText)}>
         Most token volume today
       </div>
@@ -344,14 +343,14 @@ function FeaturedSkeleton() {
       aria-hidden="true"
       className="overflow-hidden rounded-2xl border border-[var(--overlay-wash)] bg-surface-base lg:grid lg:grid-cols-12"
     >
-      <div className="flex flex-col gap-[var(--home-stack)] p-[var(--home-pad)] lg:col-span-7">
+      <div className="flex flex-col gap-[var(--home-stack)] p-[var(--home-pad)] lg:col-span-6 xl:col-span-7">
         <span className="h-3 w-40 animate-pulse rounded bg-[var(--overlay-wash)]" />
         <span className="h-9 w-56 animate-pulse rounded bg-[var(--overlay-wash)]" />
         <span className="h-8 w-36 animate-pulse rounded bg-[var(--overlay-wash)]" />
         <span className="h-[var(--home-chart)] animate-pulse rounded-xl bg-[var(--overlay-wash)]" />
         <span className="h-7 w-48 animate-pulse rounded bg-[var(--overlay-wash)]" />
       </div>
-      <div className="border-t border-[var(--overlay-wash)] p-[var(--home-pad)] lg:col-span-5 lg:border-l lg:border-t-0">
+      <div className="border-t border-[var(--overlay-wash)] p-[var(--home-pad)] lg:col-span-6 xl:col-span-5 lg:border-l lg:border-t-0">
         <span className="block h-5 w-48 animate-pulse rounded bg-[var(--overlay-wash)]" />
         <RowsSkeleton count={4} />
       </div>
@@ -434,14 +433,12 @@ function ListBody({
 }) {
   if (loading) {
     return (
-      <div className={ROW_LIMITS}>
-        <RowsSkeleton count={ROWS} />
-      </div>
+      <RowsSkeleton count={ROWS} />
     );
   }
   if (failed) return <CardError />;
   if (children.props.assets.length === 0) return <CardNote>{empty}</CardNote>;
-  return <div className={cn("-mx-3.5", ROW_LIMITS)}>{children}</div>;
+  return <div className="-mx-3.5">{children}</div>;
 }
 
 /* ------------------------------------------------------------ news */
@@ -560,8 +557,87 @@ function useFollowingComments() {
   };
 }
 
+function useSuggestedTraders(enabled: boolean) {
+  return useQuery({
+    queryKey: ["suggested-traders"],
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<SuggestedTrader[]> => {
+      const res = await fetch("/api/people/suggested");
+      if (!res.ok) return [];
+      return ((await res.json()) as {people?: SuggestedTrader[]}).people ?? [];
+    },
+  });
+}
+
+/** A short line rather than a tall empty box. */
+function ShortNote({children}: {children: React.ReactNode}) {
+  return <p className={cn("py-3 text-faint", smallText)}>{children}</p>;
+}
+
 function FollowingCard() {
   const following = useFollowingComments();
+  const follows = useFollows();
+  const me = useUser();
+  const followsNobody = !follows.isLoading && follows.following.length === 0;
+  const showSuggestions = !following.isLoading && following.comments.length === 0 && followsNobody;
+  const suggested = useSuggestedTraders(showSuggestions);
+
+  if (following.comments.length === 0 && !following.isLoading && !following.error) {
+    if (showSuggestions) {
+      const mine = me.handle?.toLowerCase();
+      const people = (suggested.data ?? [])
+        .filter((person) => person.handle.toLowerCase() !== mine && !follows.has(person.handle))
+        .slice(0, 3);
+      return (
+        <SummaryCard title="People to follow" action={<SeeAll href="/profile">See all</SeeAll>}>
+          <p className={cn("-mt-0.5 mb-1 font-semibold text-faint", smallText)}>Follow traders to see their trades here.</p>
+          {suggested.isLoading ? (
+            <RowsSkeleton count={3} />
+          ) : people.length === 0 ? (
+            <ShortNote>No active traders to suggest yet. Follow people from any comment to see them here.</ShortNote>
+          ) : (
+            <ul className="-mx-2">
+              {people.map((person) => (
+                <li key={person.handle} className="flex h-[var(--home-row)] items-center gap-3 px-2">
+                  <Link href={profilePath(person.handle)} className="flex min-w-0 flex-1 items-center gap-3">
+                    <Avatar
+                      name={person.displayName}
+                      src={person.pfpUrl}
+                      size={36}
+                      className="!h-[var(--home-logo)] !w-[var(--home-logo)]"
+                    />
+                    <span className="min-w-0">
+                      <span className={cn("block truncate font-extrabold", bodyText)}>@{person.handle}</span>
+                      <span className={cn("mt-[var(--home-line-gap)] block truncate font-semibold text-faint", smallText)}>
+                        {person.symbols.length > 0 ? `Trades ${person.symbols.join(", ")}` : `${person.trades} trades`}
+                      </span>
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => follows.toggle(person.handle)}
+                    className={cn(
+                      "h-8 shrink-0 rounded-full bg-[var(--bg-input)] px-3.5 font-bold transition-colors hover:bg-[var(--overlay-wash-hover)]",
+                      smallText,
+                    )}
+                  >
+                    {follows.has(person.handle) ? "Following" : "Follow"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SummaryCard>
+      );
+    }
+    return (
+      <SummaryCard title="From people you follow" action={<SeeAll href="/profile">See all</SeeAll>}>
+        <ShortNote>Nothing new from the people you follow yet.</ShortNote>
+      </SummaryCard>
+    );
+  }
+
   return (
     <SummaryCard
       title="From people you follow"
@@ -572,8 +648,6 @@ function FollowingCard() {
         <RowsSkeleton count={3} />
       ) : following.error ? (
         <CardError onRetry={following.retry} />
-      ) : following.comments.length === 0 ? (
-        <CardNote>Follow people from any comment to see what they say here.</CardNote>
       ) : (
         <ul className="-mx-2">
           {following.comments.slice(0, 3).map((comment) => (
@@ -596,7 +670,7 @@ function FollowingCard() {
                       commented on {comment.asset.label}
                     </span>
                   </span>
-                  <span className={cn("mt-0.5 block truncate text-muted", bodyText)}>
+                  <span className={cn("mt-[var(--home-line-gap)] block truncate text-muted", bodyText)}>
                     {comment.body}
                   </span>
                 </span>
