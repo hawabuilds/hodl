@@ -3,7 +3,7 @@
 import {useEffect, useMemo} from "react";
 import {keepPreviousData, useQuery} from "@tanstack/react-query";
 import type {ChartPoint, Holding, PortfolioRange} from "@/lib/types";
-import {readKnownHoldings, writeKnownHoldings} from "@/lib/localStore";
+import {readKnownHoldings, readRecentTrades, writeKnownHoldings} from "@/lib/localStore";
 import {useEthPrice} from "./useEthPrice";
 import {useSession} from "@/lib/session";
 import {useUser} from "./useUser";
@@ -43,11 +43,6 @@ export function usePortfolio(range: PortfolioRange = "1D") {
   const walletKey = wallets.join(",");
   const eth = useEthPrice();
 
-  const known = useMemo(
-    () => wallets.flatMap((wallet) => readKnownHoldings(wallet)),
-    [wallets],
-  );
-
   const native = useQuery({
     queryKey: ["portfolio-native", walletKey],
     enabled: wallets.length > 0,
@@ -74,6 +69,10 @@ export function usePortfolio(range: PortfolioRange = "1D") {
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const params = new URLSearchParams({wallets: walletKey});
+      // Read on every fetch, so a token just traded is in the very next one.
+      const known = [
+        ...new Set([...wallets.flatMap((wallet) => readKnownHoldings(wallet)), ...readRecentTrades()]),
+      ].slice(0, 100);
       if (known.length > 0) params.set("known", known.join(","));
       const token = await session.getAccessToken();
       const res = await fetch(`/api/portfolio?${params}`, {

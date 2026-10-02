@@ -91,13 +91,19 @@ interface ChartResponse {
   error?: string | null;
 }
 
-async function fetchChart(kind: AssetKind, key: string, timeframe: Timeframe): Promise<ChartResponse> {
+async function fetchChart(
+  kind: AssetKind,
+  key: string,
+  timeframe: Timeframe,
+  signal?: AbortSignal,
+): Promise<ChartResponse> {
   const bundle = await fromAssetBundle(kind, key, timeframe);
   if (bundle?.chart) {
     return {...bundle.chart, resolvedTimeframe: bundle.chart.resolvedTimeframe ?? timeframe};
   }
   const res = await fetch(`/api/asset/${kind}/${key}/chart?tf=${timeframe}`, {
     cache: "no-store",
+    signal,
   });
   if (!res.ok) throw new Error("Could not load the chart.");
   return (await res.json()) as ChartResponse;
@@ -116,7 +122,7 @@ export function useChart(kind: AssetKind, id: string, timeframe: Timeframe, enab
     loadingOlder.current = false;
   }, [scope, kind]);
 
-  const query = useQuery({
+  const query = useQuery<ChartResponse>({
     queryKey: ["chart", kind, key, timeframe],
     enabled,
     refetchInterval: 60_000,
@@ -127,7 +133,13 @@ export function useChart(kind: AssetKind, id: string, timeframe: Timeframe, enab
       previousQuery?.queryKey[1] === kind && previousQuery?.queryKey[2] === key
         ? previous
         : undefined,
-    queryFn: () => fetchChart(kind, key, timeframe),
+    // A timeframe tapped past is cancelled (React Query aborts a query left
+    // with no viewer), and each timeframe is its own cache entry, so a slow
+    // answer for an older pick can never replace the newest one — and a
+    // timeframe already seen comes back from cache at once.
+    queryFn: ({signal}): Promise<ChartResponse> => fetchChart(kind, key, timeframe, signal),
+    staleTime: 30_000,
+    gcTime: 30 * 60_000,
     retry: false,
   });
 

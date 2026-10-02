@@ -203,6 +203,17 @@ body {
   outline-offset: 2px;
 }
 
+/*
+ * Text fields show they are active with their own box — a lighter border or
+ * a soft glow on the field's container — not the ring above, which drew a
+ * hard rectangle around the input inside it. Buttons and links keep the ring.
+ */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

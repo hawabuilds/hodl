@@ -2,8 +2,11 @@ import type {Holding} from "@/lib/types";
 import {normalizeAddress, isAddress} from "@/lib/address";
 import {feedImageUrl} from "@/lib/tokenImage";
 import {RH_MAINNET_ID} from "@/config/chain";
-import {hasDatabase} from "../db";
-import {nativeBalance, walletSnapshot} from "./chain";
+import {erc20Abi} from "viem";
+import {db, hasDatabase} from "../db";
+import {cached, cachedLocal} from "./cache";
+import {nativeBalance, rpc, walletSnapshot} from "./chain";
+import {readShared, writeShared} from "./shared";
 import {cachedQuotes, RWA_BY_ADDRESS, RWA_REGISTRY} from "./robinhood";
 import {getTokenRows, statsFor, type TokenRow} from "./universeStore";
 
@@ -99,6 +102,87 @@ async function touchedTokens(wallet: string): Promise<string[]> {
   return mergeCandidates(sent, received);
 }
 
+/**
+ * Tokens whose price moved in the last 90 days — every token that can have
+ * been bought here recently, since a buy moves its price. (All 37k listed
+ * tokens took 14s to list; this set is ~23k and 2s.) Kept in this server's
+ * memory for half an hour: at ~1MB it is too big to pass through Redis.
+ */
+const SWEEP_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
+function sweepAddresses(): Promise<string[]> {
+  return cachedLocal("portfolio:sweep-addresses", 30 * 60_000, async () => {
+    if (!hasDatabase) return [];
+    const since = new Date(Date.now() - SWEEP_WINDOW_MS).toISOString();
+    const out: string[] = [];
+    for (let from = 0; from < 100_000; from += 1_000) {
+      const {data, error} = await db()
+        .from("token_stats")
+        .select("address")
+        .gte("price_moved_at", since)
+        .order("address")
+        .range(from, from + 999);
+      if (error) throw new Error(error.message);
+      for (const row of (data ?? []) as {address: string}[]) out.push(normalizeAddress(row.address));
+      if (!data || data.length < 1_000) break;
+    }
+    return out;
+  });
+}
+
+/**
+ * Which recently active tokens this wallet holds, by asking the chain for its
+ * balance of every one — in a few large multicalls, not one call per token — so a
+ * token shows whether it was bought here, elsewhere, or sent in. Without an
+ * indexer (Alchemy's transfer history is not set up for this chain) this is
+ * the only way to find a token the wallet has not traded through HODL.
+ * Kept five minutes per wallet; a trade made here refreshes it at once
+ * through the client's hint and the saved trade.
+ */
+export function sweepListed(wallet: string): Promise<string[]> {
+  return cached(
+    `portfolio:sweep:${wallet}`,
+    5 * 60_000,
+    async () => {
+      const universe = await sweepAddresses();
+      if (universe.length === 0) return [];
+      const owner = wallet as `0x${string}`;
+      const results = await rpc().multicall({
+        contracts: universe.map((address) => ({
+          address: address as `0x${string}`,
+          abi: erc20Abi,
+          functionName: "balanceOf" as const,
+          args: [owner] as const,
+        })),
+        allowFailure: true,
+        // ~300 balance reads per call: a few calls for the whole set.
+        batchSize: 48_000,
+      });
+      return universe.filter((_, i) => {
+        const result = results[i];
+        return result?.status === "success" && typeof result.result === "bigint" && result.result > 0n;
+      });
+    },
+    {sharedTtlSeconds: 5 * 60},
+  );
+}
+
+/** Tokens these wallets bought or sold through HODL (saved trades). */
+async function tradedTokens(wallets: string[]): Promise<string[]> {
+  if (!hasDatabase || wallets.length === 0) return [];
+  const {data} = await db()
+    .from("hodl_trades")
+    .select("asset_id")
+    .eq("kind", "token")
+    .in("wallet", wallets)
+    .limit(500);
+  return ((data ?? []) as {asset_id: string}[]).map((row) => row.asset_id);
+}
+
+const heldKey = (wallet: string) => `portfolio:held:${wallet}`;
+/** How long the portfolio waits on the full balance sweep before answering. */
+const SWEEP_PATIENCE_MS = 2_500;
+
 function rwaAddresses(): string[] {
   return RWA_REGISTRY.map((entry) => normalizeAddress(entry.address));
 }
@@ -139,8 +223,28 @@ export async function holdingsFor(
   }
 
   const discoverStarted = Date.now();
-  const touched = await Promise.all(wallets.map((wallet) => touchedTokens(wallet)));
-  const candidates = mergeCandidates(rwaAddresses(), known, ...touched);
+  // Where a held token can be found: transfer history (when Alchemy is set
+  // up), saved HODL trades, what these wallets held last time, the client's
+  // own hint, the RWAs — and a balance sweep of every listed token, waited on
+  // for at most SWEEP_PATIENCE_MS (it carries on and is cached for next time).
+  const sweeping = Promise.all(wallets.map((wallet) => sweepListed(wallet).catch(() => [] as string[])));
+  const [touched, traded, remembered, swept] = await Promise.all([
+    Promise.all(wallets.map((wallet) => touchedTokens(wallet).catch(() => [] as string[]))),
+    tradedTokens(wallets).catch(() => [] as string[]),
+    Promise.all(wallets.map((wallet) => readShared<string[]>(heldKey(wallet)).catch(() => null))),
+    Promise.race([
+      sweeping,
+      new Promise<string[][]>((resolve) => setTimeout(() => resolve([]), SWEEP_PATIENCE_MS)),
+    ]),
+  ]);
+  const candidates = mergeCandidates(
+    rwaAddresses(),
+    known,
+    traded,
+    ...touched,
+    ...remembered.map((list) => list ?? []),
+    ...swept,
+  );
   const discoverMs = Date.now() - discoverStarted;
 
   const wanted = candidates.map((address) => ({
@@ -173,6 +277,11 @@ export async function holdingsFor(
 
   const held = [...merged.entries()].filter(([, amount]) => amount > 0);
   const heldAddresses = held.map(([address]) => address);
+  // Next time these are candidates straight away, before any sweep.
+  if (!degraded) {
+    const tokens = heldAddresses.filter((address) => !RWA_BY_ADDRESS.has(address));
+    for (const wallet of wallets) void writeShared(heldKey(wallet), tokens, 30 * 24 * 60 * 60).catch(() => {});
+  }
 
   const enrichStarted = Date.now();
   const [rows, stats, quotes] = await Promise.all([

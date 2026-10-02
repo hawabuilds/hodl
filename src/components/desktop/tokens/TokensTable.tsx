@@ -466,7 +466,7 @@ function NumberBox({
     else setDraft(String(value));
   };
   return (
-    <label className="flex items-center gap-1 rounded-[9px] border border-[var(--overlay-wash-hover)] bg-[var(--bg-input)] px-2.5 py-1.5 text-[13px] font-bold">
+    <label className="flex items-center gap-1 rounded-[9px] border border-[var(--overlay-wash-hover)] bg-[var(--bg-input)] px-2.5 py-1.5 text-[13px] font-bold transition-colors focus-within:border-[rgb(171_174_245/38%)]">
       {prefix ? <span className="text-faint">{prefix}</span> : null}
       <input
         aria-label={label}

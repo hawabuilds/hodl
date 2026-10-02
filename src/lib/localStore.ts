@@ -75,84 +75,6 @@ export function toggleWatch(kind: AssetKind, id: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// The simulated book
-// ---------------------------------------------------------------------------
-
-export interface Position {
-  kind: AssetKind;
-  assetId: string;
-  symbol: string;
-  name: string;
-  amount: number;
-  /** Total dollars put in, used for the average cost line. */
-  costUsd: number;
-}
-
-export interface SimOrder {
-  id: string;
-  kind: AssetKind;
-  assetId: string;
-  symbol: string;
-  side: "buy" | "sell";
-  amount: number;
-  amountUsd: number;
-  priceUsd: number;
-  feeUsd: number;
-  at: string;
-}
-
-export interface Book {
-  cashUsd: number;
-  positions: Position[];
-  orders: SimOrder[];
-}
-
-/** Simulated starting balance, so the buy sheet has something to spend. */
-export const STARTING_CASH_USD = 10_000;
-
-const EMPTY_BOOK: Book = {cashUsd: STARTING_CASH_USD, positions: [], orders: []};
-
-/** True once a book has been written, seeded or otherwise. */
-export function hasBook(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(`${NS}.book`) !== null;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Writes the opening book.
- *
- * Called once, on the first run, with positions priced from the live feed so
- * the sample holdings are consistent with the market the rest of the app is
- * showing. Never overwrites an existing book — someone who has sold everything
- * down to cash has an empty book on purpose.
- */
-export function seedBook(positions: Position[], cashUsd: number): void {
-  if (hasBook()) return;
-  write("book", {cashUsd, positions, orders: []} satisfies Book);
-  announce();
-}
-
-export function readBook(): Book {
-  const book = read<Book>("book", EMPTY_BOOK);
-  return {
-    cashUsd: Number.isFinite(book.cashUsd) ? book.cashUsd : STARTING_CASH_USD,
-    positions: Array.isArray(book.positions) ? book.positions : [],
-    orders: Array.isArray(book.orders) ? book.orders : [],
-  };
-}
-
-/** Paper fills are gone. A real trade or an error — nothing in between. */
-
-export function resetBook(): void {
-  write("book", EMPTY_BOOK);
-  announce();
-}
-
-// ---------------------------------------------------------------------------
 // Trade settings
 // ---------------------------------------------------------------------------
 
@@ -319,6 +241,21 @@ export function writeKnownHoldings(wallet: string, addresses: string[]): void {
   const all = read<Record<string, string[]>>("held-tokens", {});
   all[wallet.toLowerCase()] = addresses;
   write("held-tokens", all);
+}
+
+/**
+ * Tokens bought or sold through HODL on this device, newest first: sent to
+ * the portfolio as a hint so a just-bought token is read from the chain on
+ * the very next refresh, whichever wallet made the trade.
+ */
+export function readRecentTrades(): string[] {
+  return read<string[]>("recent-trade-tokens", []);
+}
+
+export function rememberRecentTrade(address: string): void {
+  const key = address.toLowerCase();
+  const next = [key, ...readRecentTrades().filter((entry) => entry !== key)].slice(0, 50);
+  write("recent-trade-tokens", next);
 }
 
 // ---------------------------------------------------------------------------

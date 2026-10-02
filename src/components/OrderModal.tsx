@@ -1,6 +1,8 @@
 "use client";
 
 import {useEffect, useMemo, useState} from "react";
+import {useQueryClient} from "@tanstack/react-query";
+import {refreshPortfolioAfterTrade} from "@/lib/portfolioRefresh";
 import {formatUnits} from "viem";
 import {useBalance, useReadContract} from "wagmi";
 import {RH_MAINNET_ID, txUrlForChain} from "@/config/chain";
@@ -138,6 +140,7 @@ export function OrderTicket({
 }) {
   const {ethUsd} = useEthPrice();
   const session = useSession();
+  const queryClient = useQueryClient();
   const swap = useSwap();
   const hodl = useHodlSwap();
   const [settings] = useLocalStore<TradeSettings>(
@@ -647,6 +650,7 @@ export function OrderTicket({
           `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : quoteOutSymbol(quote)}`,
         );
         setAmount("");
+        refreshPortfolioAfterTrade(queryClient, asset.kind, asset.id);
         void reportTradeNotify(session.getAccessToken, {
           status: "filled",
           side: activeSide,
@@ -715,6 +719,7 @@ export function OrderTicket({
         `${buying ? "Bought" : "Sold"} ${units(estimatedOut)} ${buying ? symbol : quoteOutSymbol(q)}`,
       );
       setAmount("");
+      refreshPortfolioAfterTrade(queryClient, asset.kind, asset.id);
       void reportTradeNotify(session.getAccessToken, {
         status: "filled",
         side: activeSide,

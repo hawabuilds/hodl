@@ -16,7 +16,6 @@ export function PillRail<T extends string>({
   positive,
   label,
   className,
-  resolvedValue,
 }: {
   options: readonly T[];
   value: T;
@@ -24,8 +23,6 @@ export function PillRail<T extends string>({
   positive: boolean;
   label: string;
   className?: string;
-  /** Bucket actually drawn when the ladder stepped down from `value`. */
-  resolvedValue?: T | null;
 }) {
   return (
     <div
@@ -37,11 +34,9 @@ export function PillRail<T extends string>({
       )}
     >
       {options.map((option) => {
+        // Only ever the timeframe that was picked. Pairing it with the one
+        // still on screen while the new candles load read "15m · 1h".
         const active = option === value;
-        const shown =
-          active && resolvedValue && resolvedValue !== option
-            ? `${option} · ${resolvedValue}`
-            : option;
         return (
           <button
             key={option}
@@ -57,7 +52,7 @@ export function PillRail<T extends string>({
                 : "text-faint hover:text-muted",
             )}
           >
-            {shown}
+            {option}
           </button>
         );
       })}

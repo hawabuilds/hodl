@@ -35,6 +35,7 @@ import {
 import {buyPaysNative, buyReceivePreview, quoteOutSymbol, ticketNetOut, tradeTokenAddress} from "@/lib/tradeTicket";
 import type {RwaAsset, TokenAsset} from "@/lib/types";
 import {units} from "@/lib/format";
+import {refreshPortfolioAfterTrade} from "@/lib/portfolioRefresh";
 
 /**
  * Quick buy from the desktop Tokens table.
@@ -158,6 +159,7 @@ export async function checkBuy(asset: BuyableAsset, amountUsd: number, slippageP
  */
 export function useQuickBuy() {
   const session = useSession();
+  const queryClient = useQueryClient();
   const user = useUser();
   const swap = useSwap();
   const hodl = useHodlSwap();
@@ -238,6 +240,7 @@ export function useQuickBuy() {
         const received = Number(formatUnits(ticketNetOut(quote), quote.outDecimals));
         const text = `Bought ${units(received)} ${symbol} for $${amountUsd}.`;
         report({kind: "done", text});
+        refreshPortfolioAfterTrade(queryClient, asset.kind, asset.id);
         void reportTradeNotify(session.getAccessToken, {
           status: "filled",
           side: "buy",
@@ -259,7 +262,7 @@ export function useQuickBuy() {
         setBusy(null);
       }
     },
-    [busy, hodl, publicClient, session, swap, user],
+    [busy, hodl, publicClient, queryClient, session, swap, user],
   );
 
   return {buy, busy};

@@ -536,7 +536,6 @@ export function AssetPage({
           label="Chart timeframe"
           options={tfOptions}
           value={timeframe}
-          resolvedValue={chart.resolvedTimeframe}
           onChange={setTimeframe}
           positive={positive}
           className="mb-0 mt-0 min-w-0 flex-1"

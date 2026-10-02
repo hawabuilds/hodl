@@ -4,8 +4,8 @@ import {recordHodlTrade} from "@/lib/server/hodlTrades";
 import {notifyTradeFailed, notifyTradeFilled} from "@/lib/server/notifications/trades";
 
 export const dynamic = "force-dynamic";
-// Recording waits up to 15s for our node to see the receipt.
-export const maxDuration = 30;
+// Recording waits up to 30s for our node to see the receipt.
+export const maxDuration = 60;
 
 /**
  * Called after the client waits for a confirmed receipt, or after a submit
@@ -26,6 +26,8 @@ export async function POST(request: Request) {
     quoteSymbol?: string;
     txHash?: string;
     reason?: string;
+    /** A retry of a save that did not go through: record it, notify nobody twice. */
+    recordOnly?: boolean;
   };
 
   const kind = body.kind === "rwa" ? "rwa" : body.kind === "token" ? "token" : null;
@@ -42,32 +44,35 @@ export async function POST(request: Request) {
     if (!side || !(tokenAmount > 0) || !(quoteAmount > 0) || !quoteSymbol) {
       return badRequest("Fill amounts are required.");
     }
-    await notifyTradeFilled({
-      userId: caller.userId,
-      side,
-      kind,
-      assetId,
-      ticker,
-      tokenAmount,
-      quoteAmount,
-      quoteSymbol,
-    }).catch((error) => console.error("trade fill notify failed", error));
-    // For the Following feed. Written only once the chain confirms it; the
-    // amounts above are the ticket's claim and are not what gets stored.
-    if (typeof body.txHash === "string") {
-      await recordHodlTrade({
-        userId: caller.userId,
-        txHash: body.txHash,
-        kind,
-        assetId,
-        symbol: ticker,
-      })
-        .then((result) => {
-          if (!result.recorded) console.info("hodl trade not recorded:", result.reason);
-        })
-        .catch((error) => console.error("hodl trade record failed", error));
-    }
-    return json({ok: true});
+    // Saved first, and alongside the alerts rather than after them: trade
+    // history, follow alerts and suggested traders all read this table, and a
+    // slow notification used to hold the save up until the function ran out.
+    // Written only once the chain confirms it; the amounts above are the
+    // ticket's claim and are not what gets stored.
+    const recording =
+      typeof body.txHash === "string"
+        ? recordHodlTrade({userId: caller.userId, txHash: body.txHash, kind, assetId, symbol: ticker}).catch(
+            (error): {recorded: false; reason: string} => {
+              console.error("hodl trade record failed", error);
+              return {recorded: false, reason: "error"};
+            },
+          )
+        : Promise.resolve({recorded: false as const, reason: "no tx hash"});
+    const notifying = body.recordOnly
+      ? Promise.resolve()
+      : notifyTradeFilled({
+          userId: caller.userId,
+          side,
+          kind,
+          assetId,
+          ticker,
+          tokenAmount,
+          quoteAmount,
+          quoteSymbol,
+        }).catch((error) => console.error("trade fill notify failed", error));
+    const [result] = await Promise.all([recording, notifying]);
+    if (!result.recorded) console.warn("hodl trade not recorded:", result.reason);
+    return json({ok: true, recorded: result.recorded, reason: result.recorded ? null : result.reason});
   }
 
   if (body.status === "failed") {

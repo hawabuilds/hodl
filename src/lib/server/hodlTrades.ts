@@ -173,7 +173,7 @@ export async function recordHodlTrade(input: {
   const hash = input.txHash.toLowerCase() as `0x${string}`;
   const client = chain();
   // The ticket waited for its own node; ours may be a block behind.
-  const receipt = await client.waitForTransactionReceipt({hash, timeout: 15_000});
+  const receipt = await client.waitForTransactionReceipt({hash, timeout: 30_000});
   if (receipt.status !== "success") return {recorded: false, reason: "reverted"};
 
   const sender = receipt.from.toLowerCase();
