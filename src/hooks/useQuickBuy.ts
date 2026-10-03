@@ -199,7 +199,7 @@ export function useQuickBuy() {
         const {token} = checked;
 
         const payNative = buyPaysNative(quote);
-        const live = isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote);
+        const live = isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote, "buy");
         let hash: `0x${string}`;
         usedLive = live;
         if (live) {
@@ -210,7 +210,7 @@ export function useQuickBuy() {
               address: spend,
               abi: erc20Abi,
               functionName: "allowance",
-              args: [hodl.address, HODL_ROUTER_ADDRESS as `0x${string}`],
+              args: [hodl.address, HODL_ROUTER_ADDRESS],
             });
             if (!allowanceSufficient(current, need)) {
               report({

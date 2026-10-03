@@ -10,6 +10,7 @@ import {
 } from "../src/lib/revertReason";
 import {pickBestEthExit} from "../src/lib/swapRoute";
 
+const QUOTE_ETH_ADDR = "0x0000000000000000000000000000000000000000";
 const ALLOWANCE_EXPIRED =
   "0xd81b2f2e0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -48,6 +49,17 @@ describe("revert reason", () => {
     assert.equal(decodeRevertHex(cap)?.name, "Cap");
     assert.match(formatRevertForUser({data: cap}) ?? "", /notional cap/i);
     assert.doesNotMatch(formatRevertForUser({data: cap}) ?? "", /Swap reverted/i);
+  });
+
+  it("decodes HodlRouter v2 errors, including Leftover(address)'s new selector", () => {
+    const v2 = parseAbi(["error Leftover(address token)", "error FeeOnTransferToken()", "error UnexpectedEth()"]);
+    const leftover = encodeErrorResult({abi: v2, errorName: "Leftover", args: [QUOTE_ETH_ADDR]});
+    assert.equal(decodeRevertHex(leftover)?.name, "Leftover");
+    assert.match(formatRevertForUser({data: leftover}) ?? "", /could not settle/i);
+    const fot = encodeErrorResult({abi: v2, errorName: "FeeOnTransferToken"});
+    assert.match(formatRevertForUser({data: fot}) ?? "", /tax on every transfer/i);
+    const eth = encodeErrorResult({abi: v2, errorName: "UnexpectedEth"});
+    assert.doesNotMatch(formatRevertForUser({data: eth}) ?? "", /Swap reverted/i);
   });
 
   it("keeps a generic on-chain revert as the pool copy", () => {

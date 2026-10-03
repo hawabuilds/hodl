@@ -5,9 +5,17 @@ out
 *.tsbuildinfo
 next-env.d.ts
 .next-verify
+.next-perf/
 .vercel
 .env*
+# Templates are committed; only real env files are secret.
+!*.example
 .tools/
 contracts/out
 contracts/cache
 scripts/.backfill-pools-cursor.json
+
+# Local scratch: perf builds, screenshots, throwaway scripts.
+screenshots/
+_tmp-*
+scripts/_*

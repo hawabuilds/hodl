@@ -110,7 +110,9 @@ export function SearchBox() {
           }}
           onFocus={() => setOpen(true)}
           placeholder="Search tokens, RWAs, people"
+          role="combobox"
           aria-label="Search tokens, RWAs and people"
+          aria-autocomplete="list"
           aria-expanded={open}
           aria-controls="topbar-search-results"
           autoComplete="off"

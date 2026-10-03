@@ -100,7 +100,7 @@ export function useHodlSwap() {
 
   const imported = wallet.isConnected ? wallet.address : null;
   const address = (imported ?? user.embeddedWallet ?? null) as `0x${string}` | null;
-  const router = HODL_ROUTER_ADDRESS as `0x${string}`;
+  const router = HODL_ROUTER_ADDRESS;
   const walletKind: WalletKind = walletKindFrom(Boolean(imported));
 
   const sendTx = useCallback(

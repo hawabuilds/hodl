@@ -15,9 +15,9 @@ import {listRwas, listTokens} from "./market";
  * comment author always resolves to the same profile and a follower count does
  * not jump between renders.
  *
- * TODO(live): back this with the same Supabase `users` table Pick uses, keyed on
- * the Privy DID, plus a `follows` join table. The shapes below are already what
- * the UI consumes, so only the two loaders at the bottom need replacing.
+ * Demo only: served when DEMO_MODE=1 and no database is configured
+ * (`demoMode.ts`). The live app reads the Supabase `users` and `follows`
+ * tables through `social-live.ts`.
  */
 
 interface PersonaSeed {

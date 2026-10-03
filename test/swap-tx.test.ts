@@ -13,9 +13,9 @@ import {
 import {
   FEE_COLLECTOR,
   LONG_DOPPLER_HOOK,
+  QUOTE_ETH,
   QUOTE_WETH,
   UNIVERSAL_ROUTER,
-  UNISWAP_SWAP_ROUTER_02,
 } from "../src/lib/contracts";
 import {encodeHodlBuy, encodeHodlSell, hodlRouterAbi} from "../src/lib/hodlRouter";
 import {CANT_EXIT_TO_ETH, entryHopTooThin} from "../src/lib/swapRoute";
@@ -37,8 +37,6 @@ import {
 import {parseSwapQuote} from "../src/lib/swapQuote";
 import {
   assertSwapNotErc20Transfer,
-  buildV3Swap,
-  buildV4Swap,
   encodeTransfer,
   ERC20_TRANSFER_SELECTOR,
   isErc20TransferCalldata,
@@ -143,21 +141,102 @@ const KEY = {
 };
 
 describe("swap tx encoding", () => {
-  it("packs Permit2 pull in front of V4_SWAP", () => {
-    const tx = buildV4Swap({
-      poolKey: KEY,
-      zeroForOne: true,
-      amountIn: 10n ** 16n,
-      amountOutMinimum: 1n,
+  it("charges the 50 bps fee on a single-hop buy: swap 99.5%, sweep the rest to FeeCollector", () => {
+    const token = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
+    const amountIn = 10n ** 16n;
+    const fee = (amountIn * 50n) / 10_000n;
+    const base = {
+      side: "buy" as const,
+      token,
+      amountIn,
+      amountOutMinimum: 10n ** 18n,
       deadline: 1n,
+      recipient: "0x1111111111111111111111111111111111111111" as const,
+      payNative: true,
+    };
+    const cases = [
+      {
+        name: "native V4",
+        swap: {...base, venue: "v4" as const, quoteToken: QUOTE_ETH, quoteIsNative: true,
+          poolKey: {currency0: QUOTE_ETH, currency1: token, fee: 0, tickSpacing: 200, hooks: LONG_DOPPLER_HOOK},
+          zeroForOne: true},
+        commands: [UR_COMMAND_V4_SWAP, UR_COMMAND_SWEEP],
+      },
+      {
+        name: "WETH V4",
+        swap: {...base, venue: "v4" as const, quoteToken: QUOTE_WETH, quoteIsWeth: true,
+          poolKey: {currency0: QUOTE_WETH, currency1: token, fee: 100, tickSpacing: 1,
+            hooks: "0x0000000000000000000000000000000000000000" as const},
+          zeroForOne: true},
+        commands: [UR_COMMAND_WRAP_ETH, UR_COMMAND_V4_SWAP, UR_COMMAND_SWEEP],
+      },
+      {
+        name: "WETH V3",
+        swap: {...base, venue: "v3" as const, quoteToken: QUOTE_WETH, quoteIsWeth: true, v3Fee: 3000},
+        commands: [UR_COMMAND_WRAP_ETH, UR_COMMAND_V3_SWAP_EXACT_IN, UR_COMMAND_SWEEP],
+      },
+    ];
+    for (const c of cases) {
+      const tx = prepareExactInSwap(c.swap);
+      assert.equal(tx.to, UNIVERSAL_ROUTER, c.name);
+      assert.equal(tx.value, amountIn, c.name);
+      assert.equal(executeCommands(tx.data), packCommands(c.commands), c.name);
+      const inputs = decodeFunctionData({abi: urAbi, data: tx.data}).args[1];
+      const [sweepToken, sweepTo, sweepAmount] = decodeAbiParameters(
+        [{type: "address"}, {type: "address"}, {type: "uint256"}],
+        inputs[inputs.length - 1],
+      );
+      assert.equal(sweepToken.toLowerCase(), QUOTE_ETH, c.name);
+      assert.equal(sweepTo.toLowerCase(), FEE_COLLECTOR, c.name);
+      assert.equal(sweepAmount, fee, c.name);
+      if (c.commands[0] === UR_COMMAND_WRAP_ETH) {
+        const [, wrapped] = decodeAbiParameters([{type: "address"}, {type: "uint256"}], inputs[0]);
+        assert.equal(wrapped, amountIn - fee, c.name);
+      }
+    }
+  });
+
+  it("encodes V3_SWAP_EXACT_IN with UR 2.1's maxHopSlippage array (the SliceOutOfBounds fix)", () => {
+    const token = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
+    const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as const;
+    const stock = "0x41f4267525a8aff329540ef24fd83d9044758b33" as const;
+    const tx = prepareExactInSwap({
+      venue: "v4",
+      side: "buy",
+      token,
+      quoteToken: QUOTE_WETH,
+      quoteIsWeth: true,
+      amountIn: 10n ** 16n,
+      amountOutMinimum: 10n ** 18n,
+      deadline: 1n,
+      recipient: "0x1111111111111111111111111111111111111111",
+      payNative: true,
+      hops: [
+        {venue: "v3", tokenIn: QUOTE_WETH, tokenOut: usdg, v3Fee: 100, amountIn: "10000000000000000"},
+        {venue: "v3", tokenIn: usdg, tokenOut: stock, v3Fee: 3000, amountIn: "20000000"},
+        {venue: "v4", tokenIn: stock, tokenOut: token, amountIn: "900000000000000000",
+          poolKey: {currency0: stock, currency1: token, fee: 0, tickSpacing: 200, hooks: LONG_DOPPLER_HOOK},
+          zeroForOne: true},
+      ],
     });
-    assert.equal(tx.to, UNIVERSAL_ROUTER);
-    assert.equal(tx.value, 0n);
-    assert.match(tx.data, /^0x/);
+    const decoded = decodeFunctionData({abi: urAbi, data: tx.data});
     assert.equal(
-      packCommands([UR_COMMAND_PERMIT2_TRANSFER_FROM, UR_COMMAND_V4_SWAP]),
-      "0x0210",
+      decoded.args[0],
+      packCommands([UR_COMMAND_WRAP_ETH, UR_COMMAND_V3_SWAP_EXACT_IN, UR_COMMAND_V3_SWAP_EXACT_IN, UR_COMMAND_V4_SWAP, UR_COMMAND_SWEEP]),
     );
+    for (const input of [decoded.args[1][1], decoded.args[1][2]]) {
+      // UR reads the array offset from word 5. Without the array, word 5 was
+      // the path length (43), and the router reverted SliceOutOfBounds().
+      const [, , , path, payerIsUser, maxHopSlippage] = decodeAbiParameters(
+        [{type: "address"}, {type: "uint256"}, {type: "uint256"}, {type: "bytes"}, {type: "bool"}, {type: "uint256[]"}],
+        input,
+      );
+      assert.equal((path.length - 2) / 2, 43);
+      assert.equal(payerIsUser, false);
+      assert.deepEqual(maxHopSlippage, []);
+      // 6-word head + path (length word + 2 padded words) puts the array at 0x120.
+      assert.equal(BigInt(`0x${input.slice(2 + 64 * 5, 2 + 64 * 6)}`), 0x120n);
+    }
   });
 
   it("encodes PERMIT2_TRANSFER_FROM as (token, recipient, amount)", () => {
@@ -206,51 +285,6 @@ describe("swap tx encoding", () => {
     assert.equal(pullToken.toLowerCase(), token);
     assert.equal(pullTo.toLowerCase(), UNIVERSAL_ROUTER);
     assert.equal(pullAmount, amount);
-  });
-
-  it("sends value for native ETH and wraps WETH", () => {
-    const native = buildV4Swap({
-      poolKey: KEY,
-      zeroForOne: true,
-      amountIn: 10n ** 16n,
-      amountOutMinimum: 1n,
-      deadline: 1n,
-      nativeIn: true,
-    });
-    assert.equal(native.value, 10n ** 16n);
-
-    const wrapped = buildV4Swap({
-      poolKey: KEY,
-      zeroForOne: true,
-      amountIn: 10n ** 16n,
-      amountOutMinimum: 1n,
-      deadline: 1n,
-      wrapEth: true,
-    });
-    assert.equal(wrapped.value, 10n ** 16n);
-    assert.equal(packCommands([UR_COMMAND_WRAP_ETH, UR_COMMAND_V4_SWAP]), "0x0b10");
-  });
-
-  it("uses SETTLE from the router when tokens are already there", () => {
-    const tx = buildV4Swap({
-      poolKey: KEY,
-      zeroForOne: true,
-      amountIn: 10n ** 16n,
-      amountOutMinimum: 1n,
-      deadline: 1n,
-      alreadyOnRouter: true,
-    });
-    assert.equal(tx.value, 0n);
-    assert.equal(tx.to, UNIVERSAL_ROUTER);
-    assert.ok(tx.data.length > 10);
-    assert.equal(
-      [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE, V4_ACTION_TAKE_ALL].join(","),
-      "6,11,15",
-    );
-    assert.equal(
-      [V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE_ALL, V4_ACTION_TAKE_ALL].join(","),
-      "6,12,15",
-    );
   });
 
   it("encodes a V4 or V3 sell as execute/unwrap to ETH, never transfer to the router", () => {
@@ -557,21 +591,6 @@ describe("swap tx encoding", () => {
     assert.equal(isTransferToSwapRouter(tx), false);
     const decoded = decodeFunctionData({abi: hodlRouterAbi, data: tx.data});
     assert.equal(decoded.functionName, "sell");
-  });
-
-  it("encodes SwapRouter02 exactInputSingle for the V3 venue", () => {
-    const tx = buildV3Swap({
-      tokenIn: KEY.currency0,
-      tokenOut: KEY.currency1,
-      fee: 100,
-      recipient: "0x1111111111111111111111111111111111111111",
-      amountIn: 10n ** 16n,
-      amountOutMinimum: 1n,
-      nativeIn: true,
-    });
-    assert.equal(tx.to, UNISWAP_SWAP_ROUTER_02);
-    assert.equal(tx.value, 10n ** 16n);
-    assert.equal(tx.data.slice(0, 10), "0x04e45aaf");
   });
 });
 

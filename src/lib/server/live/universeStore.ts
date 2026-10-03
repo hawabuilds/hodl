@@ -901,6 +901,8 @@ let pricedColumnsWarned = false;
 
 export async function upsertStats(
   rows: Omit<TokenStatRow, "updated_at">[],
+  /** Figure the visibility flag reads, when it differs from liquidity_usd. */
+  listingLiquidity?: Map<string, number | null>,
 ): Promise<number> {
   if (!hasDatabase || rows.length === 0) return 0;
   const now = new Date().toISOString();
@@ -968,10 +970,16 @@ export async function upsertStats(
     }
   }
   await refreshTradeableFlags(
-    rows.map((row) => ({
-      address: row.address,
-      liquidity_usd: row.liquidity_usd ?? null,
-    })),
+    rows.map((row) => {
+      const address = normalizeAddress(row.address);
+      return {
+        address,
+        liquidity_usd: row.liquidity_usd ?? null,
+        ...(listingLiquidity?.has(address)
+          ? {listing_liquidity_usd: listingLiquidity.get(address) ?? null}
+          : {}),
+      };
+    }),
   );
   return rows.length;
 }
@@ -981,7 +989,7 @@ export async function upsertStats(
  * has not been measured yet.
  */
 export async function refreshTradeableFlags(
-  rows: {address: string; liquidity_usd: number | null}[],
+  rows: {address: string; liquidity_usd: number | null; listing_liquidity_usd?: number | null}[],
 ): Promise<number> {
   if (!hasDatabase || rows.length === 0) return 0;
   let wrote = 0;
@@ -994,6 +1002,13 @@ export async function refreshTradeableFlags(
           row.liquidity_usd != null && Number.isFinite(Number(row.liquidity_usd))
             ? Number(row.liquidity_usd)
             : null;
+        const listing =
+          row.listing_liquidity_usd !== undefined
+            ? row.listing_liquidity_usd != null && Number.isFinite(Number(row.listing_liquidity_usd))
+              ? Number(row.listing_liquidity_usd)
+              : null
+            : liq;
+        const tradeable = isTradeableFromLiquidity(listing);
         // Only rows whose liquidity actually moved (more than 5%, or into or
         // out of unmeasured) are rewritten. Rewriting every priced token's
         // wide row each pass was most of the database's disk writes.
@@ -1002,7 +1017,7 @@ export async function refreshTradeableFlags(
           .update(
             {
               liquidity_usd: liq,
-              is_tradeable: isTradeableFromLiquidity(liq),
+              is_tradeable: tradeable,
             },
             {count: "exact"},
           )
@@ -1011,7 +1026,8 @@ export async function refreshTradeableFlags(
           liq == null
             ? request.not("liquidity_usd", "is", null)
             : request.or(
-                `liquidity_usd.is.null,liquidity_usd.lt.${liq * 0.95},liquidity_usd.gt.${liq * 1.05}`,
+                `liquidity_usd.is.null,liquidity_usd.lt.${liq * 0.95},liquidity_usd.gt.${liq * 1.05}` +
+                  (tradeable == null ? "" : `,is_tradeable.is.null,is_tradeable.neq.${tradeable}`),
               );
         return request;
       }),
@@ -1776,7 +1792,7 @@ export function rowToAsset(row: TokenRow, stats: TokenStatRow | undefined): Toke
         sells: stats?.sells_24h != null ? Number(stats.sells_24h) : undefined,
       },
     },
-    holders: 0,
+    holders: null,
     createdAt: row.created_at,
     listedAt: row.listed_at,
     pairedTicker:

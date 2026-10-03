@@ -922,8 +922,11 @@ interface TokenInfoRow {
   attributes?: {holders?: {count?: number}};
 }
 
-/** Holder count from GeckoTerminal token info — chart page only. */
-export async function holderCountFor(address: string): Promise<number> {
+/**
+ * Holder count from GeckoTerminal token info — chart page only. Null when
+ * GeckoTerminal has no count (it reports 0 for tokens it hasn't indexed).
+ */
+export async function holderCountFor(address: string): Promise<number | null> {
   const wanted = address.toLowerCase();
   const key = `gt:holders:${wanted}`;
   try {
@@ -934,10 +937,10 @@ export async function holderCountFor(address: string): Promise<number> {
       );
       if (!fetched.data && fetched.error) throw new Error(fetched.error);
       const n = fetched.data?.data?.attributes?.holders?.count;
-      return typeof n === "number" && n >= 0 ? n : 0;
+      return typeof n === "number" && n > 0 ? n : null;
     });
     return count;
   } catch {
-    return 0;
+    return null;
   }
 }

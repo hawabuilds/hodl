@@ -263,22 +263,16 @@ describe("platform fee label follows the execution path", () => {
   const token = "0xf3239df6f081f7c98bc5ba27fb24eea66cd1d69c" as const;
 
   it("shows Platform fee 0.5% on a Hodl ETH/USDG single hop", () => {
-    const hodlEth = platformFeeLabel({
-      quoteToken: QUOTE_WETH,
-      quoteIsNative: false,
-      quoteIsWeth: true,
-    });
+    const hodlEth = platformFeeLabel();
     assert.equal(hodlEth.taken, true);
     assert.equal(hodlEth.bps, 50);
     assert.equal(hodlEth.title, "Platform fee 0.5%");
-    assert.equal(hodlEth.note, null);
 
     const usdgQuote = {
       quoteToken: QUOTE_USDG,
       quoteIsNative: false,
       quoteIsWeth: false,
     };
-    assert.equal(platformFeeLabel(usdgQuote).taken, true);
     assert.equal(ticketTakesHodlFee(usdgQuote), true);
   });
 
@@ -297,12 +291,11 @@ describe("platform fee label follows the execution path", () => {
       amountOut: "1000",
       netOut: "995",
     };
-    const label = platformFeeLabel(ur);
+    const label = platformFeeLabel();
     assert.equal(ticketTakesHodlFee(ur), false);
     assert.equal(label.taken, true);
     assert.equal(label.bps, 50);
     assert.equal(label.title, "Platform fee 0.5%");
-    assert.equal(label.note, null);
     assert.equal(ticketNetOut(ur), 995n);
     assert.notEqual(label.title, "HODL fee 0.5%");
   });

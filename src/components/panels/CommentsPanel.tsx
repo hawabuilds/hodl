@@ -139,7 +139,7 @@ export function CommentsPanel({
         </ul>
       )}
 
-      <div className="sticky bottom-0 mt-2 bg-surface-base/95 pt-2.5 shadow-[0_-10px_28px_-14px_var(--shadow-color)] backdrop-blur-[12px]">
+      <div className="sticky bottom-0 mt-2 bg-surface-base pt-2.5 shadow-[0_-10px_28px_-14px_var(--shadow-color)]">
         {replyTo ? (
           <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-semibold text-faint">
             <span className="min-w-0 truncate">

@@ -12,6 +12,7 @@ import {quoteKindFor, type LaunchpadId, type QuoteKind} from "@/lib/universe";
 import {cached} from "./cache";
 import {multicallChunked, rpc} from "./chain";
 import {cachedQuotes, quotes, RWA_BY_ADDRESS} from "./robinhood";
+import {readQuoteDepths, type DepthPool} from "./poolDepth";
 import {resolveV4PoolKeysBatch, type V4PoolHit} from "./v4Pools";
 import {
   CRON_PRICE_PAGE,
@@ -113,6 +114,12 @@ export function movedAt(input: {
 
 export interface PriceBatchResult {
   rows: OnchainPriceRow[];
+  /**
+   * The old virtual-reserve figure per priced token. Only the New / Trending
+   * visibility flag (`is_tradeable`) reads it, so moving `liquidity_usd` to
+   * real depth does not also hide unbought launch curves from those lists.
+   */
+  listingLiquidity?: Map<string, number | null>;
   priced: number;
   noPool: number;
   failed: number;
@@ -206,6 +213,7 @@ function quoteUsd(
 
 interface PoolState {
   sqrtPriceX96: bigint;
+  tick: number;
   liquidity: bigint;
   unreachable: boolean;
 }
@@ -243,9 +251,11 @@ async function readPoolStates(
     const unreachable = Boolean(slot?.unreachable || liq?.unreachable);
     const sqrt =
       slot?.status === "success" && slot.result ? slot.result[0] : 0n;
+    const tick = slot?.status === "success" && slot.result ? Number(slot.result[1]) : 0;
     const liquidity = liq?.status === "success" && liq.result != null ? liq.result : 0n;
     out.set(poolIds[i].toLowerCase(), {
       sqrtPriceX96: sqrt,
+      tick,
       liquidity,
       unreachable,
     });
@@ -307,6 +317,7 @@ export async function priceTokensBatch(
   held?: Map<string, TokenStatRow>,
 ): Promise<PriceBatchResult> {
   const rows: OnchainPriceRow[] = [];
+  const listingLiquidity = new Map<string, number | null>();
   let priced = 0;
   let noPool = 0;
   let failed = 0;
@@ -333,6 +344,30 @@ export async function priceTokensBatch(
   }
   const states = await readPoolStates(poolIds);
 
+  // Liquidity is the pool's real quote depth, read for every live pool in one
+  // pass (see poolDepth.ts: virtual reserves made empty launch curves rank top).
+  const liveByToken = new Map<string, ReturnType<typeof pickLiveHit>>();
+  const depthPools: DepthPool[] = [];
+  for (const token of tokens) {
+    const address = normalizeAddress(token.address);
+    const live = pickLiveHit(keys.get(address) ?? [], states);
+    liveByToken.set(address, live);
+    if (live && !("unreachable" in live) && live.state.sqrtPriceX96 > 0n && live.state.liquidity > 0n) {
+      depthPools.push({
+        poolId: live.hit.poolId,
+        sqrtPriceX96: live.state.sqrtPriceX96,
+        tick: live.state.tick,
+        liquidity: live.state.liquidity,
+        tickSpacing: live.hit.key.tickSpacing,
+        quoteIsCurrency1: live.hit.tokenIsCurrency0,
+      });
+    }
+  }
+  const depths = await readQuoteDepths(depthPools).catch((error) => {
+    console.error("pool depth read failed; liquidity left unmeasured", error);
+    return new Map<string, number>();
+  });
+
   for (const token of tokens) {
     const address = normalizeAddress(token.address);
     const prev = held?.get(address);
@@ -352,7 +387,7 @@ export async function priceTokensBatch(
       continue;
     }
 
-    const live = pickLiveHit(hits, states);
+    const live = liveByToken.get(address) ?? null;
     if (live && "unreachable" in live) {
       unevaluated += 1;
       rows.push(finish(address, null, prior));
@@ -412,15 +447,25 @@ export async function priceTokensBatch(
       unevaluated += 1;
     }
 
+    // Two-sided TVL convention: 2× the quote a seller could really take out.
+    // Unreadable depth stays null (unmeasured), never a guess.
+    const depthRaw = depths.get(hit.poolId.toLowerCase());
+    const liqRaw =
+      depthRaw == null ? null : (2 * depthRaw * usd) / 10 ** quoteDecimals(hit.quote, kind);
+    const liq = liqRaw != null && Number.isFinite(liqRaw) && liqRaw >= 0 ? liqRaw : null;
+
     const reserves = virtualReserves(state.sqrtPriceX96, state.liquidity);
     const dec0 = hit.tokenIsCurrency0 ? decimals : quoteDecimals(hit.quote, kind);
     const dec1 = hit.tokenIsCurrency0 ? quoteDecimals(hit.quote, kind) : decimals;
     const amt0 = reserves.amount0 / 10 ** dec0;
     const amt1 = reserves.amount1 / 10 ** dec1;
-    const liqRaw = hit.tokenIsCurrency0
+    const virtualLiq = hit.tokenIsCurrency0
       ? amt0 * priceUsd + amt1 * usd
       : amt0 * usd + amt1 * priceUsd;
-    const liq = Number.isFinite(liqRaw) && liqRaw > 0 ? liqRaw : null;
+    listingLiquidity.set(
+      address,
+      Number.isFinite(virtualLiq) && virtualLiq > 0 ? virtualLiq : null,
+    );
 
     priced += 1;
     rows.push(
@@ -440,14 +485,14 @@ export async function priceTokensBatch(
     );
   }
 
-  return {rows, priced, noPool, failed, unevaluated};
+  return {rows, listingLiquidity, priced, noPool, failed, unevaluated};
 }
 
 export async function writePricedStats(
   result: PriceBatchResult,
 ): Promise<number> {
   if (result.rows.length === 0) return 0;
-  return upsertStats(result.rows);
+  return upsertStats(result.rows, result.listingLiquidity);
 }
 
 /**

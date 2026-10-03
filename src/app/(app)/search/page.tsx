@@ -1,6 +1,7 @@
 "use client";
 
-import {useMemo, useState} from "react";
+import {Suspense, useEffect, useMemo, useState} from "react";
+import {useSearchParams} from "next/navigation";
 import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
 import {AssetList} from "@/components/AssetRow";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
@@ -23,7 +24,24 @@ const SCOPES: FilterOption<Scope>[] = [
 ];
 
 export default function SearchPage() {
-  const [query, setQuery] = useState("");
+  // useSearchParams needs a Suspense boundary to prerender the page shell.
+  return (
+    <Suspense>
+      <SearchView />
+    </Suspense>
+  );
+}
+
+function SearchView() {
+  // A /search?q= link runs that search; typing keeps the link in step.
+  const urlQuery = useSearchParams().get("q") ?? "";
+  const [query, setQuery] = useState(urlQuery);
+  useEffect(() => setQuery(urlQuery), [urlQuery]);
+  const updateQuery = (next: string) => {
+    setQuery(next);
+    const url = next.trim() ? `/search?q=${encodeURIComponent(next)}` : "/search";
+    window.history.replaceState(window.history.state, "", url);
+  };
   const [scope, setScope] = useState<Scope>("all");
   const {search, trimmed, active} = useSearch(query);
 
@@ -49,7 +67,7 @@ export default function SearchPage() {
     <div className={APP_SCROLL_PAD_TOP}>
       <SearchBar
         value={query}
-        onChange={setQuery}
+        onChange={updateQuery}
         label="Search tokens, RWAs and people"
         placeholder="People, tickers, tokens, addresses"
         className="mb-3.5"

@@ -1,5 +1,5 @@
 import type {Metadata, Viewport} from "next";
-import {Inter, JetBrains_Mono} from "next/font/google";
+import localFont from "next/font/local";
 import {APP_NAME, APP_SUBTITLE, APP_TAGLINE} from "@/config/app";
 import {appOrigin} from "@/config/appUrl";
 import {Providers} from "@/components/providers/Providers";
@@ -10,17 +10,20 @@ import {Analytics} from "@vercel/analytics/next";
 /**
  * Inter for interface copy: 400 body, 300 large display, 500/700 headings.
  * Tabular figures keep price columns stable; mono stays on hashes only.
+ *
+ * Self-hosted variable fonts (Latin, OFL — see ./fonts), so a build never
+ * depends on reaching Google Fonts.
  */
-const display = Inter({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "700"],
+const display = localFont({
+  src: "./fonts/inter-latin-wght-normal.woff2",
+  weight: "100 900",
   variable: "--font-display",
   display: "swap",
 });
 
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
+const mono = localFont({
+  src: "./fonts/jetbrains-mono-latin-wght-normal.woff2",
+  weight: "100 800",
   variable: "--font-mono",
   display: "swap",
 });

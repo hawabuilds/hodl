@@ -148,7 +148,8 @@ export interface TokenAsset {
       sells?: number;
     }
   >;
-  holders: number;
+  /** Holder count; null when no source has reported one (shown as "—"). */
+  holders: number | null;
   createdAt: string;
   /** Bond time for Pons, launch time for Long — New feed sort key. */
   listedAt: string | null;

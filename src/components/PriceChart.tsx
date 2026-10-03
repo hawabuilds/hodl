@@ -287,14 +287,16 @@ export function PriceChart({
   const bucketMs =
     windowMs != null && windowMs > 0 ? windowMs / CHART_WINDOW_BARS : undefined;
   const intraday = bucketMs != null && bucketMs <= TIMEFRAME_MS["5m"];
-  const scaleOptsFor = (barCount: number) =>
-    lwcTimeScaleOptions({intraday, barCount});
+  // Read when the chart is built; applyFit re-applies the scale on a change,
+  // so switching timeframe does not rebuild the chart.
+  const intradayRef = useRef(intraday);
+  intradayRef.current = intraday;
 
   const applyFit = useCallback(() => {
     const chart = chartRef.current;
     if (!chart || pointsRef.current.length < 2) return;
     chart.timeScale().applyOptions({
-      ...scaleOptsFor(pointsRef.current.length),
+      ...lwcTimeScaleOptions({intraday, barCount: pointsRef.current.length}),
       // A chart that labels its own first and last point keeps them in view
       // when its box changes size, instead of sliding the first one out.
       ...(edgeLabelsRef.current ? {lockVisibleTimeRangeOnResize: true} : {}),
@@ -364,7 +366,10 @@ export function PriceChart({
         borderVisible: false,
         timeVisible: true,
         secondsVisible: false,
-        ...lwcTimeScaleOptions({intraday, barCount: pointsRef.current.length}),
+        ...lwcTimeScaleOptions({
+          intraday: intradayRef.current,
+          barCount: pointsRef.current.length,
+        }),
         ...(edgeTimeLabels ? {lockVisibleTimeRangeOnResize: true} : {}),
       },
       crosshair: {

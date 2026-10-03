@@ -143,8 +143,8 @@ export function useChart(kind: AssetKind, id: string, timeframe: Timeframe, enab
     retry: false,
   });
 
-  const tip = query.data?.points ?? [];
-  const points = useMemo(() => mergeChartPoints(older, tip), [older, tip]);
+  const tip = query.data?.points;
+  const points = useMemo(() => mergeChartPoints(older, tip ?? []), [older, tip]);
 
   const loadOlder = useCallback(async () => {
     if (kind !== "token" || !hasMore || loadingOlder.current) return;

@@ -143,6 +143,7 @@ export function OrderTicket({
   const queryClient = useQueryClient();
   const swap = useSwap();
   const hodl = useHodlSwap();
+  const setHodlPhase = hodl.setPhase;
   const [settings] = useLocalStore<TradeSettings>(
     readTradeSettings,
     DEFAULT_SETTINGS,
@@ -166,7 +167,7 @@ export function OrderTicket({
   const token = tradeTokenAddress(asset);
   const eth = settings.currency === "ETH";
   const live =
-    isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote);
+    isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote, activeSide);
   const ticket = live ? hodl : swap;
   // Desktop pop-ups stay out of the way while a trade is confirming.
   useEffect(() => {
@@ -232,7 +233,7 @@ export function OrderTicket({
     functionName: "allowance",
     args:
       wallet && spendForApproval && routerReady
-        ? [wallet, HODL_ROUTER_ADDRESS as `0x${string}`]
+        ? [wallet, HODL_ROUTER_ADDRESS]
         : undefined,
     chainId: RH_MAINNET_ID,
     query: {
@@ -320,7 +321,7 @@ export function OrderTicket({
     valid && Number.isFinite(amountUsd) && urBuy && liveBuyOverCap(amountUsd)
       ? "This size is above the current notional cap."
       : null;
-  const feeRow = quote ? platformFeeLabel(quote) : null;
+  const feeRow = quote ? platformFeeLabel() : null;
 
   const estimatedOut = useMemo(() => {
     if (quote) {
@@ -433,11 +434,8 @@ export function OrderTicket({
           setQuoteMiss(false);
           setQuoteError(null);
           setQuoteAt(Date.now());
-          if (
-            isLiveTrader(ticket.address)
-            && (hodl.phase === "idle" || hodl.phase === "quoting")
-          ) {
-            hodl.setPhase("quoting");
+          if (isLiveTrader(ticket.address)) {
+            setHodlPhase((phase) => (phase === "idle" || phase === "quoting" ? "quoting" : phase));
           }
         } else {
           setQuote(null);
@@ -463,7 +461,7 @@ export function OrderTicket({
       window.clearTimeout(start);
       window.clearInterval(refresh);
     };
-  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, buying, settings.slippagePct]);
+  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, buying, settings.slippagePct, setHodlPhase]);
 
   const blocked = ticketBlockReason({
     kind: asset?.kind ?? "token",
@@ -1147,11 +1145,11 @@ function TicketBreakdown({
   impactLabel: string;
   impactLevel: "ok" | "warn" | "block";
 }) {
-  const fee = platformFeeLabel(quote);
+  const fee = platformFeeLabel();
   const netOut = ticketNetOut(quote);
   const minOut = amountOutMinimum(netOut, slippagePct);
   const feeRaw =
-    fee.taken && quote.feeAmount && BigInt(quote.feeAmount) > 0n
+    quote.feeAmount && BigInt(quote.feeAmount) > 0n
       ? formatUnits(BigInt(quote.feeAmount), quote.quoteDecimals)
       : null;
   const minHuman = formatUnits(minOut, quote.outDecimals);
@@ -1160,11 +1158,9 @@ function TicketBreakdown({
       <div className="flex items-center justify-between gap-3">
         <span className="text-faint">{fee.title}</span>
         <span className="tabular-nums font-bold text-muted">
-          {fee.taken && feeRaw
+          {feeRaw
             ? `${units(Number(feeRaw))} ${feeAmountSymbol(quote)}${feeUsd > 0 ? ` · ${money(feeUsd)}` : ""}`
-            : fee.taken
-              ? money(feeUsd)
-              : (fee.note ?? "—")}
+            : money(feeUsd)}
         </span>
       </div>
       <div className="flex items-center justify-between gap-3">

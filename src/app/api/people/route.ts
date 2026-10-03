@@ -1,6 +1,7 @@
 import type {NextRequest} from "next/server";
-import {badRequest, json} from "@/lib/server/http";
+import {badRequest, dataUnavailable, json} from "@/lib/server/http";
 import {hasDatabase} from "@/lib/server/db";
+import {DEMO_MODE} from "@/lib/server/demoMode";
 import {profilesByHandles} from "@/lib/server/social-live";
 import {getProfile} from "@/lib/server/social";
 import type {Profile} from "@/lib/types";
@@ -28,6 +29,7 @@ export async function GET(request: NextRequest) {
   if (hasDatabase) {
     return json({people: await profilesByHandles(handles), seeded: false});
   }
+  if (!DEMO_MODE) return dataUnavailable();
 
   const people = handles
     .map((handle) => getProfile(handle))

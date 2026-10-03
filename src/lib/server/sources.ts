@@ -4,6 +4,8 @@ import type {
   ChartPoint,
   FeedItem,
   NewsItem,
+  NewsTopic,
+  NewsWindow,
   Profile,
   RwaAsset,
   Timeframe,
@@ -24,8 +26,8 @@ import {mergeTradesIntoChart} from "@/lib/chartLive";
 import {CHART_FIRST_LOAD_BARS, CHART_HISTORY_BARS, TIMEFRAME_MS} from "@/lib/chartPlot";
 import {pairsForToken} from "./live/dexscreener";
 import {underFeature} from "./live/rpcMeter";
-import {type FeedQuery} from "./newsfeed";
 import {hasDatabase} from "./db";
+import {DATA_UNAVAILABLE, DEMO_MODE} from "./demoMode";
 import {normalizeAddress} from "@/lib/address";
 import {searchPeople} from "./social";
 import {searchUsers as searchUsersLive} from "./social-live";
@@ -79,6 +81,12 @@ async function fallbackTokenChart(
  * routes that have no database — not for market rows.
  */
 
+export interface FeedQuery {
+  window: NewsWindow;
+  topic: NewsTopic;
+  query?: string;
+}
+
 export interface SourceResult<T> {
   data: T;
   /** True while the value came from the seeded market rather than a live feed. */
@@ -107,8 +115,8 @@ async function liveOnly<T>(load: () => Promise<T>): Promise<SourceResult<T>> {
  * prices run a median 5.5% out, because two thirds of those pools hold under
  * $10k.
  *
- * TODO(live): the registry is a snapshot in the repo, so a new listing needs a
- * rebuild. Part 04 step 1 has the weekly refresh that removes that.
+ * The registry is a snapshot in the repo: `npm run rwa:check` reports drift
+ * from Robinhood's list and `npm run rwa:sync` rewrites it, then a deploy.
  */
 export async function fetchRwas(): Promise<SourceResult<RwaAsset[]>> {
   return liveOnly(live.listRwas);
@@ -121,8 +129,9 @@ export async function fetchRwas(): Promise<SourceResult<RwaAsset[]>> {
  * by construction — a token with an RWA pair cannot hide, because the pair is
  * what makes it visible.
  *
- * TODO(live): holders, transfer taxes and honeypot detection all need an RPC
- * and are still zero. Part 05 step 4.
+ * Holders come from GeckoTerminal on the token page and stay null (shown as
+ * "—") when unknown; the creator tax is read from the launchpad (`taxes.ts`).
+ * There is no honeypot check.
  */
 export async function fetchTokens(): Promise<SourceResult<TokenAsset[]>> {
   return underFeature("feed", () => liveOnly(live.listTokens));
@@ -468,10 +477,18 @@ export async function fetchNews(
 }
 
 /**
- * TODO(live): the chain's own ETH/USD oracle. The order sheet reads this to
- * convert between the two currencies someone can size a trade in.
+ * ETH/USD for the order sheet, which converts between the two currencies
+ * someone can size a trade in. Read from the chain's deepest WETH/USDG pool —
+ * the same price quotes use — with DexScreener only as a fallback.
  */
 export async function fetchEthPrice(): Promise<SourceResult<number>> {
+  try {
+    const {ethUsd} = await import("./live/onchainPrice");
+    const onchain = await ethUsd();
+    if (onchain != null && onchain > 0) return {data: onchain, seeded: false};
+  } catch (error) {
+    console.error("on-chain eth price failed", error);
+  }
   try {
     const {pairsForToken} = await import("./live/dexscreener");
     const {QUOTE_WETH} = await import("@/lib/contracts");
@@ -503,9 +520,9 @@ export async function search(query: string): Promise<SourceResult<Asset[]>> {
 /**
  * People, from the same Supabase `users` table the profiles come from.
  *
- * Falls back to the seeded cast only when the database is unconfigured or the
- * query throws — an empty live result is a real "nobody matches", not a reason
- * to invent twelve personas.
+ * Without a database this is "data unavailable" — the seeded cast only runs
+ * under DEMO_MODE. An empty live result is a real "nobody matches", not a
+ * reason to invent twelve personas.
  */
 export async function searchUsers(
   query: string,
@@ -518,6 +535,7 @@ export async function searchUsers(
       throw error;
     }
   }
+  if (!DEMO_MODE) return {data: [], seeded: false, error: DATA_UNAVAILABLE};
   return {data: searchPeople(query), seeded: true};
 }
 
@@ -528,9 +546,9 @@ export async function searchUsers(
  * Robinhood side — a better filter than a keyword match, because it is what the
  * wires already tag.
  *
- * TODO(live): the account cards still carry no post text. That is deliberate
- * until the X API is wired: inventing words beside a real person's name and a
- * verified tick would be a fabricated record however the feed is labelled.
+ * The account cards carry no post text, deliberately: there is no X API
+ * connection, and inventing words beside a real person's name and a verified
+ * tick would be a fabricated record however the feed is labelled.
  */
 export async function fetchFeed(
   query: FeedQuery,

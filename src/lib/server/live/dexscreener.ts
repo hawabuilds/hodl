@@ -20,8 +20,9 @@ import {isGeckoRateLimited} from "./geckoFetch";
  * here is allowed to set an RWA price; see `robinhood.ts` for that.
  *
  * Free and unauthenticated: 30 addresses per request, ~300 requests a minute.
- * TODO(live): no SLA and no commercial terms. Part 05 keeps the on-chain
- * factory scan as the path that does not depend on them.
+ * No SLA and no commercial terms, which is why discovery and prices also run
+ * from the chain (the token indexer and `onchainPrice.ts`) and do not depend
+ * on it.
  */
 
 const BASE = "https://api.dexscreener.com/tokens/v1/robinhood";

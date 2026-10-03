@@ -9,6 +9,7 @@ import type {
   AssetKind,
   CommentThread,
 } from "@/lib/types";
+import {errorText} from "@/lib/responseError";
 import {useLocalStore} from "./useLocalStore";
 import {useUser} from "./useUser";
 import {requestPushIntent} from "@/components/PushPrompt";
@@ -50,6 +51,13 @@ function buildThreads(comments: AssetComment[]): CommentThread[] {
  * Live comments come from Supabase. Anything posted while the database is
  * down is written to this browser and merged in.
  */
+interface CommentsResponse {
+  comments: AssetComment[];
+  localOnly: boolean;
+  /** Whether the caller holds this asset, which is what posting needs. */
+  canPost?: boolean;
+}
+
 export function useComments(kind: AssetKind, assetId: string) {
   const {authenticated, handle, displayName, pfpUrl} = useUser();
   const session = useSession();
@@ -64,13 +72,8 @@ export function useComments(kind: AssetKind, assetId: string) {
       const res = await fetch(`/api/asset/${kind}/${assetId}/comments`, {
         headers: token ? {authorization: `Bearer ${token}`} : undefined,
       });
-      if (!res.ok) throw new Error("Could not load comments.");
-      return (await res.json()) as {
-        comments: AssetComment[];
-        localOnly: boolean;
-        /** Whether the caller holds this asset, which is what posting needs. */
-        canPost?: boolean;
-      };
+      if (!res.ok) throw new Error(await errorText(res, "Could not load comments."));
+      return (await res.json()) as CommentsResponse;
     },
     retry: false,
     // Comments are a conversation: new ones should arrive without a reload.
@@ -147,7 +150,7 @@ export function useComments(kind: AssetKind, assetId: string) {
 
       const key = ["comments", kind, assetId, authenticated];
       let next = true;
-      queryClient.setQueryData(key, (current: typeof remote.data) => {
+      queryClient.setQueryData(key, (current: CommentsResponse | undefined) => {
         if (!current) return current;
         return {
           ...current,
@@ -177,7 +180,7 @@ export function useComments(kind: AssetKind, assetId: string) {
           });
           if (!res.ok) throw new Error("like failed");
           const result = (await res.json()) as {likes: number; liked: boolean};
-          queryClient.setQueryData(key, (current: typeof remote.data) => {
+          queryClient.setQueryData(key, (current: CommentsResponse | undefined) => {
             if (!current) return current;
             return {
               ...current,

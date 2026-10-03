@@ -3,8 +3,6 @@ import {
   decodeFunctionData,
   encodeAbiParameters,
   encodeFunctionData,
-  maxUint256,
-  maxUint160,
   parseAbi,
   toHex,
 } from "viem";
@@ -30,6 +28,16 @@ import {
   UR_MSG_SENDER,
   type V4PoolKey,
 } from "./v4Encoding";
+
+/**
+ * A Permit2 allowance for the Universal Router lives 30 minutes: long enough
+ * to sign the swap after the approve lands, never a standing allowance.
+ */
+export const PERMIT2_APPROVAL_TTL_SEC = 30 * 60;
+
+export function permit2Expiry(nowSec: number = Math.floor(Date.now() / 1000)): number {
+  return nowSec + PERMIT2_APPROVAL_TTL_SEC;
+}
 
 /** Universal Router command: V3 exact-in. */
 export const UR_COMMAND_V3_SWAP_EXACT_IN = 0x00;
@@ -61,10 +69,6 @@ export const permit2Abi = parseAbi([
 
 const urAbi = parseAbi([
   "function execute(bytes commands, bytes[] inputs, uint256 deadline) payable",
-]);
-
-const router02Abi = parseAbi([
-  "function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountOut)",
 ]);
 
 export interface PreparedTx {
@@ -144,6 +148,14 @@ export function encodeV3Path(
   return concatHex([tokenIn, toHex(fee, {size: 3}), tokenOut]);
 }
 
+/**
+ * UR 2.1.1 `V3_SWAP_EXACT_IN` (0x00) is `abi.decode(inputs, (address,
+ * uint256, uint256, bytes, bool, uint256[]))` — the trailing `maxHopSlippage`
+ * array is new in 2.1. Leaving it off makes the router read the path length
+ * as the array offset and revert `SliceOutOfBounds()`, which is what broke
+ * every ETH → USDG → stock → token buy and its sell back. Empty = no per-hop
+ * check; `amountOutMinimum` still guards the trade.
+ */
 export function encodeV3ExactIn(opts: {
   recipient: `0x${string}`;
   amountIn: bigint;
@@ -160,6 +172,7 @@ export function encodeV3ExactIn(opts: {
       {type: "uint256"},
       {type: "bytes"},
       {type: "bool"},
+      {type: "uint256[]"},
     ],
     [
       opts.recipient,
@@ -167,6 +180,7 @@ export function encodeV3ExactIn(opts: {
       opts.amountOutMinimum,
       encodeV3Path(opts.tokenIn, opts.fee, opts.tokenOut),
       opts.payerIsUser,
+      [], // maxHopSlippage
     ],
   );
 }
@@ -178,10 +192,11 @@ function encodeUnwrapWeth(recipient: `0x${string}`, amountMin: bigint): `0x${str
   );
 }
 
+/** Exact-amount ERC-20 approve. There is no unlimited default. */
 export function encodeApprove(
   token: `0x${string}`,
   spender: `0x${string}`,
-  amount: bigint = maxUint256,
+  amount: bigint,
 ): PreparedTx {
   return {
     to: token,
@@ -231,17 +246,20 @@ export function assertSwapNotErc20Transfer(tx: PreparedTx): void {
   if (isErc20TransferCalldata(tx.data) || isTransferToSwapRouter(tx)) {
     throw new Error("Trade must be a swap, not an ERC-20 transfer to the router.");
   }
-  const to = tx.to.toLowerCase();
-  if (to !== UNIVERSAL_ROUTER && to !== UNISWAP_SWAP_ROUTER_02) {
-    throw new Error("Swap must target Universal Router or SwapRouter02.");
+  if (tx.to.toLowerCase() !== UNIVERSAL_ROUTER) {
+    throw new Error("Swap must target the Universal Router.");
   }
 }
 
+/**
+ * Permit2 allowance for exactly this trade, expiring at `expiration`
+ * (see `permit2Expiry`). Never max, never open-ended.
+ */
 export function encodePermit2Approve(
   token: `0x${string}`,
   spender: `0x${string}`,
-  amount: bigint = maxUint160,
-  expiration: number = 2 ** 48 - 1,
+  amount: bigint,
+  expiration: number,
 ): PreparedTx {
   return {
     to: PERMIT2,
@@ -251,118 +269,6 @@ export function encodePermit2Approve(
       args: [token, spender, amount, expiration],
     }),
     value: 0n,
-  };
-}
-
-export interface V4SwapBuild {
-  poolKey: V4PoolKey;
-  zeroForOne: boolean;
-  amountIn: bigint;
-  amountOutMinimum: bigint;
-  deadline: bigint;
-  /** Native ETH is already on the router via msg.value. */
-  nativeIn?: boolean;
-  /** User pays ETH; pool is WETH — wrap first. */
-  wrapEth?: boolean;
-  /**
-   * Tokens already sit on the Universal Router. Ticket code must never
-   * transfer user tokens here to set this — that is how SPACEHOOD was lost.
-   */
-  alreadyOnRouter?: boolean;
-  /** Leave the output on the router (next hop or unwrap). */
-  takeToRouter?: boolean;
-}
-
-/**
- * Universal Router execute for the venueResolve V4 winner.
- *
- * ERC-20 input prepends Permit2 pull unless `alreadyOnRouter`. Native ETH
- * sends `value`. WETH paid in ETH wraps first. This is the same UR 2.1.1
- * payload `v4Encoding` already tests — not a second venue.
- */
-export function buildV4Swap(swap: V4SwapBuild): PreparedTx {
-  const encoded = encodeV4SwapExactInSingle({
-    poolKey: swap.poolKey,
-    zeroForOne: swap.zeroForOne,
-    amountIn: swap.amountIn,
-    amountOutMinimum: swap.amountOutMinimum,
-    payerIsUser:
-      swap.alreadyOnRouter || (!swap.nativeIn && !swap.wrapEth) ? false : undefined,
-    takeToRouter: swap.takeToRouter,
-  });
-
-  if (swap.nativeIn) {
-    return {
-      to: UNIVERSAL_ROUTER,
-      data: encodeUrExecute(encoded.commands, encoded.inputs, swap.deadline),
-      value: swap.amountIn,
-    };
-  }
-
-  if (swap.wrapEth) {
-    return {
-      to: UNIVERSAL_ROUTER,
-      data: encodeUrExecute(
-        packCommands([UR_COMMAND_WRAP_ETH, UR_COMMAND_V4_SWAP]),
-        [encodeWrapEth(UNIVERSAL_ROUTER, swap.amountIn), encoded.inputs[0]],
-        swap.deadline,
-      ),
-      value: swap.amountIn,
-    };
-  }
-
-  if (swap.alreadyOnRouter) {
-    return {
-      to: UNIVERSAL_ROUTER,
-      data: encodeUrExecute(encoded.commands, encoded.inputs, swap.deadline),
-      value: 0n,
-    };
-  }
-
-  return {
-    to: UNIVERSAL_ROUTER,
-    data: encodeUrExecute(
-      packCommands([UR_COMMAND_PERMIT2_TRANSFER_FROM, UR_COMMAND_V4_SWAP]),
-      [
-        encodePermit2Pull(encoded.currencyIn, swap.amountIn, UNIVERSAL_ROUTER),
-        encoded.inputs[0],
-      ],
-      swap.deadline,
-    ),
-    value: 0n,
-  };
-}
-
-export interface V3SwapBuild {
-  tokenIn: `0x${string}`;
-  tokenOut: `0x${string}`;
-  fee: number;
-  recipient: `0x${string}`;
-  amountIn: bigint;
-  amountOutMinimum: bigint;
-  nativeIn?: boolean;
-}
-
-/** SwapRouter02 exactInputSingle — the V3 venue resolveVenue already quotes. */
-export function buildV3Swap(swap: V3SwapBuild): PreparedTx {
-  return {
-    to: UNISWAP_SWAP_ROUTER_02,
-    data: encodeFunctionData({
-      abi: router02Abi,
-      functionName: "exactInputSingle",
-      args: [
-        {
-          tokenIn: swap.tokenIn,
-          tokenOut: swap.tokenOut,
-          fee: swap.fee,
-          recipient: swap.recipient,
-          amountIn: swap.amountIn,
-          amountOutMinimum: swap.amountOutMinimum,
-          sqrtPriceLimitX96: 0n,
-        },
-      ],
-    }),
-    value: swap.nativeIn ? swap.amountIn : 0n,
   };
 }
 
@@ -520,13 +426,14 @@ export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
 }
 
 /**
- * Buy path: ETH → pair → token via Universal Router. Never
- * `token.transfer(router)` and never asks the user to hold SPY/SPCX.
+ * Buy path: ETH → token, or ETH → pair → token, via Universal Router. The
+ * 50 bps fee stays on the router and is swept to FeeCollector, single hop or
+ * not. Never `token.transfer(router)` and never asks the user to hold SPY/SPCX.
  */
 export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
   const hops = hopsForSwap(swap);
-  if (hops.length < 2) {
-    throw new Error(CANT_ENTER_FROM_ETH);
+  if (hops.length === 0) {
+    throw new Error("No Uniswap pool for this token.");
   }
   assertSaneUrBuy({
     amountIn: swap.amountIn,
@@ -602,56 +509,22 @@ export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
 }
 
 /**
- * Value-moving swap the ticket signs. Always UR `execute` or SwapRouter02
- * `exactInputSingle`. Never `token.transfer(router, amount)`.
+ * Value-moving swap the ticket signs. Always UR `execute`, and every route
+ * pays the 50 bps platform fee. Never `token.transfer(router, amount)`.
  *
  * Sells always exit to ETH. A missing ETH hop fails instead of paying SPCX.
- * Stock-paired buys hop ETH → pair → token.
+ * Buys pay ETH; stock-paired buys hop ETH → pair → token.
  */
 export function prepareExactInSwap(swap: ExactInSwapBuild): PreparedTx {
   if (swap.side === "sell") {
     return buildSellToEth(swap);
   }
-  if (swap.hops && swap.hops.length > 1) {
-    assertSaneUrBuy({
-      amountIn: swap.amountIn,
-      amountOutMinimum: swap.amountOutMinimum,
-      hops: swap.hops,
-    });
-    return buildBuyFromEth(swap);
-  }
-
-  const nativePay = swap.payNative;
-  if (swap.venue === "v4") {
-    if (!swap.poolKey) {
-      throw new Error("No Uniswap pool for this token.");
-    }
-    const tx = buildV4Swap({
-      poolKey: swap.poolKey,
-      zeroForOne: Boolean(swap.zeroForOne),
-      amountIn: swap.amountIn,
-      amountOutMinimum: swap.amountOutMinimum,
-      deadline: swap.deadline,
-      nativeIn: nativePay && swap.quoteIsNative,
-      wrapEth: nativePay && swap.quoteIsWeth,
-    });
-    assertSwapNotErc20Transfer(tx);
-    return tx;
-  }
-  if (swap.v3Fee == null) {
-    throw new Error("No Uniswap pool for this token.");
-  }
-  const tx = buildV3Swap({
-    tokenIn: swap.quoteToken,
-    tokenOut: swap.token,
-    fee: swap.v3Fee,
-    recipient: swap.recipient,
+  assertSaneUrBuy({
     amountIn: swap.amountIn,
     amountOutMinimum: swap.amountOutMinimum,
-    nativeIn: nativePay && (swap.quoteIsWeth || swap.quoteIsNative),
+    hops: swap.hops,
   });
-  assertSwapNotErc20Transfer(tx);
-  return tx;
+  return buildBuyFromEth(swap);
 }
 
 export function isNativeQuote(token: string): boolean {
@@ -662,4 +535,4 @@ export function isWethQuote(token: string): boolean {
   return token.toLowerCase() === QUOTE_WETH;
 }
 
-export {PERMIT2, UNIVERSAL_ROUTER, UNISWAP_SWAP_ROUTER_02, maxUint256, maxUint160};
+export {PERMIT2, UNIVERSAL_ROUTER};

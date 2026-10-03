@@ -1,10 +1,11 @@
 "use client";
 
-import {useCallback, useEffect, useRef} from "react";
+import {useCallback, useEffect, useMemo, useRef} from "react";
 import {useQuery, useQueryClient} from "@tanstack/react-query";
 import {isFollowing, readFollowing, toggleFollow, writeFollowing} from "@/lib/localStore";
 import type {Profile} from "@/lib/types";
 import {useSession} from "@/lib/session";
+import {errorText} from "@/lib/responseError";
 import {useLocalStore} from "./useLocalStore";
 import {useUser} from "./useUser";
 import {requestPushIntent} from "@/components/PushPrompt";
@@ -23,7 +24,7 @@ export function useProfile(handle: string) {
     queryFn: async () => {
       const res = await fetch(`/api/profile/${encodeURIComponent(handle)}`);
       if (res.status === 404) return null;
-      if (!res.ok) throw new Error("Could not load this profile.");
+      if (!res.ok) throw new Error(await errorText(res, "Could not load this profile."));
       return (await res.json()) as ProfileResponse;
     },
   });
@@ -60,10 +61,14 @@ export function useFollows() {
     },
   });
 
-  const following =
-    user.authenticated && session.mode === "privy"
-      ? (remote.data ?? [])
-      : localFollowing.map((handle) => handle.toLowerCase());
+  const signedIn = user.authenticated && session.mode === "privy";
+  const following = useMemo(
+    () =>
+      signedIn
+        ? (remote.data ?? [])
+        : localFollowing.map((handle) => handle.toLowerCase()),
+    [signedIn, remote.data, localFollowing],
+  );
 
   const migrated = useRef(false);
   useEffect(() => {
@@ -125,7 +130,7 @@ export function useFollows() {
         await queryClient.invalidateQueries({queryKey: ["profile"]});
       })();
     },
-    [following, queryClient, session, user.authenticated],
+    [following, localFollowing, queryClient, session, user.authenticated],
   );
 
   const has = useCallback(

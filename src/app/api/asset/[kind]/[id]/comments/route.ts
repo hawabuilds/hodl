@@ -1,9 +1,10 @@
-import {badRequest, json, notFound, parseKind} from "@/lib/server/http";
+import {badRequest, dataUnavailable, json, notFound, parseKind} from "@/lib/server/http";
 import {fetchAsset} from "@/lib/server/sources";
 import {commentsFor as seededComments} from "@/lib/server/social";
 import {addComment, commentsFor, holdsAsset} from "@/lib/server/social-live";
 import {callerId, requireCaller} from "@/lib/server/auth";
 import {hasDatabase} from "@/lib/server/db";
+import {DEMO_MODE} from "@/lib/server/demoMode";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,7 @@ export async function GET(
     return json({comments: rows, localOnly: false, canPost});
   }
 
+  if (!DEMO_MODE) return dataUnavailable();
   return json({comments: seededComments(asset), localOnly: true});
 }
 

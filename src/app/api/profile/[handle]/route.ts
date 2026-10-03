@@ -1,5 +1,5 @@
 import {callerId} from "@/lib/server/auth";
-import {json, notFound} from "@/lib/server/http";
+import {dataUnavailable, json, notFound} from "@/lib/server/http";
 import {
   followersOf,
   followingByHandle,
@@ -10,6 +10,7 @@ import {
 } from "@/lib/server/social-live";
 import {holdingsFor} from "@/lib/server/live/holdings";
 import {hasDatabase} from "@/lib/server/db";
+import {DEMO_MODE} from "@/lib/server/demoMode";
 import {connectionsFor, getProfile} from "@/lib/server/social";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +65,7 @@ export async function GET(
   // With a database configured, an account that is not in it does not exist —
   // returning a seeded persona would invent the person being looked up.
   if (hasDatabase) return notFound("No profile with that handle.");
+  if (!DEMO_MODE) return dataUnavailable();
 
   const seeded = getProfile(params.handle);
   if (!seeded) return notFound("No profile with that handle.");

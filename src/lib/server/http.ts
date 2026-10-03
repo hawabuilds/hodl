@@ -1,6 +1,7 @@
 import {NextResponse} from "next/server";
 import type {AssetKind, Timeframe} from "@/lib/types";
 import {TIMEFRAMES} from "@/lib/types";
+import {DATA_UNAVAILABLE} from "./demoMode";
 
 /**
  * Shared route helpers.
@@ -15,6 +16,11 @@ export function json<T>(data: T, status = 200) {
     status,
     headers: {"cache-control": "no-store"},
   });
+}
+
+/** 503 for a route whose only data source is a database that isn't configured. */
+export function dataUnavailable() {
+  return json({error: DATA_UNAVAILABLE, unavailable: true}, 503);
 }
 
 /**

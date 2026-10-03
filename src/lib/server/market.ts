@@ -367,33 +367,6 @@ export function tradesFor(
 }
 
 /**
- * A price series over one of the portfolio ranges.
- *
- * Shares `priceAt` with the chart, so a position's contribution to the
- * portfolio line and its own chart page cannot disagree.
- */
-const RANGE_MINUTES: Record<Range, number> = {
-  "1D": 60 * 24,
-  "1W": 60 * 24 * 7,
-  "1M": 60 * 24 * 30,
-  "1Y": 60 * 24 * 365,
-  ALL: 60 * 24 * 730,
-};
-
-export function seriesFor(
-  asset: Asset,
-  range: Range,
-  points = 48,
-  now: number = Date.now(),
-): number[] {
-  const {key, base} = priceInputs(asset);
-  const span = RANGE_MINUTES[range] * 60_000;
-  return Array.from({length: points}, (_, i) =>
-    roundPrice(priceAt(key, base, asset.kind, now - span + (span * i) / (points - 1))),
-  );
-}
-
-/**
  * The gas token, priced in dollars.
  *
  * Rides the same drift as everything else so an order denominated in ETH and

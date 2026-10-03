@@ -256,11 +256,30 @@ export const UNIVERSAL_ROUTER =
   "0x8876789976decbfcbbbe364623c63652db8c0904" as const;
 
 /**
- * Hodl FeeCollector on 4663. Holds the 50 bps platform skim so UR
- * stock-paired trades pay the same fee as HodlRouter single hops.
+ * HODL's own deployment on 4663 (contracts/script/Deploy.s.sol). v1 is live;
+ * pointing NEXT_PUBLIC_HODL_ROUTER / NEXT_PUBLIC_FEE_COLLECTOR at the v2
+ * deploy is the whole switch — v2 keeps v1's trade ABI.
  */
-export const FEE_COLLECTOR =
-  "0x1090d265749c1199919a754a8c2dd00150d1f0f9" as const;
+export const HODL_ROUTER_V1 = "0x50cb78e0034b4869d8d42ad901c614866f5c5e99" as const;
+const DEPLOYED_FEE_COLLECTOR = "0x1090d265749c1199919a754a8c2dd00150d1f0f9" as const;
+
+function addressOr(value: string | undefined, fallback: `0x${string}`): `0x${string}` {
+  const trimmed = value?.trim().toLowerCase() ?? "";
+  return /^0x[0-9a-f]{40}$/.test(trimmed) ? (trimmed as `0x${string}`) : fallback;
+}
+
+/**
+ * HodlRouter. This and FEE_COLLECTOR are the only place the app reads either
+ * address; NEXT_PUBLIC_HODL_ROUTER overrides it for a fork or a redeploy.
+ */
+export const HODL_ROUTER = addressOr(process.env.NEXT_PUBLIC_HODL_ROUTER, HODL_ROUTER_V1);
+
+/**
+ * Hodl FeeCollector. Holds the 50 bps platform skim, whether HodlRouter or
+ * a direct Universal Router route took it. NEXT_PUBLIC_FEE_COLLECTOR
+ * overrides it alongside the router.
+ */
+export const FEE_COLLECTOR = addressOr(process.env.NEXT_PUBLIC_FEE_COLLECTOR, DEPLOYED_FEE_COLLECTOR);
 
 /**
  * Pons Uniswap V4 hook. launches(poolId) is the fee record; poolManager()

@@ -72,7 +72,8 @@ export function TabBar() {
         data-surface="popup"
         className={cn(
           "pointer-events-auto flex items-center gap-1 rounded-full p-1.5",
-          "bg-surface-popup/80 shadow-panel backdrop-blur-[22px]",
+          // Solid: an opacity modifier on the CSS-variable colour renders nothing.
+          "bg-surface-popup shadow-panel",
         )}
       >
         {TABS.map((tab) => {

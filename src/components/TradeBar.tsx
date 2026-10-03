@@ -6,6 +6,9 @@
  * Floating rather than inline because the page scrolls a long way — trades,
  * comments and info all live below the fold, and the action should not scroll
  * away from someone reading them.
+ *
+ * Solid surface: `surface-popup` is a CSS variable, so an opacity modifier
+ * (`/88`) generated no class at all and trade rows read through the buttons.
  */
 export function TradeBar({
   onBuy,
@@ -20,7 +23,7 @@ export function TradeBar({
     <div className="pointer-events-none absolute inset-x-0 bottom-[calc(84px+env(safe-area-inset-bottom))] z-30 px-[22px]">
       <div
         data-surface="popup"
-        className="pointer-events-auto grid grid-cols-2 gap-2 rounded-2xl bg-surface-popup/88 p-2 shadow-panel backdrop-blur-[16px]"
+        className="pointer-events-auto grid grid-cols-2 gap-2 rounded-2xl bg-surface-popup p-2 shadow-panel"
       >
         <button
           type="button"

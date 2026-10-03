@@ -29,8 +29,17 @@ const REVERT_ERRORS = parseAbi([
   "error BadPair()",
   "error NothingSupplied()",
   "error InsufficientOut()",
+  // v1 HodlRouter. v2 names the token: different selector, same meaning.
   "error Leftover()",
+  "error Leftover(address token)",
   "error DeadlineExpired()",
+  // HodlRouter v2 (PR #62).
+  "error FeeOnTransferToken()",
+  "error UnexpectedEth()",
+  "error EthTransferFailed()",
+  "error TokenCallFailed()",
+  "error BalanceQueryFailed()",
+  "error SafeCastOverflow()",
 ]);
 
 export type TradeFailure = Error & {txHash?: `0x${string}`};
@@ -137,7 +146,10 @@ export function formatRevertForUser(error: unknown): string | null {
   if (/BadHook|BadPool|BadFeeTier|BadPair/i.test(blob)) {
     return "No liquidity on this route.";
   }
-  if (/\bLeftover\b|NothingSupplied/i.test(blob)) {
+  if (/FeeOnTransferToken/i.test(blob)) {
+    return "This token charges a tax on every transfer, which HODL's router can't trade.";
+  }
+  if (/\bLeftover\b|NothingSupplied|UnexpectedEth|EthTransferFailed|TokenCallFailed|BalanceQueryFailed/i.test(blob)) {
     return "The swap path could not settle. Try again.";
   }
   if (/\bSTF\b|TransferFromFailed|TRANSFER_FROM_FAILED|transfer from failed|FromAddressIsNotOwner/i.test(blob)) {

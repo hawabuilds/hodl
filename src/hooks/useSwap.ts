@@ -4,11 +4,7 @@ import {useCallback, useState} from "react";
 import {useQueryClient} from "@tanstack/react-query";
 import {usePublicClient, useSendTransaction} from "wagmi";
 import {RH_MAINNET_ID} from "@/config/chain";
-import {
-  PERMIT2,
-  UNIVERSAL_ROUTER,
-  UNISWAP_SWAP_ROUTER_02,
-} from "@/lib/contracts";
+import {PERMIT2, UNIVERSAL_ROUTER} from "@/lib/contracts";
 import {useSession} from "@/lib/session";
 import {
   amountOutMinimum,
@@ -22,6 +18,7 @@ import {
   encodePermit2Approve,
   erc20Abi,
   permit2Abi,
+  permit2Expiry,
   prepareExactInSwap,
   type PreparedTx,
 } from "@/lib/swapTx";
@@ -191,7 +188,7 @@ export function useSwap() {
     async (token: `0x${string}`, spender: `0x${string}`, amount: bigint) => {
       const current = await readAllowance(token, spender);
       if (current >= amount) return;
-      const hash = await sendTx(encodeApprove(token, spender));
+      const hash = await sendTx(encodeApprove(token, spender, amount));
       await wait(hash);
     },
     [readAllowance, sendTx, wait],
@@ -210,7 +207,9 @@ export function useSwap() {
       });
       const fresh = BigInt(expiration) > BigInt(Math.floor(Date.now() / 1000) + 600);
       if (allowed >= amount && fresh) return;
-      const hash = await sendTx(encodePermit2Approve(token, UNIVERSAL_ROUTER));
+      const hash = await sendTx(
+        encodePermit2Approve(token, UNIVERSAL_ROUTER, amount, permit2Expiry()),
+      );
       await wait(hash);
       const [after, afterExp] = await publicClient.readContract({
         address: PERMIT2,
@@ -241,7 +240,7 @@ export function useSwap() {
         opts.side === "buy"
           ? requireBuyMinOut(amountIn, amountOutMinimum(quotedOut, opts.slippagePct))
           : amountOutMinimum(quotedOut, opts.slippagePct);
-      if (opts.side === "buy" && (opts.quote.hops?.length ?? 0) > 1) {
+      if (opts.side === "buy") {
         assertSaneUrBuy({
           amountIn,
           amountOutMinimum: minOut,
@@ -249,9 +248,6 @@ export function useSwap() {
         });
       }
       const deadline = swapDeadlineSec();
-      const tokenIn =
-        opts.side === "buy" ? opts.quote.quoteToken : opts.token;
-      const nativePay = opts.side === "buy" && opts.payNative;
 
       setSubmitting(true);
       try {
@@ -273,16 +269,12 @@ export function useSwap() {
           hops: opts.quote.hops,
         });
 
-        if (!nativePay) {
-          if (opts.side === "sell") {
-            const held = await readBalance(tokenIn);
-            assertSpendCovered({heldRaw: held, amount: amountIn});
-          }
-          if (opts.side === "sell" || opts.quote.venue === "v4") {
-            await ensurePermit2(tokenIn, amountIn);
-          } else {
-            await ensureErc20Allowance(tokenIn, UNISWAP_SWAP_ROUTER_02, amountIn);
-          }
+        // Buys pay ETH as msg.value. Sells approve exactly this amount to
+        // Permit2 and a 30-minute Permit2 allowance to the Universal Router.
+        if (opts.side === "sell") {
+          const held = await readBalance(opts.token);
+          assertSpendCovered({heldRaw: held, amount: amountIn});
+          await ensurePermit2(opts.token, amountIn);
         }
 
         const hash = await sendTx(swapTx);
@@ -301,7 +293,7 @@ export function useSwap() {
         void queryClient.invalidateQueries({queryKey: ["portfolio-native"]});
       }
     },
-    [address, ensureErc20Allowance, ensurePermit2, queryClient, readBalance, sendTx, wait],
+    [address, ensurePermit2, queryClient, readBalance, sendTx, wait],
   );
 
   return {

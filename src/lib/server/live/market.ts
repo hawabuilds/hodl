@@ -575,7 +575,7 @@ async function listTokensFromProviders(): Promise<TokenAsset[]> {
       graduatedOnChain: onChain,
       tradesOnUniswap: isUniswapPool(pair),
       paysRwaRewards: paysRwa,
-      holders: 0,
+      holders: null,
       createdAt: new Date(pair.pairCreatedAt ?? Date.now()).toISOString(),
       listedAt: new Date(pair.pairCreatedAt ?? Date.now()).toISOString(),
       pairedTicker: quoteSymbol,
@@ -701,7 +701,7 @@ function tokenFromSide(
     graduatedOnChain: onChain,
     tradesOnUniswap: isUniswapPool(pair),
     paysRwaRewards: paysRwaRewardsFor(address, dbRewards, payingHolders),
-    holders: 0,
+    holders: null,
     createdAt: new Date(pair.pairCreatedAt ?? Date.now()).toISOString(),
     listedAt: new Date(pair.pairCreatedAt ?? Date.now()).toISOString(),
     pairedTicker: quoteSymbol,
@@ -846,7 +846,7 @@ async function decorateFromProviders(asset: TokenAsset): Promise<TokenAsset> {
   try {
     const [pools, holders] = await Promise.all([
       pairsForToken(asset.address),
-      holderCountFor(asset.address).catch(() => 0),
+      holderCountFor(asset.address).catch(() => null),
     ]);
     const deepest = deepestPoolForToken(asset.address, pools);
     if (!deepest) return {...(await checkedAgainstPool(asset)), holders};
@@ -965,7 +965,7 @@ async function buildTokenAsset(wanted: string): Promise<TokenAsset | null> {
         supplies,
       ),
     ),
-    holderCountFor(address).catch(() => 0),
+    holderCountFor(address).catch(() => null),
   ]);
 
   if (!asset) return null;

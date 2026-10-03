@@ -185,7 +185,14 @@ describe("admin postgres IPv4 connect", () => {
       join(process.cwd(), "src/lib/server/live/adminCatalogue.ts"),
       "utf8",
     );
-    assert.match(worker, /adminPgConfig/);
+    const adminPg = readFileSync(
+      join(process.cwd(), "src/lib/server/live/adminPg.ts"),
+      "utf8",
+    );
+    // The worker opens its pool through createAdminPool, which builds its
+    // config with the IPv4 helper; it never hands pg a raw connection string.
+    assert.match(worker, /createAdminPool\(/);
+    assert.match(adminPg, /createAdminPool[\s\S]*await adminPgConfig\(\)/);
     assert.match(worker, /describeAdminPgTarget/);
     assert.match(worker, /passwordRejectedError/);
     assert.match(catalogue, /adminPgConfig/);

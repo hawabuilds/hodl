@@ -121,47 +121,32 @@ export function sellRouteLabel(
   return quote.venueLabel;
 }
 
-/** HodlRouter actually skims 50 bps. Universal Router multi-hop does not. */
+/** HodlRouter runs this quote (single hop, ETH/WETH/USDG pair). */
 export function ticketTakesHodlFee(
   quote: Parameters<typeof hodlCanExecuteQuote>[0],
+  side?: "buy" | "sell",
 ): boolean {
-  return hodlCanExecuteQuote(quote);
+  return hodlCanExecuteQuote(quote, side);
 }
 
-/** Hodl single-hop or UR stock-paired — both skim 50 bps. */
-export function ticketTakesPlatformFee(
-  quote: Parameters<typeof hodlCanExecuteQuote>[0] & {
-    feeBps?: number | null;
-    feeAmount?: string | null;
-  },
-): boolean {
-  if (ticketTakesHodlFee(quote)) return true;
-  if (Number(quote?.feeBps) > 0) return true;
-  if (quote?.feeAmount && BigInt(quote.feeAmount) > 0n) return true;
-  return (quote?.hops?.length ?? 0) > 1;
-}
-
-export function platformFeeLabel(
-  quote: Parameters<typeof ticketTakesPlatformFee>[0],
-): {
+/**
+ * Every route pays the 50 bps platform fee: HodlRouter skims it in the
+ * contract, and the Universal Router routes sweep it to FeeCollector.
+ */
+export function platformFeeLabel(): {
   title: string;
-  note: string | null;
-  taken: boolean;
+  taken: true;
   bps: number;
 } {
-  const taken = ticketTakesPlatformFee(quote);
-  const bps = taken ? PLATFORM_FEE_BPS : 0;
   return {
-    title: `Platform fee ${bps / 100}%`,
-    note: taken ? null : "No platform fee on this route",
-    taken,
-    bps,
+    title: `Platform fee ${PLATFORM_FEE_BPS / 100}%`,
+    taken: true,
+    bps: PLATFORM_FEE_BPS,
   };
 }
 
 /** What the user actually receives after the 50 bps skim. */
-export function ticketNetOut(quote: Pick<SwapQuote, "amountOut" | "netOut" | "hops" | "quoteToken" | "pairToken" | "quoteIsNative" | "quoteIsWeth" | "feeBps" | "feeAmount">): bigint {
-  if (!ticketTakesPlatformFee(quote)) return BigInt(quote.amountOut);
+export function ticketNetOut(quote: Pick<SwapQuote, "amountOut" | "netOut">): bigint {
   return BigInt(quote.netOut || quote.amountOut);
 }
 

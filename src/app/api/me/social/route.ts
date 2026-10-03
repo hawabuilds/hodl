@@ -1,6 +1,7 @@
-import {json} from "@/lib/server/http";
+import {dataUnavailable, json} from "@/lib/server/http";
 import {callerId} from "@/lib/server/auth";
 import {hasDatabase} from "@/lib/server/db";
+import {DEMO_MODE} from "@/lib/server/demoMode";
 import {followerProfilesOfId} from "@/lib/server/social-live";
 import {connectionsFor, getProfile} from "@/lib/server/social";
 import type {Profile} from "@/lib/types";
@@ -23,6 +24,7 @@ export async function GET(request: Request) {
   }
 
   if (hasDatabase) return json({followers: [], seeded: false});
+  if (!DEMO_MODE) return dataUnavailable();
 
   const followers = connectionsFor("you", "followers")
     .map((handle) => getProfile(handle))

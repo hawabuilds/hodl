@@ -1,7 +1,7 @@
 import {describe, it} from "node:test";
 import assert from "node:assert/strict";
 import {chainSupportsAtomicBatch} from "../src/hooks/useTradeBatching";
-import {QUOTE_USDG, QUOTE_WETH} from "../src/lib/contracts";
+import {HODL_ROUTER_V1, QUOTE_USDG, QUOTE_WETH} from "../src/lib/contracts";
 import {hodlCanExecuteQuote, liveTraderAllowed} from "../src/lib/liveTrade";
 
 const WALLET = "0x1111111111111111111111111111111111111111";
@@ -41,6 +41,25 @@ describe("live trade flag", () => {
   it("still restricts when an allowlist is set", () => {
     assert.equal(
       liveTraderAllowed(WALLET, {flag: true, router: ROUTER, wallets: [WALLET]}),
+      true,
+    );
+  });
+
+  it("sells a native-ETH V4 pool through Universal Router on v1: it can't receive PoolManager ETH", () => {
+    const native = {
+      venue: "v4" as const,
+      quoteIsNative: true,
+      quoteToken: "0x0000000000000000000000000000000000000000",
+      pairToken: "0x0000000000000000000000000000000000000000",
+      hops: [],
+    };
+    assert.equal(hodlCanExecuteQuote(native, "buy"), true);
+    assert.equal(hodlCanExecuteQuote(native, "sell", HODL_ROUTER_V1), false);
+    // v2 takes ETH from the PoolManager mid-trade, so the router sells it.
+    assert.equal(hodlCanExecuteQuote(native, "sell", "0x2222222222222222222222222222222222222222"), true);
+    assert.equal(hodlCanExecuteQuote({...native, venue: "v3"}, "sell", HODL_ROUTER_V1), true);
+    assert.equal(
+      hodlCanExecuteQuote({venue: "v4", quoteIsWeth: true, quoteToken: QUOTE_WETH}, "sell"),
       true,
     );
   });

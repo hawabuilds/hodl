@@ -56,7 +56,7 @@ export function InfoPanel({token}: {token: TokenAsset}) {
         <Stat label="Market cap" value={formatMarketCapAt(token, shownPrice)} />
         <Stat label="Price" value={formatPriceUsd(shownPrice)} />
         <Stat label="Supply" value={compact(supply)} />
-        <Stat label="Holders" value={compact(token.holders)} />
+        <Stat label="Holders" value={token.holders != null ? compact(token.holders) : "—"} />
         <Stat
           label="Vol / liq"
           value={turnover > 0 ? `${turnover.toFixed(2)}x` : "—"}

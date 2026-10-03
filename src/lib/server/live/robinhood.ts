@@ -13,9 +13,9 @@ import {readFieldsShared, writeFieldsShared} from "./shared";
  * the authority on what a stock token is and what it is worth — the pools are
  * far too thin to price these assets, so nothing here is derived from a DEX.
  *
- * TODO(live): the registry is a JSON snapshot in the repo rather than a call to
- * `/rhj/assets`, so a new listing needs a rebuild. Part 04 step 1 has the weekly
- * refresh job that removes that.
+ * The registry is a JSON snapshot of `/rhj/assets` in the repo, so a new
+ * listing needs `npm run rwa:sync` and a deploy (`npm run rwa:check` reports
+ * drift).
  */
 
 const QUOTE_TTL_MS = 30_000;

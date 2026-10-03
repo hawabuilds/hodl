@@ -3,6 +3,7 @@
 import {useQuery} from "@tanstack/react-query";
 import type {Profile} from "@/lib/types";
 import {useSession} from "@/lib/session";
+import {errorText} from "@/lib/responseError";
 import {useUser} from "./useUser";
 
 /** Resolves handles to profiles. Skipped entirely when there are none. */
@@ -14,7 +15,7 @@ export function usePeople(handles: string[], enabled = true) {
     enabled: enabled && handles.length > 0,
     queryFn: async () => {
       const res = await fetch(`/api/people?handles=${encodeURIComponent(key)}`);
-      if (!res.ok) throw new Error("Could not load those profiles.");
+      if (!res.ok) throw new Error(await errorText(res, "Could not load those profiles."));
       return (await res.json()) as {people: Profile[]};
     },
   });
@@ -38,7 +39,7 @@ export function useMyFollowers(enabled = true) {
       const res = await fetch("/api/me/social", {
         headers: {authorization: `Bearer ${token}`},
       });
-      if (!res.ok) throw new Error("Could not load your followers.");
+      if (!res.ok) throw new Error(await errorText(res, "Could not load your followers."));
       return (await res.json()) as {followers: Profile[]; seeded: boolean};
     },
   });
