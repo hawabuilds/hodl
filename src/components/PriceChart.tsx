@@ -68,6 +68,31 @@ interface PriceChartProps {
    * floors here so a pump rises from launch instead of floating mid-axis.
    */
   floorPrice?: number | null;
+  /**
+   * No price or time axis: just the line, for a full-bleed sparkline-style
+   * chart (the phone portfolio). Scrubbing still works.
+   */
+  bare?: boolean;
+  /**
+   * Room after the last point, in pixels (default 8). A chart whose last time
+   * label would otherwise be cut by the edge asks for enough to fit it.
+   */
+  rightPadPx?: number;
+  /**
+   * Draw the time labels ourselves, under the chart: the first and last
+   * point's time always, evenly spaced ones between, each kept inside the
+   * chart's width. (The axis's own labels can drop the first one and run the
+   * last one past the edge.)
+   */
+  edgeTimeLabels?: boolean;
+  /** Space above and below the line, as a share of the height (default 0.08 / 0.06). */
+  verticalPad?: number;
+  /**
+   * Re-fit the view whenever this changes — a chart whose timeframe is not
+   * `windowMs` (the portfolio's) passes its range and first point, so a new
+   * range is fitted to its own data rather than shown in the old one's view.
+   */
+  fitKey?: string;
   /** Pan-left: ask the page for older real candles. */
   onNeedOlder?: () => void;
   /**
@@ -180,6 +205,11 @@ export function PriceChart({
   floorPrice,
   onNeedOlder,
   onScrub,
+  bare = false,
+  rightPadPx = LWC_RIGHT_OFFSET_PIXELS,
+  edgeTimeLabels = false,
+  verticalPad,
+  fitKey,
 }: PriceChartProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -206,6 +236,25 @@ export function PriceChart({
   const [viewUp, setViewUp] = useState(true);
   const up = positive ?? viewUp;
   const color = up ? "var(--green)" : "var(--red)";
+
+  const [ticks, setTicks] = useState<TimeTick[]>([]);
+  const edgeLabelsRef = useRef(edgeTimeLabels);
+  edgeLabelsRef.current = edgeTimeLabels;
+  const tickRetries = useRef(0);
+  const placeTicks = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart || !edgeLabelsRef.current) return;
+    const next = timeTicks(chart, pointsRef.current);
+    // Coordinates exist only once the chart has laid out its points, which is
+    // a frame or two after the data is set: try again rather than show none.
+    if (next.length === 0 && pointsRef.current.length > 1 && tickRetries.current < 20) {
+      tickRetries.current += 1;
+      requestAnimationFrame(placeTicks);
+      return;
+    }
+    tickRetries.current = 0;
+    setTicks(next);
+  }, []);
 
   const refreshTrend = useCallback(() => {
     const chart = chartRef.current;
@@ -244,7 +293,12 @@ export function PriceChart({
   const applyFit = useCallback(() => {
     const chart = chartRef.current;
     if (!chart || pointsRef.current.length < 2) return;
-    chart.timeScale().applyOptions(scaleOptsFor(pointsRef.current.length));
+    chart.timeScale().applyOptions({
+      ...scaleOptsFor(pointsRef.current.length),
+      // A chart that labels its own first and last point keeps them in view
+      // when its box changes size, instead of sliding the first one out.
+      ...(edgeLabelsRef.current ? {lockVisibleTimeRangeOnResize: true} : {}),
+    });
     const range = lwcVisibleTimeRange(pointsRef.current);
     if (range) {
       const timeScale = chart.timeScale();
@@ -266,7 +320,7 @@ export function PriceChart({
         const spacing = width / (last - first + 1);
         timeScale.setVisibleLogicalRange({
           from: first,
-          to: last - 0.5 + LWC_RIGHT_OFFSET_PIXELS / spacing,
+          to: last - 0.5 + rightPadPx / spacing,
         });
       } else {
         timeScale.setVisibleRange({
@@ -277,7 +331,7 @@ export function PriceChart({
     } else {
       chart.timeScale().fitContent();
     }
-  }, [intraday, style]);
+  }, [intraday, style, rightPadPx]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -300,14 +354,18 @@ export function PriceChart({
         horzLines: {visible: false},
       },
       rightPriceScale: {
+        visible: !bare,
         borderVisible: false,
-        scaleMargins: {top: 0.08, bottom: 0.06},
+        scaleMargins:
+          verticalPad != null ? {top: verticalPad, bottom: verticalPad} : {top: 0.08, bottom: 0.06},
       },
       timeScale: {
+        visible: !bare && !edgeTimeLabels,
         borderVisible: false,
         timeVisible: true,
         secondsVisible: false,
         ...lwcTimeScaleOptions({intraday, barCount: pointsRef.current.length}),
+        ...(edgeTimeLabels ? {lockVisibleTimeRangeOnResize: true} : {}),
       },
       crosshair: {
         mode: CrosshairMode.Magnet,
@@ -352,12 +410,17 @@ export function PriceChart({
 
     const onRange = (range: {from: number; to: number} | null) => {
       refreshTrend();
+      placeTicks();
       if (!range || range.from > 2) return;
       onNeedOlderRef.current?.();
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
+    // The labels sit at pixel positions, so a resize moves them too.
+    const resized = new ResizeObserver(() => requestAnimationFrame(placeTicks));
+    resized.observe(host);
 
     return () => {
+      resized.disconnect();
       chart.unsubscribeCrosshairMove(onCrosshair);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
       chart.remove();
@@ -366,7 +429,7 @@ export function PriceChart({
       prevPointsRef.current = [];
       fittedKeyRef.current = "";
     };
-  }, [height, live, refreshTrend]);
+  }, [height, live, bare, edgeTimeLabels, verticalPad, refreshTrend, placeTicks]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -443,7 +506,7 @@ export function PriceChart({
     const visible = prepend
       ? chart.timeScale().getVisibleLogicalRange()
       : null;
-    const identityKey = `${style}:${windowMs ?? ""}`;
+    const identityKey = `${style}:${windowMs ?? ""}:${fitKey ?? ""}`;
     const shouldFit = shouldAutoFitVisibleRange({
       hasFitted: fittedKeyRef.current === identityKey,
       liveEdge,
@@ -471,18 +534,20 @@ export function PriceChart({
       applyFit();
     }
     refreshTrend();
-  }, [applyFit, floorPrice, live, minMove, points, refreshTrend, seriesData, style, theme, up, windowMs]);
+    // New points can move the labels without the visible range changing.
+    requestAnimationFrame(placeTicks);
+  }, [applyFit, fitKey, floorPrice, live, minMove, placeTicks, points, refreshTrend, seriesData, style, theme, up, windowMs]);
 
   const resetView = useCallback(() => {
     applyFit();
     onScrubRef.current?.(null);
   }, [applyFit]);
 
-  return (
+  const chartHost = (
     <div
       ref={hostRef}
-      style={{height, color}}
-      className={cn("relative w-full touch-pan-y select-none", className)}
+      style={edgeTimeLabels ? {color} : {height, color}}
+      className={cn("relative w-full touch-pan-y select-none", edgeTimeLabels ? "min-h-0 flex-1" : className)}
       onDoubleClick={resetView}
       onTouchEnd={() => {
         const now = Date.now();
@@ -497,4 +562,82 @@ export function PriceChart({
       ) : null}
     </div>
   );
+  if (!edgeTimeLabels) return chartHost;
+  return (
+    <div style={{height}} className={cn("flex w-full flex-col", className)}>
+      {chartHost}
+      <div aria-hidden="true" className="tabular-nums relative h-[18px] shrink-0 text-[11px] font-medium text-faint">
+        {ticks.map((tick) => (
+          <span
+            key={`${tick.x}:${tick.text}`}
+            className="absolute top-[3px] whitespace-nowrap"
+            style={{
+              left: tick.x,
+              transform: tick.align === "start" ? undefined : tick.align === "end" ? "translateX(-100%)" : "translateX(-50%)",
+            }}
+          >
+            {tick.text}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface TimeTick {
+  x: number;
+  text: string;
+  align: "start" | "middle" | "end";
+}
+
+/** Space a label wants beside its neighbours, in pixels. */
+const TICK_GAP_PX = 64;
+/** Roughly one label per this many pixels of chart. */
+const TICK_EVERY_PX = 120;
+
+/**
+ * Time labels for the points in view: the first and the last always (the
+ * first left-aligned, the last right-aligned, so neither leaves the chart),
+ * and evenly spaced ones between where there is room.
+ */
+function timeTicks(chart: IChartApi, points: ChartPoint[]): TimeTick[] {
+  const timeScale = chart.timeScale();
+  // The plot's width: with its own axis hidden the time scale reports 0.
+  const width = chart.paneSize().width;
+  const placed: {t: number; x: number}[] = [];
+  for (const point of points) {
+    const x = timeScale.timeToCoordinate(asTime(toUtcSeconds(point.t)));
+    if (x != null && x >= 0 && x <= width) placed.push({t: point.t, x});
+  }
+  if (placed.length === 0) return [];
+  const first = placed[0];
+  const last = placed[placed.length - 1];
+  const label = timeLabel(last.t - first.t);
+  const out: TimeTick[] = [{x: first.x, text: label(first.t), align: "start"}];
+  if (placed.length === 1) return out;
+  const slots = Math.max(0, Math.floor((last.x - first.x) / TICK_EVERY_PX) - 1);
+  for (let i = 1; i <= slots; i++) {
+    const target = first.x + ((last.x - first.x) * i) / (slots + 1);
+    const nearest = placed.reduce((best, p) => (Math.abs(p.x - target) < Math.abs(best.x - target) ? p : best));
+    const previous = out[out.length - 1];
+    if (nearest.x - previous.x >= TICK_GAP_PX && last.x - nearest.x >= TICK_GAP_PX) {
+      out.push({x: nearest.x, text: label(nearest.t), align: "middle"});
+    }
+  }
+  out.push({x: last.x, text: label(last.t), align: "end"});
+  return out;
+}
+
+/** "13:53" across a day or so, "3 Oct" across months, "Oct 2026" beyond. */
+function timeLabel(spanMs: number): (t: number) => string {
+  if (spanMs <= 36 * 60 * 60_000) {
+    const format = new Intl.DateTimeFormat("en-GB", {hour: "2-digit", minute: "2-digit"});
+    return (t) => format.format(t);
+  }
+  if (spanMs <= 400 * 86_400_000) {
+    const format = new Intl.DateTimeFormat("en-GB", {day: "numeric", month: "short"});
+    return (t) => format.format(t);
+  }
+  const format = new Intl.DateTimeFormat("en-GB", {month: "short", year: "numeric"});
+  return (t) => format.format(t);
 }

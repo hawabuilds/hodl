@@ -379,6 +379,34 @@ export interface Holding {
    * profit, so a row without a basis shows the asset's own move instead.
    */
   costUsd: number | null;
+  /** For a token, the ticker on the other side of its pool ("NVDA", "WETH"). */
+  pairedTicker?: string | null;
+  /** Price per unit behind `valueUsd`, or null when there is none to hand. */
+  priceUsd?: number | null;
+  /**
+   * Where the price stands. `valueUsd` is only a real number for "live" and
+   * "stale"; for "pending" it is 0 as a placeholder and must never be shown,
+   * summed or saved. Missing (older payloads) reads as "live".
+   */
+  priceState?: PriceState;
+  /** For a stale price: when it was last seen (ISO). */
+  priceAt?: string | null;
+}
+
+/**
+ * live: priced now. stale: the price could not be fetched, so this is the last
+ * one seen. pending: no price yet (still loading, or failed with nothing to
+ * fall back on). none: the asset has no market price at all.
+ */
+export type PriceState = "live" | "stale" | "pending" | "none";
+
+/** Profit across every fill saved for the wallets, since the first one. */
+export interface PortfolioPnl {
+  /** Made (or lost) on what has already been sold, at average cost. */
+  realizedUsd: number;
+  /** Every dollar put into buys that had a readable dollar leg. */
+  boughtUsd: number;
+  firstTradeAt: string | null;
 }
 
 export interface Profile {

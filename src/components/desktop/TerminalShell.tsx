@@ -41,9 +41,10 @@ export function TerminalShell({children}: {children: ReactNode}) {
   const pathname = usePathname() ?? "";
   const board = pathname === "/tokens";
   const asset = pathname.startsWith("/token/") || pathname.startsWith("/rwa/");
-  const portfolio = pathname === "/profile";
-  // Home is a summary of cards, laid out across the width like News.
-  const frontPage = pathname === "/news" || pathname === "/home" || pathname === "/rwas";
+  // Home is a summary of cards, laid out across the width like News; the
+  // portfolio is cards too.
+  const frontPage =
+    pathname === "/news" || pathname === "/home" || pathname === "/rwas" || pathname === "/profile";
 
   const [createOpen, setCreateOpen] = useState(false);
   useCreateIntent(useCallback(() => setCreateOpen(true), []));
@@ -55,7 +56,7 @@ export function TerminalShell({children}: {children: ReactNode}) {
       <div className="flex min-h-0 flex-1">
         {asset ? <ListRail /> : null}
 
-        {board || asset || portfolio ? (
+        {board || asset ? (
           <main className="min-h-0 min-w-0 flex-1">{children}</main>
         ) : frontPage ? (
           <main className="scroll-quiet min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</main>

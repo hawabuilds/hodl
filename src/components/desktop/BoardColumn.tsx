@@ -92,7 +92,12 @@ export function ColumnSegments<T extends string>({
           key={option.value}
           type="button"
           aria-pressed={value === option.value}
-          onClick={() => onChange(option.value)}
+          onClick={(event) => {
+            onChange(option.value);
+            // A mouse click leaves no focus ring behind; a keyboard press
+            // (detail 0) keeps focus, and :focus-visible shows the ring.
+            if (event.detail > 0) event.currentTarget.blur();
+          }}
           className={cn(
             "inline-flex items-center gap-1 whitespace-nowrap rounded-full font-extrabold transition-colors",
             size === "touch"

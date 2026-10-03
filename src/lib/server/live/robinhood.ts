@@ -3,7 +3,8 @@ import {CHART_HISTORY_BARS} from "@/lib/chartPlot";
 import registry from "../rwaRegistry.json" with {type: "json"};
 import storedLogos from "../../rwaLogos.json" with {type: "json"};
 import {SUPABASE_URL} from "@/lib/env";
-import {cached, getJson, stale} from "./cache";
+import {cached, getJson, keepAlive, stale} from "./cache";
+import {readFieldsShared, writeFieldsShared} from "./shared";
 
 /**
  * Robinhood's own asset and quote APIs.
@@ -186,6 +187,7 @@ export async function quotes(): Promise<Map<string, Quote>> {
       // last price we actually saw.
       const merged = new Map(previous);
       for (const [ticker, quote] of fresh) merged.set(ticker, quote);
+      rememberPrices([...fresh.values()].map((quote) => [quote.ticker, quote.priceUsd]));
       return merged;
     });
     if (loaded.size > 0) return loaded;
@@ -199,6 +201,77 @@ export async function quotes(): Promise<Map<string, Quote>> {
 export async function quoteFor(ticker: string): Promise<Quote | null> {
   const all = await quotes();
   return all.get(ticker.toUpperCase()) ?? null;
+}
+
+/**
+ * The last price seen for each stock, kept in Redis for a month: what a
+ * portfolio falls back on (marked stale) when a live quote cannot be had,
+ * instead of pricing the holding at nothing.
+ */
+const LAST_PRICE_KEY = "rwa:last-price";
+const LAST_PRICE_SECONDS = 30 * 24 * 60 * 60;
+
+function rememberPrices(entries: [string, number][]): void {
+  const now = Date.now();
+  const valid = entries.filter(([, price]) => Number.isFinite(price) && price > 0);
+  if (valid.length === 0) return;
+  keepAlive(
+    writeFieldsShared(
+      LAST_PRICE_KEY,
+      valid.map(([ticker, price]) => [ticker, {p: price, t: now}]),
+      LAST_PRICE_SECONDS,
+    ),
+  );
+}
+
+export interface RwaPrice {
+  priceUsd: number;
+  /** When this price was seen (ms). */
+  at: number;
+  /** True when it is the last known price, not a live one. */
+  stale: boolean;
+}
+
+/** How long a portfolio waits on live quotes before using the last known ones. */
+const PRICE_PATIENCE_MS = 2_500;
+
+/**
+ * Prices for just these stocks, for a portfolio: from memory when this server
+ * has them, otherwise fetched directly (a handful of requests, not the whole
+ * universe), otherwise the last known price, marked stale. A stock with none
+ * of those is left out — never priced at zero.
+ */
+export async function rwaPricesFor(tickers: string[]): Promise<Map<string, RwaPrice>> {
+  const out = new Map<string, RwaPrice>();
+  const wanted = [...new Set(tickers.map((ticker) => ticker.toUpperCase()))];
+  if (wanted.length === 0) return out;
+  const now = Date.now();
+  const memory = cachedQuotes();
+  for (const ticker of wanted) {
+    const price = memory.get(ticker)?.priceUsd;
+    if (price != null && price > 0) out.set(ticker, {priceUsd: price, at: now, stale: false});
+  }
+  const missing = wanted.filter((ticker) => !out.has(ticker));
+  if (missing.length > 0) {
+    const fetched = await Promise.race([
+      loadQuotes(missing).catch(() => new Map<string, Quote>()),
+      new Promise<Map<string, Quote>>((resolve) => setTimeout(() => resolve(new Map()), PRICE_PATIENCE_MS)),
+    ]);
+    for (const [ticker, quote] of fetched) {
+      if (quote.priceUsd > 0) out.set(ticker, {priceUsd: quote.priceUsd, at: Date.now(), stale: false});
+    }
+    rememberPrices([...fetched.values()].map((quote) => [quote.ticker, quote.priceUsd]));
+    const still = missing.filter((ticker) => !out.has(ticker));
+    if (still.length > 0) {
+      const last = await readFieldsShared<{p: number; t: number}>(LAST_PRICE_KEY, still).catch(
+        () => new Map<string, {p: number; t: number}>(),
+      );
+      for (const [ticker, seen] of last) {
+        if (Number.isFinite(seen?.p) && seen.p > 0) out.set(ticker, {priceUsd: seen.p, at: seen.t, stale: true});
+      }
+    }
+  }
+  return out;
 }
 
 /**

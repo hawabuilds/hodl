@@ -218,7 +218,7 @@ function Pills<T extends string>({
 }
 
 /** "+5.74%" in a tinted pill, green or red; "—" with no move. */
-function ChangePill({value, size = "md"}: {value: number | null | undefined; size?: "sm" | "md"}) {
+function ChangePill({value, size = "md"}: {value: number | null | undefined; size?: "xs" | "sm" | "md"}) {
   if (value == null || !Number.isFinite(value)) {
     return <span className="tabular-nums text-[12px] font-bold text-faint">—</span>;
   }
@@ -226,8 +226,8 @@ function ChangePill({value, size = "md"}: {value: number | null | undefined; siz
   return (
     <span
       className={cn(
-        "tabular-nums font-bold",
-        size === "md" ? "rounded-lg px-2 py-1 text-[13px]" : "rounded-md px-[7px] py-[3px] text-[12px]",
+        "tabular-nums shrink-0 whitespace-nowrap font-bold",
+        size === "md" ? "rounded-lg px-2 py-1 text-[13px]" : size === "sm" ? "rounded-md px-[7px] py-[3px] text-[12px]" : "rounded-md px-1.5 py-[3px] text-[11px]",
         up
           ? "bg-[color-mix(in_srgb,var(--price-up)_14%,transparent)] text-price-up"
           : "bg-[color-mix(in_srgb,var(--price-down)_14%,transparent)] text-price-down",
@@ -291,7 +291,7 @@ function Movers({
                   key={row.ticker}
                   href={assetPath("rwa", row.id)}
                   onMouseEnter={() => prefetch("rwa", row.id)}
-                  className="flex flex-col gap-4 rounded-2xl border border-[var(--overlay-wash)] bg-surface-base p-[18px] transition-colors hover:border-[var(--overlay-wash-hover)] hover:bg-[var(--overlay-wash)]"
+                  className="flex min-w-0 flex-col gap-4 rounded-2xl border border-[var(--overlay-wash)] bg-surface-base p-[14px] transition-colors hover:border-[var(--overlay-wash-hover)] hover:bg-[var(--overlay-wash)]"
                 >
                   <div className="flex min-w-0 items-center gap-2.5">
                     <StockAvatar row={row} size={36} />
@@ -303,9 +303,13 @@ function Movers({
                   <div className="h-9">
                     <Sparkline series={row.series} positive={upMove} height={36} className="h-9 w-full" />
                   </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="tabular-nums text-[16px] font-bold">{formatPriceUsd(move.priceUsd)}</span>
-                    <ChangePill value={move.changePct} />
+                  {/* Price with the % pill beside it, sized so everyday values
+                      share the line on a narrow card. An extreme pair (five-
+                      figure price, three-figure %) drops the pill under the
+                      price rather than running past the card edge. */}
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-[5px] gap-y-1.5">
+                    <span className="tabular-nums whitespace-nowrap text-[14px] font-bold">{formatPriceUsd(move.priceUsd)}</span>
+                    <ChangePill value={move.changePct} size="xs" />
                   </div>
                 </Link>
               );

@@ -30,7 +30,7 @@ const store = new Map<string, Entry<unknown>>();
  * was cut off and never finished: the page's saved copy simply aged. Outside
  * Vercel this does nothing, and the work runs on as before.
  */
-function keepAlive(work: Promise<unknown>): void {
+export function keepAlive(work: Promise<unknown>): void {
   try {
     waitUntil(work.catch(() => {}));
   } catch {

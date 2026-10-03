@@ -4,10 +4,10 @@ import {feedImageUrl} from "@/lib/tokenImage";
 import {RH_MAINNET_ID} from "@/config/chain";
 import {erc20Abi} from "viem";
 import {db, hasDatabase} from "../db";
-import {cached, cachedLocal} from "./cache";
+import {cached, cachedLocal, keepAlive} from "./cache";
 import {nativeBalance, rpc, walletSnapshot} from "./chain";
 import {readShared, writeShared} from "./shared";
-import {cachedQuotes, RWA_BY_ADDRESS, RWA_REGISTRY} from "./robinhood";
+import {RWA_BY_ADDRESS, RWA_REGISTRY, rwaPricesFor, type RwaPrice} from "./robinhood";
 import {getTokenRows, statsFor, type TokenRow} from "./universeStore";
 
 export interface PortfolioTiming {
@@ -180,8 +180,15 @@ async function tradedTokens(wallets: string[]): Promise<string[]> {
 }
 
 const heldKey = (wallet: string) => `portfolio:held:${wallet}`;
-/** How long the portfolio waits on the full balance sweep before answering. */
+/** The stocks a wallet held last time, so their prices load beside the balances. */
+const heldRwaKey = (wallet: string) => `portfolio:held-rwa:${wallet}`;
+/**
+ * How long the portfolio waits on the full balance sweep before answering: the
+ * first time a wallet is seen. After that what it held last time is known, so
+ * the sweep only gets a moment and finishes in the background for next time.
+ */
 const SWEEP_PATIENCE_MS = 2_500;
+const SWEEP_PATIENCE_KNOWN_MS = 300;
 
 function rwaAddresses(): string[] {
   return RWA_REGISTRY.map((entry) => normalizeAddress(entry.address));
@@ -228,14 +235,29 @@ export async function holdingsFor(
   // own hint, the RWAs — and a balance sweep of every listed token, waited on
   // for at most SWEEP_PATIENCE_MS (it carries on and is cached for next time).
   const sweeping = Promise.all(wallets.map((wallet) => sweepListed(wallet).catch(() => [] as string[])));
+  keepAlive(sweeping);
+  const rememberedRead = Promise.all(
+    wallets.map((wallet) => readShared<string[]>(heldKey(wallet)).catch(() => null)),
+  );
+  // The stocks held last time start pricing now, beside the balance read.
+  const rwaPricesEarly = Promise.all(
+    wallets.map((wallet) => readShared<string[]>(heldRwaKey(wallet)).catch(() => null)),
+  ).then((lists) => rwaPricesFor(lists.flatMap((list) => list ?? [])));
   const [touched, traded, remembered, swept] = await Promise.all([
     Promise.all(wallets.map((wallet) => touchedTokens(wallet).catch(() => [] as string[]))),
     tradedTokens(wallets).catch(() => [] as string[]),
-    Promise.all(wallets.map((wallet) => readShared<string[]>(heldKey(wallet)).catch(() => null))),
-    Promise.race([
-      sweeping,
-      new Promise<string[][]>((resolve) => setTimeout(() => resolve([]), SWEEP_PATIENCE_MS)),
-    ]),
+    rememberedRead,
+    rememberedRead.then((lists) =>
+      Promise.race([
+        sweeping,
+        new Promise<string[][]>((resolve) =>
+          setTimeout(
+            () => resolve([]),
+            lists.every((list) => list != null) ? SWEEP_PATIENCE_KNOWN_MS : SWEEP_PATIENCE_MS,
+          ),
+        ),
+      ]),
+    ),
   ]);
   const candidates = mergeCandidates(
     rwaAddresses(),
@@ -251,6 +273,22 @@ export async function holdingsFor(
     address,
     decimals: RWA_BY_ADDRESS.get(address)?.decimals ?? 18,
   }));
+
+  // Names and prices for every candidate token load beside the balance read
+  // rather than after it: the held tokens are among the candidates.
+  const tokenCandidates = candidates.filter((address) => !RWA_BY_ADDRESS.has(address));
+  let statsFailed = false;
+  const enrichEarly = Promise.all([
+    hasDatabase && tokenCandidates.length > 0
+      ? getTokenRows(tokenCandidates).catch(() => [] as TokenRow[])
+      : Promise.resolve([] as TokenRow[]),
+    tokenCandidates.length > 0
+      ? statsFor(tokenCandidates).catch(() => {
+          statsFailed = true;
+          return new Map() as Awaited<ReturnType<typeof statsFor>>;
+        })
+      : Promise.resolve(new Map() as Awaited<ReturnType<typeof statsFor>>),
+  ]);
 
   const rpcStarted = Date.now();
   const merged = new Map<string, number>();
@@ -278,21 +316,27 @@ export async function holdingsFor(
   const held = [...merged.entries()].filter(([, amount]) => amount > 0);
   const heldAddresses = held.map(([address]) => address);
   // Next time these are candidates straight away, before any sweep.
+  const heldTickers = heldAddresses.flatMap((address) => {
+    const rwa = RWA_BY_ADDRESS.get(address);
+    return rwa ? [rwa.ticker.toUpperCase()] : [];
+  });
   if (!degraded) {
     const tokens = heldAddresses.filter((address) => !RWA_BY_ADDRESS.has(address));
-    for (const wallet of wallets) void writeShared(heldKey(wallet), tokens, 30 * 24 * 60 * 60).catch(() => {});
+    for (const wallet of wallets) {
+      void writeShared(heldKey(wallet), tokens, 30 * 24 * 60 * 60).catch(() => {});
+      void writeShared(heldRwaKey(wallet), heldTickers, 30 * 24 * 60 * 60).catch(() => {});
+    }
   }
 
   const enrichStarted = Date.now();
-  const [rows, stats, quotes] = await Promise.all([
-    hasDatabase && heldAddresses.length > 0
-      ? getTokenRows(heldAddresses).catch(() => [] as TokenRow[])
-      : Promise.resolve([] as TokenRow[]),
-    heldAddresses.length > 0
-      ? statsFor(heldAddresses).catch(() => new Map())
-      : Promise.resolve(new Map()),
-    Promise.resolve(cachedQuotes()),
+  const [[rows, stats], early] = await Promise.all([
+    enrichEarly,
+    rwaPricesEarly.catch(() => new Map<string, RwaPrice>()),
   ]);
+  // A stock held now that was not held last time is priced here.
+  const late = heldTickers.filter((ticker) => !early.has(ticker));
+  const rwaPrices =
+    late.length > 0 ? new Map([...early, ...(await rwaPricesFor(late).catch(() => new Map()))]) : early;
   const byRow = new Map(rows.map((row) => [normalizeAddress(row.address), row]));
   const supabaseMs = Date.now() - enrichStarted;
 
@@ -302,7 +346,8 @@ export async function holdingsFor(
     const rwa = RWA_BY_ADDRESS.get(address);
     const stat = stats.get(address);
     if (rwa) {
-      const priceUsd = quotes.get(rwa.ticker)?.priceUsd ?? 0;
+      // No price is not a price of zero: the holding waits for one instead.
+      const price = rwaPrices.get(rwa.ticker.toUpperCase());
       holdings.push({
         kind: "rwa",
         assetId: rwa.ticker.toLowerCase(),
@@ -310,9 +355,12 @@ export async function holdingsFor(
         name: rwa.name,
         logoUrl: rwa.logoUrl,
         amount,
-        valueUsd: priceUsd > 0 ? amount * priceUsd : 0,
+        valueUsd: price ? amount * price.priceUsd : 0,
         changePct: 0,
         costUsd: null,
+        priceUsd: price?.priceUsd ?? null,
+        priceState: !price ? "pending" : price.stale ? "stale" : "live",
+        priceAt: price?.stale ? new Date(price.at).toISOString() : null,
       });
       continue;
     }
@@ -330,6 +378,11 @@ export async function holdingsFor(
       valueUsd: priceUsd != null ? amount * priceUsd : 0,
       changePct: Number(stat?.price_change_24h ?? 0),
       costUsd: null,
+      pairedTicker: pairedTickerOf(row),
+      priceUsd,
+      // A failed price read is pending; a token that simply has no market
+      // price is "none", which is a fact rather than a gap.
+      priceState: priceUsd != null ? "live" : statsFailed ? "pending" : "none",
     });
   }
 
@@ -349,6 +402,17 @@ export async function holdingsFor(
       rpcCalls,
     },
   };
+}
+
+/** The ticker on the other side of a token's pool, as the feeds show it. */
+function pairedTickerOf(row: TokenRow | undefined): string | null {
+  if (!row) return null;
+  if (row.quote_kind === "rwa") {
+    return RWA_BY_ADDRESS.get(normalizeAddress(row.quote_token ?? ""))?.ticker ?? row.reward_rwa ?? null;
+  }
+  if (row.quote_kind === "usdg") return "USDG";
+  if (row.quote_kind === "eth") return "WETH";
+  return null;
 }
 
 export async function nativeOnly(

@@ -4,7 +4,7 @@ import Link from "next/link";
 import {AssetLink} from "@/components/AssetLink";
 import {cn} from "@/lib/cn";
 import {money, units} from "@/lib/format";
-import {formatLiquidityUsd, formatPriceUsd} from "@/lib/priceState";
+import {formatLiquidityUsd} from "@/lib/priceState";
 import type {Holding} from "@/lib/types";
 import {loadedLogoFor} from "@/lib/tokenLogoCache";
 import {tokenFor} from "@/lib/tokenCache";
@@ -125,7 +125,7 @@ function positionReturn(holding: Holding) {
 }
 
 /** A token's artwork. Stocks have none, and are never given a stand-in. */
-function HoldingAvatar({holding, size}: {holding: Holding; size: number}) {
+export function HoldingAvatar({holding, size}: {holding: Holding; size: number}) {
   const launchpad = useTokenLaunchpad(holding.kind === "token" ? holding.assetId : null);
   return (
     <TokenAvatar
@@ -146,132 +146,6 @@ function HoldingAvatar({holding, size}: {holding: Holding; size: number}) {
       }
       size={size}
     />
-  );
-}
-
-const TABLE_COLUMNS =
-  "grid grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_150px] items-center gap-4 px-[18px]";
-
-/**
- * Holdings as a table, for a screen wide enough to line numbers up.
- *
- * Same rows as the list, with the columns a trader scans down: what it is,
- * how much, at what price, worth what, made what, and how much of the
- * portfolio it is.
- */
-export function HoldingsTable({
-  holdings,
-  totalValue,
-  empty,
-}: {
-  holdings: Holding[];
-  /** Everything held, ETH included, so allocations sum to the whole. */
-  totalValue: number;
-  empty: string;
-}) {
-  if (holdings.length === 0) {
-    return (
-      <p className="px-6 py-10 text-center text-[13px] leading-[1.5] text-muted">
-        {empty}
-      </p>
-    );
-  }
-
-  return (
-    <div>
-      <div
-        aria-hidden="true"
-        className={cn(
-          TABLE_COLUMNS,
-          "border-y border-[var(--overlay-wash)] py-[9px] text-[10.5px] font-bold uppercase tracking-[0.08em] text-faint",
-        )}
-      >
-        <span>Asset</span>
-        <span className="text-right">Amount</span>
-        <span className="text-right">Price</span>
-        <span className="text-right">Value</span>
-        <span className="text-right">P&amp;L</span>
-        <span className="text-right">Allocation</span>
-      </div>
-
-      {holdings.map((holding) => {
-        const {pnlUsd, pnlPct, positive} = positionReturn(holding);
-        const price = holding.amount > 0 ? holding.valueUsd / holding.amount : null;
-        const share = totalValue > 0 ? (holding.valueUsd / totalValue) * 100 : 0;
-
-        return (
-          <AssetLink
-            key={`${holding.kind}:${holding.assetId}`}
-            kind={holding.kind}
-            id={holding.assetId}
-            className={cn(
-              TABLE_COLUMNS,
-              "h-[58px] border-b border-[var(--overlay-wash)] text-[13.5px] font-bold transition-colors last:border-b-0 hover:bg-[var(--overlay-wash)]",
-            )}
-          >
-            <span className="flex min-w-0 items-center gap-[11px]">
-              {/* The space is kept for a stock, so every name starts on the
-                  same line; only the picture is left out. */}
-              {holding.kind === "rwa" ? (
-                <span aria-hidden="true" className="h-[34px] w-[34px] shrink-0" />
-              ) : (
-                <HoldingAvatar holding={holding} size={34} />
-              )}
-              <span className="min-w-0">
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate text-[14px] font-extrabold tracking-[-0.015em]">
-                    {holding.symbol}
-                  </span>
-                  {holding.kind === "rwa" ? <VerifiedTick size={13} /> : null}
-                </span>
-                <span className="mt-0.5 block truncate text-[11.5px] font-semibold text-faint">
-                  {holding.name}
-                </span>
-              </span>
-            </span>
-            <span className="tabular-nums truncate text-right text-muted">
-              {units(holding.amount)}
-              {holding.kind === "rwa" ? " shares" : ""}
-            </span>
-            <span className="tabular-nums truncate text-right text-muted">
-              {formatPriceUsd(price)}
-            </span>
-            <span className="tabular-nums truncate text-right">
-              {money(holding.valueUsd)}
-            </span>
-            <span className="tabular-nums truncate text-right">
-              {pnlUsd === null ? (
-                <>
-                  <PriceDelta value={holding.changePct} />
-                  <span className="ml-1.5 text-[11.5px] font-semibold text-faint opacity-75">
-                    24h
-                  </span>
-                </>
-              ) : (
-                <span className={positive ? "text-price-up" : "text-price-down"}>
-                  {positive ? "+" : "−"}
-                  {money(Math.abs(pnlUsd))}
-                  {pnlPct === null ? null : (
-                    <span className="ml-1.5 text-[11.5px] font-semibold opacity-75">
-                      <PriceDelta value={pnlPct} />
-                    </span>
-                  )}
-                </span>
-              )}
-            </span>
-            <span className="flex items-center justify-end gap-2">
-              <span className="tabular-nums text-muted">{share.toFixed(1)}%</span>
-              <span className="h-[5px] w-[64px] overflow-hidden rounded-full bg-[var(--overlay-wash)]">
-                <span
-                  className="block h-full rounded-full bg-brand-500"
-                  style={{width: `${Math.min(100, share)}%`}}
-                />
-              </span>
-            </span>
-          </AssetLink>
-        );
-      })}
-    </div>
   );
 }
 

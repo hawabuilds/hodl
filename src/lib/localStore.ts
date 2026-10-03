@@ -271,3 +271,48 @@ export function writeChartStyle(style: ChartStyle): void {
   write("chart-style", style === "candles" ? "candles" : "line");
   announce();
 }
+
+// ---------------------------------------------------------------------------
+// Portfolio holdings view
+// ---------------------------------------------------------------------------
+
+export type HoldingsView = "list" | "table";
+
+export function readHoldingsView(): HoldingsView {
+  return read<string>("holdingsView", "list") === "table" ? "table" : "list";
+}
+
+export function writeHoldingsView(view: HoldingsView): void {
+  write("holdingsView", view);
+  announce();
+}
+
+// ---------------------------------------------------------------------------
+// Last portfolio
+// ---------------------------------------------------------------------------
+
+/**
+ * The last portfolio read on this device: shown at once on the next visit
+ * while the live one loads, and the last known price of anything whose price
+ * then fails to load.
+ */
+export interface PortfolioCache {
+  walletKey: string;
+  holdings: import("./types").Holding[];
+  ethBalance: number;
+  ethUsd: number | null;
+  pnl: import("./types").PortfolioPnl | null;
+  degraded: boolean;
+  /** The chart as last drawn, for the range it was drawn at. */
+  history?: {range: string; snapshots: import("./types").ChartPoint[]};
+  savedAt: number;
+}
+
+export function readPortfolioCache(): PortfolioCache | null {
+  const value = read<PortfolioCache | null>("portfolio.last", null);
+  return value && typeof value.walletKey === "string" && Array.isArray(value.holdings) ? value : null;
+}
+
+export function writePortfolioCache(value: PortfolioCache): void {
+  write("portfolio.last", value);
+}
