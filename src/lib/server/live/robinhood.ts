@@ -106,6 +106,27 @@ export interface Quote {
   halted: boolean;
 }
 
+/** A spread wider than this is not a market, it is an empty book. */
+const WIDE_SPREAD = 1.05;
+
+/**
+ * The price from a quote: the mid of bid and ask. A bid or an ask on its own
+ * is a side of the market, not a price.
+ *
+ * Out of hours many books go thin: AMC showed bid 2.72 / ask 11.80 while it
+ * traded at 2.79 everywhere, and the mid (7.26) priced it — and every token
+ * paired with it — at 2.6× its value. When the spread is that wide, each side
+ * is first held to the day's range, so the price stays where the stock
+ * actually traded. A normal spread is left exactly as quoted.
+ */
+export function quotePrice(bid: number, ask: number, dailyLow: number | null, dailyHigh: number | null): number {
+  const mid = (bid + ask) / 2;
+  if (!(ask > bid * WIDE_SPREAD)) return mid;
+  if (dailyLow == null || dailyHigh == null || !(dailyLow > 0) || !(dailyHigh >= dailyLow)) return mid;
+  const clamp = (value: number) => Math.min(dailyHigh, Math.max(dailyLow, value));
+  return (clamp(bid) + clamp(ask)) / 2;
+}
+
 export function parseQuote(ticker: string, body: QuoteResponse): Quote | null {
   const q = body.quotes?.[0];
   if (!q) return null;
@@ -114,8 +135,7 @@ export function parseQuote(ticker: string, body: QuoteResponse): Quote | null {
   const ask = Number(q.ask);
   if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0) return null;
 
-  // The mid. A bid or an ask on its own is a side of the market, not a price.
-  const priceUsd = (bid + ask) / 2;
+  const priceUsd = quotePrice(bid, ask, Number(q.dailyLow) || null, Number(q.dailyHigh) || null);
   const shares = Number(q.dailyTradingVolume ?? 0) || 0;
   return {
     ticker,

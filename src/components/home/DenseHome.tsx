@@ -1,6 +1,6 @@
 "use client";
 
-import {Suspense, useEffect, useMemo, useState} from "react";
+import {Suspense, useEffect, useMemo, useRef, useState} from "react";
 import {usePathname, useRouter, useSearchParams} from "next/navigation";
 import {AssetList} from "@/components/AssetRow";
 import {FilterRail, type FilterOption} from "@/components/FilterRail";
@@ -15,7 +15,7 @@ import {HomeTabs, type HomeTab} from "@/components/HomeTabs";
 import {HomeBanner} from "./HomeBanner";
 import {RocketIcon, StarIcon} from "@/components/ui/Icons";
 import {useMarket} from "@/hooks/useMarket";
-import {useNewTokens} from "@/hooks/useNewTokens";
+import {useTokensTable} from "@/hooks/useTokensTable";
 import {useWatchlistAssets} from "@/hooks/useWatchlist";
 import {
   homeQuery,
@@ -39,7 +39,9 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import {APP_NAME} from "@/config/app";
 import type {Asset} from "@/lib/types";
-import {sortRwas, sortTokens} from "@/lib/feedSorts";
+import {sortRwas} from "@/lib/feedSorts";
+import {applyCachedToken} from "@/lib/tokenCache";
+import {sortRows, type TokensOrder} from "@/lib/tokensTable";
 import {requestCreate} from "@/lib/createIntent";
 import {useIsDesktop} from "@/hooks/useBreakpoint";
 import {cn} from "@/lib/cn";
@@ -55,6 +57,13 @@ const TOKEN_SORTS: FilterOption<TokenSort>[] = [
   },
   {value: "marketCap", label: "Market cap"},
 ];
+
+/** Each phone token list as the desktop Tokens table's order. */
+const TABLE_ORDER: Record<TokenSort, TokensOrder> = {
+  trending: {sort: "vol", desc: true},
+  new: {sort: "age", desc: true},
+  marketCap: {sort: "mcap", desc: true},
+};
 
 const RWA_SORTS: FilterOption<RwaSort>[] = [
   {value: "marketCap", label: "Market cap"},
@@ -188,43 +197,13 @@ function HomeFeed({route, desktop}: {route: "tokens" | "rwas"; desktop: boolean}
     maxAge: filters.maxAgeHours ?? initial.maxAge,
   });
   const watchlist = useWatchlistAssets(tab === "watchlist");
-  const newFilters = useMemo(
-    () => ({
-      launchpad: initial.launchpad,
-      quote: initial.quote,
-      rewards: initial.rewards,
-      minMcap: filters.minMarketCap ?? initial.minMcap,
-      maxMcap: filters.maxMarketCap ?? initial.maxMcap,
-      minLiq: filters.minLiquidity ?? initial.minLiq,
-      maxLiq: filters.maxLiquidity ?? initial.maxLiq,
-      minVol: filters.minVolume ?? initial.minVol,
-      maxVol: filters.maxVolume ?? initial.maxVol,
-      minAge: filters.minAgeHours ?? initial.minAge,
-      maxAge: filters.maxAgeHours ?? initial.maxAge,
-    }),
-    [
-      initial.launchpad,
-      initial.quote,
-      initial.rewards,
-      initial.minMcap,
-      initial.maxMcap,
-      initial.minLiq,
-      initial.maxLiq,
-      initial.minVol,
-      initial.maxVol,
-      initial.minAge,
-      initial.maxAge,
-      filters.minMarketCap,
-      filters.maxMarketCap,
-      filters.minLiquidity,
-      filters.maxLiquidity,
-      filters.minVolume,
-      filters.maxVolume,
-      filters.minAgeHours,
-      filters.maxAgeHours,
-    ],
-  );
-  const newFeed = useNewTokens(newFilters, tab === "tokens");
+  // The token lists are the desktop Tokens table's, page for page: the same
+  // endpoint, tab and order, so a phone and a monitor show the same tokens in
+  // the same order. Trending is Volume 24h high to low, New is newest first,
+  // Market cap is the Trending list by market cap.
+  const tableTab = tokenSort === "new" ? "new" : "trending";
+  const tableOrder: TokensOrder = TABLE_ORDER[tokenSort];
+  const table = useTokensTable({tab: tableTab, order: tableOrder, stock: null, enabled: tab === "tokens"});
 
   const sectorOptions: FilterOption<SectorId | "all">[] = useMemo(() => {
     const counts = new Map<SectorId, number>();
@@ -243,15 +222,15 @@ function HomeFeed({route, desktop}: {route: "tokens" | "rwas"; desktop: boolean}
     ];
   }, [market.rwas]);
 
-  const tokens = useMemo(() => {
-    if (tokenSort === "new") {
-      return newFeed.tokens.filter((token) => passesFilters(token, filters));
-    }
-    return sortTokens(
-      market.tokens.filter((token) => passesFilters(token, filters)),
-      tokenSort,
-    );
-  }, [market.tokens, tokenSort, filters, newFeed.tokens]);
+  // Ordered exactly as the desktop table orders its rows; the phone's own
+  // filters then only leave rows out, never move them.
+  const tokens = useMemo(
+    () =>
+      sortRows(table.rows, tableOrder, applyCachedToken)
+        .map((row) => row.asset)
+        .filter((token) => passesFilters(token, filters)),
+    [table.rows, tableOrder, filters],
+  );
 
   const rwas = useMemo(() => {
     const list =
@@ -275,8 +254,8 @@ function HomeFeed({route, desktop}: {route: "tokens" | "rwas"; desktop: boolean}
   const loading =
     tab === "watchlist"
       ? watchlist.isLoading
-      : tokenSort === "new" && tab === "tokens"
-        ? newFeed.isLoading
+      : tab === "tokens"
+        ? table.isLoading
         : market.isLoading;
 
   return (
@@ -357,23 +336,17 @@ function HomeFeed({route, desktop}: {route: "tokens" | "rwas"; desktop: boolean}
               tab === "tokens" && tokenSort === "new" ? "1m" : undefined
             }
           />
-          {tab === "tokens" && tokenSort === "new" && newFeed.hasMore ? (
-            <button
-              type="button"
-              onClick={newFeed.loadMore}
-              className="mt-3 w-full py-3 text-[13px] font-bold text-muted"
-            >
-              Load more
-            </button>
+          {tab === "tokens" && table.hasMore ? (
+            <LoadMore loading={table.loadingMore} onLoad={table.loadMore} />
           ) : null}
         </>
       ) : loading ? (
         <FeedSkeleton />
-      ) : tab === "tokens" && tokenSort === "new" && newFeed.error ? (
+      ) : tab === "tokens" && table.error ? (
         <p className="py-8 text-center text-[13.5px] text-muted">
-          Could not load new tokens. Retrying.
+          Could not load tokens. Retrying.
         </p>
-      ) : market.error && !(tab === "tokens" && tokenSort === "new") ? (
+      ) : market.error && tab !== "tokens" ? (
         <p className="py-8 text-center text-[13.5px] text-muted">
           Could not load the market. Retrying.
         </p>
@@ -446,6 +419,40 @@ function FeedSkeleton() {
           <div className="h-8 w-16 animate-pulse rounded bg-wash" />
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The next page of tokens: loaded on its own as the end of the list comes
+ * into view, with a button for when it does not.
+ */
+function LoadMore({loading, onLoad}: {loading: boolean; onLoad: () => void}) {
+  const sentinel = useRef<HTMLDivElement>(null);
+  const load = useRef(onLoad);
+  load.current = onLoad;
+  useEffect(() => {
+    const target = sentinel.current;
+    if (!target) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) load.current();
+      },
+      {rootMargin: "0px 0px 600px 0px"},
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div ref={sentinel}>
+      <button
+        type="button"
+        onClick={onLoad}
+        disabled={loading}
+        className="mt-3 w-full py-3 text-[13px] font-bold text-muted disabled:opacity-60"
+      >
+        {loading ? "Loading more…" : "Load more"}
+      </button>
     </div>
   );
 }

@@ -3,14 +3,16 @@ import {RWA_REGISTRY, RWA_BY_TICKER} from "./robinhood";
 import {listRwas, searchableTokens} from "./market";
 import {
   getTokenRow,
+  getTokenRows,
   statsFor,
   rowToAsset,
 } from "./universeStore";
+import {cachedLocal, keepAlive} from "./cache";
 import {isListed} from "@/lib/universe";
 import {isAddress, normalizeAddress} from "@/lib/address";
 import {showsThreeState} from "@/lib/threeState";
 import {qualifyAndInsert} from "./qualify";
-import {hasDatabase} from "../db";
+import {db, hasDatabase} from "../db";
 import {searchCategory} from "@/lib/searchable";
 
 /**
@@ -22,13 +24,96 @@ import {searchCategory} from "@/lib/searchable";
 async function tokenCandidates(q: string): Promise<TokenAsset[]> {
   if (!hasDatabase) return [];
   const wanted = q.toLowerCase();
-  const index = await searchableTokens().catch(() => [] as TokenAsset[]);
-  return index.filter(
-    (token) =>
-      normalizeAddress(token.address) === wanted ||
-      scoreName(token.symbol, q) > 0 ||
-      scoreName(token.name, q) > 0,
-  );
+  const matches = (token: {address: string; symbol: string; name: string}) =>
+    normalizeAddress(token.address) === wanted || scoreName(token.symbol, q) > 0 || scoreName(token.name, q) > 0;
+  const [index, everyone] = await Promise.all([
+    searchableTokens().catch(() => [] as TokenAsset[]),
+    namesOrNull(),
+  ]);
+  const fromIndex = index.filter(matches);
+  if (!everyone) return fromIndex;
+  // Every listed token by name and ticker, not just the lists' tokens: the
+  // index above is built from the Trending feed, so a token outside its first
+  // page could not be found by name at all.
+  const have = new Set(fromIndex.map((token) => normalizeAddress(token.address)));
+  const extra = everyone
+    .filter((entry) => !have.has(entry.address) && matches(entry))
+    .map((entry) => ({entry, score: scoreName(entry.symbol, q) * 1.1 + scoreName(entry.name, q)}))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_NAME_HITS)
+    .map((row) => row.entry.address);
+  if (extra.length === 0) return fromIndex;
+  const [rows, stats] = await Promise.all([getTokenRows(extra), statsFor(extra)]);
+  const found = rows
+    .filter((row) => row.status === "listed")
+    .map((row) => rowToAsset(row, stats.get(normalizeAddress(row.address))));
+  return [...fromIndex, ...found];
+}
+
+interface NameEntry {
+  address: string;
+  symbol: string;
+  name: string;
+}
+
+/** Tokens fetched in full for a query beyond the index's own matches. */
+const MAX_NAME_HITS = 60;
+/** How long a server keeps its list of every token's name. */
+const NAME_INDEX_MS = 10 * 60_000;
+/** How long a search waits on that list the first time a server builds it. */
+const NAME_INDEX_PATIENCE_MS = 1_500;
+const NAME_PAGE = 1_000;
+
+/**
+ * Name, ticker and address of every listed token (the Tokens table's
+ * universe), held in this server's memory: ~38k short rows, read in pages,
+ * so a name search is a scan of memory rather than of the tokens table.
+ */
+function nameIndex(): Promise<NameEntry[]> {
+  return cachedLocal("search:name-index", NAME_INDEX_MS, async () => {
+    const universe = () =>
+      db()
+        .from("tokens")
+        .select("address, symbol, name")
+        .eq("status", "listed")
+        .in("launchpad", ["pons", "long"])
+        .not("eligible", "is", false);
+    const {count, error} = await db()
+      .from("tokens")
+      .select("address", {count: "exact", head: true})
+      .eq("status", "listed")
+      .in("launchpad", ["pons", "long"])
+      .not("eligible", "is", false);
+    if (error) throw new Error(error.message);
+    const pages = Math.min(200, Math.ceil((count ?? 0) / NAME_PAGE));
+    const out: NameEntry[] = [];
+    for (let first = 0; first < pages; first += 4) {
+      const batch = await Promise.all(
+        Array.from({length: Math.min(4, pages - first)}, (_, k) =>
+          universe()
+            .order("address")
+            .range((first + k) * NAME_PAGE, (first + k + 1) * NAME_PAGE - 1),
+        ),
+      );
+      for (const page of batch) {
+        if (page.error) throw new Error(page.error.message);
+        for (const row of (page.data ?? []) as {address: string; symbol: string | null; name: string | null}[]) {
+          out.push({address: normalizeAddress(row.address), symbol: row.symbol ?? "", name: row.name ?? ""});
+        }
+      }
+    }
+    return out;
+  });
+}
+
+/** The name list, or null while a cold server is still building it. */
+async function namesOrNull(): Promise<NameEntry[] | null> {
+  const building = nameIndex();
+  keepAlive(building);
+  return Promise.race([
+    building.catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), NAME_INDEX_PATIENCE_MS)),
+  ]);
 }
 
 export interface GroupedSearch {

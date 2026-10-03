@@ -1,6 +1,7 @@
 import {isAddress, normalizeAddress} from "@/lib/address";
 import {
   TOKENS_PAGE_SIZE,
+  sortRows,
   type TokensCursor,
   type TokensPage,
   type TokensSort,
@@ -246,7 +247,15 @@ async function buildRows(addresses: string[], tradedAt?: Map<string, string>): P
   } catch (error) {
     console.error("tokens table decorate failed; serving stored rows", error);
   }
-  decorated = await attachSparks(decorated);
+  // The line comes from the sparkline; the 24h figure stays the token's own
+  // 24h change, the stored value the 24h column sorts by. (The line's own %
+  // can read 0 for a token DexScreener has down 99% — and a column that shows
+  // one number while sorting by another is not sorted.)
+  const changeOf = new Map(decorated.map((asset) => [normalizeAddress(asset.address), asset.changePct]));
+  decorated = (await attachSparks(decorated)).map((asset) => {
+    const change = changeOf.get(normalizeAddress(asset.address));
+    return change == null ? asset : {...asset, changePct: change};
+  });
   const byAddress = new Map(decorated.map((asset) => [normalizeAddress(asset.address), asset]));
   return addresses.flatMap((address) => {
     const asset = byAddress.get(address);
@@ -324,9 +333,13 @@ export async function tokensTablePage(input: {
     });
   }
 
-  const [rows, pairs] = await Promise.all([
+  const [built, pairs] = await Promise.all([
     buildRows(page.addresses, tradedAt),
     firstPage ? pairsFor(universe, addresses) : Promise.resolve(undefined),
   ]);
+  // The page was chosen by the stored values; the rows show freshly decorated
+  // ones. Ordered by what they show, so the column reads in order. (The
+  // decoration saves those values, so the next page's choice catches up.)
+  const rows = sortRows(built, {sort: input.sort, desc: input.desc});
   return {rows, next: page.next, pairs};
 }

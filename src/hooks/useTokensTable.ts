@@ -39,7 +39,13 @@ export function publicTokensKey(tab: "trending" | "new", order: TokensOrder, sto
   return ["tokens-table", tab, order.sort, order.desc, stock ?? "", "", ""] as const;
 }
 
-export function useTokensTable(input: {tab: TokensTab; order: TokensOrder; stock: string | null}) {
+export function useTokensTable(input: {
+  tab: TokensTab;
+  order: TokensOrder;
+  stock: string | null;
+  /** Off while the list is not on screen (the phone's other tabs). */
+  enabled?: boolean;
+}) {
   const session = useSession();
   const user = useUser();
   const {keys} = useWatchlist();
@@ -64,11 +70,12 @@ export function useTokensTable(input: {tab: TokensTab; order: TokensOrder; stock
     ],
     initialPageParam: null as TokensCursor | null,
     getNextPageParam: (last: TokensPage) => last.next,
-    refetchInterval: REFRESH_MS,
+    // A stand-in page is replaced by the real one as soon as it is built.
+    refetchInterval: (query) => (query.state.data?.pages[0]?.partial ? 2_000 : REFRESH_MS),
     staleTime: 10_000,
     gcTime: 10 * 60_000,
     placeholderData: keepPreviousData,
-    enabled: input.tab !== "watchlist" || watch.length > 0,
+    enabled: (input.enabled ?? true) && (input.tab !== "watchlist" || watch.length > 0),
     queryFn: async ({pageParam, signal}): Promise<TokensPage & {signedOut?: boolean}> => {
       // Trending and New are the same for everyone: a GET the edge can serve.
       if (input.tab === "trending" || input.tab === "new") {

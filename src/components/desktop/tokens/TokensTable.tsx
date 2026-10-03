@@ -14,12 +14,14 @@ import {
   nextOrder,
   parseSort,
   parseTab,
+  sortRows,
   stableRows,
   type TokensColumnSort,
   type TokensOrder,
   type TokensTab,
   type TokensTableRow,
 } from "@/lib/tokensTable";
+import {applyCachedToken} from "@/lib/tokenCache";
 import type {Launchpad} from "@/lib/types";
 import {LaunchpadMark} from "../../LaunchpadMark";
 import {ChevronDownIcon, CloseIcon} from "../../ui/Icons";
@@ -79,16 +81,21 @@ function useView() {
   const pathname = usePathname() ?? "/tokens";
   const tab = parseTab(params.get("tab"));
   const sortParam = params.get("sort");
-  const order: TokensOrder = sortParam
-    ? {sort: parseSort(sortParam, tab), desc: params.get("dir") !== "asc"}
-    : DEFAULT_ORDER[tab];
+  const dirParam = params.get("dir");
+  // One object per view, not per render: the rows are ordered from it.
+  const order: TokensOrder = useMemo(
+    () => (sortParam ? {sort: parseSort(sortParam, tab), desc: dirParam !== "asc"} : DEFAULT_ORDER[tab]),
+    [dirParam, sortParam, tab],
+  );
   const stock = params.get("stock");
 
   const set = useCallback(
     (next: {tab?: TokensTab; order?: TokensOrder | null; stock?: string | null}) => {
       const query = new URLSearchParams(params.toString());
       const nextTab = next.tab ?? tab;
-      if (next.tab) {
+      // A column sort carries over to the next tab, so the filters and the
+      // sort work together. Following's "newest trade" does not.
+      if (next.tab && (!sortParam || sortParam === "recent")) {
         query.delete("sort");
         query.delete("dir");
       }
@@ -105,7 +112,7 @@ function useView() {
       const text = query.toString();
       router.replace(text ? `${pathname}?${text}` : pathname, {scroll: false});
     },
-    [params, pathname, router, tab],
+    [params, pathname, router, sortParam, tab],
   );
 
   return {tab, order, stock, set};
@@ -116,6 +123,9 @@ export function TokensTable() {
   const {tab, order, stock, set} = useView();
   const table = useTokensTable({tab, order, stock});
   const viewKey = `${tab}:${order.sort}:${order.desc}:${stock ?? ""}`;
+  // The server pages in order; this keeps every loaded row in order of the
+  // value it shows (this browser may hold a fresher price than the page did).
+  const ordered = useMemo(() => sortRows(table.rows, order, applyCachedToken), [table.rows, order]);
 
   // ── Frozen order while someone is reading ────────────────────────────────
   const [hovering, setHovering] = useState(false);
@@ -126,11 +136,11 @@ export function TokensTable() {
   useEffect(() => {
     if (shownKey.current !== viewKey) {
       shownKey.current = viewKey;
-      setShown(table.rows);
+      setShown(ordered);
       return;
     }
-    setShown((current) => stableRows(current, table.rows, frozen));
-  }, [table.rows, frozen, viewKey]);
+    setShown((current) => stableRows(current, ordered, frozen));
+  }, [ordered, frozen, viewKey]);
 
   // ── Scrolling: more rows near the end, and the position kept ─────────────
   const scroller = useRef<HTMLDivElement>(null);

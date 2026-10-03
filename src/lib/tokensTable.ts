@@ -1,3 +1,4 @@
+import {marketCapAt} from "./marketCap";
 import type {TokenAsset} from "./types";
 
 /**
@@ -57,6 +58,66 @@ export interface TokensPage {
   next: TokensCursor | null;
   /** First page only: "Paired with" chips, most tokens first. */
   pairs?: {ticker: string; count: number}[];
+  /**
+   * A quick stand-in while the real page builds (the default order only, a
+   * short list with no further pages): the client asks again soon.
+   */
+  partial?: boolean;
+}
+
+const positive = (value: number | null | undefined): number | null =>
+  value != null && Number.isFinite(value) && value > 0 ? value : null;
+
+/**
+ * The number a column shows for a row, as a number: what a sort must compare.
+ * Null when the cell shows "—", so missing values can go last. Mirrors the
+ * row's own formatting (market cap is supply × the shown price, a young
+ * token's 24h is its move since launch, zero volume or liquidity is "—").
+ */
+export function sortValue(row: TokensTableRow, sort: TokensColumnSort, asset: TokenAsset = row.asset): number | null {
+  switch (sort) {
+    case "age": {
+      const listed = asset.listedAt ?? asset.createdAt;
+      const t = listed ? Date.parse(listed) : NaN;
+      return Number.isFinite(t) ? t : null;
+    }
+    case "mcap": {
+      const price = positive(asset.priceUsd);
+      return price == null ? null : positive(marketCapAt(asset, price));
+    }
+    case "change":
+      return Number.isFinite(asset.changePct) ? asset.changePct : null;
+    case "liq":
+      return positive(asset.liquidityUsd);
+    case "vol":
+      return positive(asset.volume24hUsd);
+    case "txns":
+      return row.buys == null && row.sells == null ? null : (row.buys ?? 0) + (row.sells ?? 0);
+  }
+}
+
+/**
+ * Rows in column order by the values they show: high to low or low to high,
+ * rows with no value always last, ties kept in the order they came.
+ */
+export function sortRows<T extends TokensTableRow>(
+  rows: readonly T[],
+  order: TokensOrder,
+  view: (asset: TokenAsset) => TokenAsset = (asset) => asset,
+): T[] {
+  if (order.sort === "recent") return [...rows];
+  const sort = order.sort;
+  return rows
+    .map((row, index) => ({row, index, value: sortValue(row, sort, view(row.asset))}))
+    .sort((a, b) => {
+      if (a.value == null || b.value == null) {
+        if (a.value == null && b.value == null) return a.index - b.index;
+        return a.value == null ? 1 : -1;
+      }
+      const diff = order.desc ? b.value - a.value : a.value - b.value;
+      return diff || a.index - b.index;
+    })
+    .map((entry) => entry.row);
 }
 
 export function encodeCursor(cursor: TokensCursor | null): string | null {
