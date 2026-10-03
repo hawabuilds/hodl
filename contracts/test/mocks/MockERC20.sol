@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.26;
 
 contract MockERC20 {
     string public name;
@@ -25,19 +25,27 @@ contract MockERC20 {
         return true;
     }
 
-    function transfer(address to, uint256 amount) external returns (bool) {
+    function transfer(address to, uint256 amount) external virtual returns (bool) {
         _move(msg.sender, to, amount);
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+    function transferFrom(address from, address to, uint256 amount)
+        external
+        virtual
+        returns (bool)
+    {
+        _spend(from, amount);
+        _move(from, to, amount);
+        return true;
+    }
+
+    function _spend(address from, uint256 amount) internal {
         uint256 allowed = allowance[from][msg.sender];
         if (allowed != type(uint256).max) {
             require(allowed >= amount, "ALLOW");
             allowance[from][msg.sender] = allowed - amount;
         }
-        _move(from, to, amount);
-        return true;
     }
 
     function _move(address from, address to, uint256 amount) private {

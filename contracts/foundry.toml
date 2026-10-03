@@ -5,13 +5,20 @@ libs = ["lib"]
 test = "test"
 script = "script"
 solc = "0.8.26"
+# Robinhood Chain runs Cancun; the reentrancy lock uses transient storage.
+evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
 ffi = false
 fs_permissions = [{ access = "read", path = "./" }]
 
 [profile.default.fuzz]
+runs = 256
+
+[profile.default.invariant]
 runs = 64
+depth = 64
+fail_on_revert = true
 
 [rpc_endpoints]
 rh = "${ALCHEMY_RPC_URL}"

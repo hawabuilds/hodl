@@ -1,85 +1,52 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.26;
 
-/// @title FeeCollector
+import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+/// @title FeeCollector (v2)
 /// @notice Holds HODL swap fees away from HodlRouter. An exploit in the
 ///         router must not reach accumulated ETH/USDG.
-/// @dev Buyback module is unset at deploy. `setBuybackModule` is timelocked.
-contract FeeCollector {
-    uint256 public constant TIMELOCK = 2 days;
+/// @dev v1 had a timelocked buyback module that, once set, blocked every
+///      withdrawal while the module had no way to pull funds, so fees could be
+///      stuck for good. No module exists yet, so v2 drops it: the owner can
+///      always withdraw, and only to the owner. A buyback contract later
+///      becomes the owner (two-step) or receives withdrawals from it.
+///      Ownership: OpenZeppelin Ownable2Step, with renounce disabled so the
+///      fees can never be left without anyone able to withdraw them.
+contract FeeCollector is Ownable2Step {
+    using SafeERC20 for IERC20;
 
-    address public owner;
-    address public buybackModule;
-
-    address public pendingBuybackModule;
-    uint256 public pendingBuybackEta;
-
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event BuybackProposed(address indexed module, uint256 eta);
-    event BuybackModuleSet(address indexed module);
     event Withdraw(address indexed token, address indexed to, uint256 amount);
 
-    error NotOwner();
-    error ZeroAddress();
-    error ModuleAlreadySet();
-    error TimelockPending();
-    error TimelockNotReady();
+    error EthTransferFailed();
+    error RenounceDisabled();
 
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
-    }
+    /// @param owner_ Initial owner (zero reverts `OwnableInvalidOwner`).
+    constructor(address owner_) Ownable(owner_) {}
 
-    constructor(address owner_) {
-        if (owner_ == address(0)) revert ZeroAddress();
-        owner = owner_;
-        emit OwnershipTransferred(address(0), owner_);
-    }
-
+    /// @notice Accepts ETH fees from the router (and anyone else).
     receive() external payable {}
 
-    function transferOwnership(address next) external onlyOwner {
-        if (next == address(0)) revert ZeroAddress();
-        emit OwnershipTransferred(owner, next);
-        owner = next;
+    /// @notice Disabled: without an owner the fees could never be withdrawn.
+    function renounceOwnership() public view override onlyOwner {
+        revert RenounceDisabled();
     }
 
-    /// @notice Starts the timelock. Leave unset until a buyback module exists.
-    function setBuybackModule(address module) external onlyOwner {
-        if (module == address(0)) revert ZeroAddress();
-        pendingBuybackModule = module;
-        pendingBuybackEta = block.timestamp + TIMELOCK;
-        emit BuybackProposed(module, pendingBuybackEta);
+    /// @notice Send `amount` ETH to the owner.
+    /// @param amount Wei to send.
+    function withdrawETH(uint256 amount) external onlyOwner {
+        emit Withdraw(address(0), msg.sender, amount);
+        (bool ok,) = payable(msg.sender).call{value: amount}("");
+        if (!ok) revert EthTransferFailed();
     }
 
-    function applyBuybackModule() external onlyOwner {
-        if (pendingBuybackEta == 0) revert TimelockPending();
-        if (block.timestamp < pendingBuybackEta) revert TimelockNotReady();
-        address module = pendingBuybackModule;
-        buybackModule = module;
-        pendingBuybackModule = address(0);
-        pendingBuybackEta = 0;
-        emit BuybackModuleSet(module);
-    }
-
-    function withdrawETH(address to, uint256 amount) external onlyOwner {
-        if (buybackModule != address(0)) revert ModuleAlreadySet();
-        if (to == address(0)) revert ZeroAddress();
-        (bool ok,) = payable(to).call{value: amount}("");
-        require(ok, "ETH_XFER");
-        emit Withdraw(address(0), to, amount);
-    }
-
-    function withdrawToken(address token, address to, uint256 amount) external onlyOwner {
-        if (buybackModule != address(0)) revert ModuleAlreadySet();
-        if (to == address(0) || token == address(0)) revert ZeroAddress();
-        _safeTransfer(token, to, amount);
-        emit Withdraw(token, to, amount);
-    }
-
-    function _safeTransfer(address token, address to, uint256 amount) private {
-        (bool ok, bytes memory data) =
-            token.call(abi.encodeWithSelector(0xa9059cbb, to, amount));
-        require(ok && (data.length == 0 || abi.decode(data, (bool))), "TOKEN_XFER");
+    /// @notice Send `amount` of `token` to the owner.
+    /// @param token ERC-20 to send. A token that returns false, reverts or has
+    ///        no code reverts `SafeERC20FailedOperation`.
+    /// @param amount Raw amount to send.
+    function withdrawToken(address token, uint256 amount) external onlyOwner {
+        emit Withdraw(token, msg.sender, amount);
+        IERC20(token).safeTransfer(msg.sender, amount);
     }
 }

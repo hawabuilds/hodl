@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.26;
 
 import {MockERC20} from "./MockERC20.sol";
 
@@ -8,11 +8,22 @@ contract MockUniversalRouter {
     address public outToken;
     uint256 public outAmount;
     bool public revertNext;
+    bool public revertEmpty;
     bytes public lastCommands;
+    bytes public lastInput;
     uint256 public lastDeadline;
     uint256 public lastValue;
+    address public extraToken;
+    uint256 public extraAmount;
 
     receive() external payable {}
+
+    /// @dev Also pay `amount` of `token` (address(0) = ETH) to the caller, to
+    ///      simulate a venue that leaves something behind in the router.
+    function setExtra(address token, uint256 amount) external {
+        extraToken = token;
+        extraAmount = amount;
+    }
 
     function setOutput(address token, uint256 amount) external {
         outToken = token;
@@ -23,20 +34,33 @@ contract MockUniversalRouter {
         revertNext = v;
     }
 
+    function setRevertEmpty(bool v) external {
+        revertEmpty = v;
+    }
+
     function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline)
         external
         payable
     {
         lastCommands = commands;
-        inputs;
+        lastInput = inputs[0];
         lastDeadline = deadline;
         lastValue = msg.value;
         if (revertNext) revert("UR_REVERT");
+        if (revertEmpty) revert();
         if (outToken == address(0)) {
             (bool ok,) = payable(msg.sender).call{value: outAmount}("");
             require(ok, "ETH");
         } else {
             MockERC20(outToken).transfer(msg.sender, outAmount);
+        }
+        if (extraAmount > 0) {
+            if (extraToken == address(0)) {
+                (bool ok,) = payable(msg.sender).call{value: extraAmount}("");
+                require(ok, "ETH");
+            } else {
+                MockERC20(extraToken).transfer(msg.sender, extraAmount);
+            }
         }
     }
 }
@@ -87,36 +111,38 @@ contract MockSwapRouter02 {
     }
 }
 
-/// @dev WETH/USDG 0.01% slot0 stand-in. sqrtPrice chosen so 1 ETH ≈ $2500.
+/// @dev WETH/USDG 0.01% oracle stand-in. Holds one tick for the whole window,
+///      so the TWAP equals that tick. Default tick ≈ $2500 per ETH.
 contract MockWethUsdgPool {
-    uint160 public sqrtPriceX96;
+    int24 public tick = -198080;
+    int56 public skew;
+    bool public revertObserve;
 
-    constructor() {
-        // raw USDG/WETH = 2500e6 / 1e18. sqrtPriceX96 = sqrt(ratio) * 2^96
-        uint256 ratioX192 = (uint256(2500 * 1e6) << 192) / 1e18;
-        sqrtPriceX96 = uint160(_sqrt(ratioX192));
+    /// @dev Added to the latest cumulative so the mean tick is not exact.
+    function setSkew(int56 next) external {
+        skew = next;
     }
 
-    function _sqrt(uint256 x) private pure returns (uint256 y) {
-        if (x == 0) return 0;
-        uint256 z = (x + 1) / 2;
-        y = x;
-        while (z < y) {
-            y = z;
-            z = (x / z + z) / 2;
-        }
+    function setTick(int24 next) external {
+        tick = next;
     }
 
-    function setSqrtPriceX96(uint160 next) external {
-        sqrtPriceX96 = next;
+    function setRevertObserve(bool v) external {
+        revertObserve = v;
     }
 
-    function slot0()
+    function observe(uint32[] calldata secondsAgos)
         external
         view
-        returns (uint160, int24, uint16, uint16, uint16, uint8, bool)
+        returns (int56[] memory cumulatives, uint160[] memory perLiquidity)
     {
-        return (sqrtPriceX96, 0, 0, 0, 0, 0, false);
+        require(!revertObserve, "OLD");
+        cumulatives = new int56[](secondsAgos.length);
+        perLiquidity = new uint160[](secondsAgos.length);
+        for (uint256 i; i < secondsAgos.length; i++) {
+            cumulatives[i] = int56(tick) * int56(int256(1_000_000 - uint256(secondsAgos[i])));
+            if (secondsAgos[i] == 0) cumulatives[i] += skew;
+        }
     }
 }
 
@@ -131,7 +157,9 @@ contract MaliciousHook {
     receive() external payable {}
 
     fallback() external payable {
-        (bool ok,) = target.call(abi.encodeWithSignature("sweep(address,address)", address(0), address(this)));
+        (bool ok,) = target.call(
+            abi.encodeWithSignature("sweep(address,address)", address(0), address(this))
+        );
         ok;
         (bool ok2,) = target.call{value: 0}(
             abi.encodeWithSignature(
