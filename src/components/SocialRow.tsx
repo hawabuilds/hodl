@@ -6,7 +6,7 @@ import {DiscordIcon, GlobeIcon, TelegramIcon, XIcon} from "./ui/Icons";
 const ORDER: {
   key: keyof SocialLinks;
   label: string;
-  Icon: (props: SVGProps<SVGSVGElement>) => JSX.Element;
+  Icon: (props: SVGProps<SVGSVGElement>) => React.JSX.Element;
 }[] = [
   {key: "x", label: "X", Icon: XIcon},
   {key: "telegram", label: "Telegram", Icon: TelegramIcon},

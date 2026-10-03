@@ -23,8 +23,9 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(
   request: Request,
-  {params}: {params: {handle: string}},
+  context: {params: Promise<{handle: string}>},
 ) {
+  const params = await context.params;
   if (hasDatabase) {
     const profile = await profileByHandle(params.handle);
     if (profile) {

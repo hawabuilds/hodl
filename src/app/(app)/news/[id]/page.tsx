@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect, useState} from "react";
+import {use, useEffect, useState} from "react";
 import Link from "next/link";
 import {useRouter} from "next/navigation";
 import {useQuery} from "@tanstack/react-query";
@@ -16,7 +16,8 @@ interface ArticleResponse {
   article: FeedItem;
 }
 
-export default function NewsArticlePage({params}: {params: {id: string}}) {
+export default function NewsArticlePage(props: {params: Promise<{id: string}>}) {
+  const params = use(props.params);
   const id = decodeURIComponent(params.id);
   const router = useRouter();
 

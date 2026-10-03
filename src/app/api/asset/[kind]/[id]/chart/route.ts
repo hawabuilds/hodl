@@ -6,8 +6,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET(
   request: NextRequest,
-  {params}: {params: {kind: string; id: string}},
+  context: {params: Promise<{kind: string; id: string}>},
 ) {
+  const params = await context.params;
   const kind = parseKind(params.kind);
   if (!kind) return notFound("Unknown asset kind.");
 

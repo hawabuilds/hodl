@@ -14,7 +14,8 @@ function marketDay(ms: number): string {
  * from Robinhood's price history — not the tokenized stock's DEX pool. Labelled
  * "today" when the latest candle is today's, otherwise "last session".
  */
-export async function GET(_request: Request, {params}: {params: {ticker: string}}) {
+export async function GET(_request: Request, context: {params: Promise<{ticker: string}>}) {
+  const params = await context.params;
   const ticker = params.ticker.toUpperCase();
   if (!RWA_BY_TICKER.has(ticker)) return notFound("Unknown stock.");
   try {

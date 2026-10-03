@@ -11,7 +11,7 @@ import {usePulse} from "@/lib/alertBus";
 import {cn} from "@/lib/cn";
 import {ActivityIcon, HomeIcon, NewsIcon, SearchIcon, UserIcon} from "./ui/Icons";
 
-const ICONS: Record<TabKey, (props: {className?: string}) => JSX.Element> = {
+const ICONS: Record<TabKey, (props: {className?: string}) => React.JSX.Element> = {
   home: HomeIcon,
   search: SearchIcon,
   activity: ActivityIcon,

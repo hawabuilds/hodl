@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
   const chart = leadId
     ? await within(
         chartRoute(call(origin, `/api/asset/rwa/${leadId}/chart?tf=${featuredTimeframe}`), {
-          params: {kind: "rwa", id: leadId},
+          params: Promise.resolve({kind: "rwa", id: leadId}),
         }).then((r) => body<unknown>(r)),
         PART_BUDGET_MS,
       )

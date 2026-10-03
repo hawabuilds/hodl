@@ -6,8 +6,9 @@ export const dynamic = "force-dynamic";
 /** One wire article — Supabase first, then the live cache. */
 export async function GET(
   _request: Request,
-  {params}: {params: {id: string}},
+  context: {params: Promise<{id: string}>},
 ) {
+  const params = await context.params;
   const id = decodeURIComponent(params.id);
   const article = await articleById(id);
   if (!article) return notFound("Article not found.");

@@ -18,8 +18,9 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(
   request: Request,
-  {params}: {params: {id: string}},
+  context: {params: Promise<{id: string}>},
 ) {
+  const params = await context.params;
   const caller = await requireCaller(request);
   if (caller instanceof Response) return caller;
   if (!hasDatabase) return json({error: "Comments are not configured."}, 503);

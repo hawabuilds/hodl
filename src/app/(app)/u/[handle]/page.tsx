@@ -1,6 +1,6 @@
 "use client";
 
-import {useMemo, useRef, useState} from "react";
+import {use, useMemo, useRef, useState} from "react";
 import {useRouter} from "next/navigation";
 import {APP_SCROLL_PAD_TOP} from "@/components/AppShell";
 import {ConnectionsSheet} from "@/components/ConnectionsSheet";
@@ -19,11 +19,8 @@ import {compact, money, percent, shortAddress} from "@/lib/format";
 type Side = "rwa" | "token";
 type Connections = "followers" | "following";
 
-export default function PublicProfilePage({
-  params,
-}: {
-  params: {handle: string};
-}) {
+export default function PublicProfilePage(props: {params: Promise<{handle: string}>}) {
+  const params = use(props.params);
   const router = useRouter();
   const {profile, followerHandles, followingHandles, holdingsVisible, isLoading, notFound} =
     useProfile(params.handle);

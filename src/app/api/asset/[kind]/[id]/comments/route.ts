@@ -10,8 +10,9 @@ export const dynamic = "force-dynamic";
 /** Threads for an asset, oldest first. */
 export async function GET(
   request: Request,
-  {params}: {params: {kind: string; id: string}},
+  context: {params: Promise<{kind: string; id: string}>},
 ) {
+  const params = await context.params;
   const kind = parseKind(params.kind);
   if (!kind) return notFound("Unknown asset kind.");
 
@@ -37,8 +38,9 @@ export async function GET(
 /** Posting. Identity comes from the access token, never from the body. */
 export async function POST(
   request: Request,
-  {params}: {params: {kind: string; id: string}},
+  context: {params: Promise<{kind: string; id: string}>},
 ) {
+  const params = await context.params;
   const kind = parseKind(params.kind);
   if (!kind) return notFound("Unknown asset kind.");
 

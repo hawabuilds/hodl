@@ -8,8 +8,11 @@ const nextConfig = {
   images: {
     remotePatterns: [{protocol: "https", hostname: "pbs.twimg.com"}],
   },
+  serverExternalPackages: ["sharp", "pg", "web-push"],
   experimental: {
-    serverComponentsExternalPackages: ["sharp", "pg", "web-push"],
+    // Next 15 stopped reusing a visited dynamic page (stale time 0, was 30s).
+    // Keep 14's 30s so back to a token or stock page is instant, as before.
+    staleTimes: {dynamic: 30},
   },
   async headers() {
     return [
