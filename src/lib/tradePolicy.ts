@@ -1,8 +1,9 @@
+import {HODL_ROUTER_V1} from "./contracts";
 import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH} from "./swapRoute";
 import type {SwapHop} from "./swapRoute";
 import type {SwapQuote} from "./swapQuote";
 import type {AssetKind} from "./types";
-import type {VenueId} from "./venueQuote";
+import {PLATFORM_FEE_BPS, type VenueId} from "./venueQuote";
 
 /** Same ceiling HodlRouter enforces on-chain. UR buys had none. */
 export const LIVE_BUY_MAX_USD = 100;
@@ -88,6 +89,36 @@ export function amountOutMinimum(amountOut: bigint, slippagePct: number): bigint
   const bps = BigInt(Math.round(Math.max(0, slippagePct) * 100));
   if (bps >= 10_000n) return 0n;
   return amountOut - (amountOut * bps) / 10_000n;
+}
+
+/**
+ * HodlRouter `minAmountOut` for a quote.
+ *
+ * Buys: the router takes its fee from the input, so the quote's `netOut` is
+ * already what the buyer receives.
+ *
+ * Sells: the router takes its fee from the output. v1 compared the minimum
+ * with the swap output *before* the fee; v2 compares it with what the seller
+ * actually receives *after* the fee. Basing a v2 sell on the gross output
+ * would leave only (slippage − 0.5%) of real price tolerance, so v2 sells use
+ * the after-fee amount. The v1 rule applies only to the v1 router address.
+ */
+export function hodlRouterMinOut(opts: {
+  router: string;
+  side: "buy" | "sell";
+  amountOut: bigint;
+  netOut: bigint;
+  slippagePct: number;
+}): bigint {
+  if (opts.side === "buy") return amountOutMinimum(opts.netOut, opts.slippagePct);
+  if (opts.router.toLowerCase() === HODL_ROUTER_V1) {
+    return amountOutMinimum(opts.amountOut, opts.slippagePct);
+  }
+  const afterFee = opts.amountOut - (opts.amountOut * BigInt(PLATFORM_FEE_BPS)) / 10_000n;
+  // A quote without its own netOut falls back to amountOut; never trust a
+  // figure above what the router can pay after its fee.
+  const received = opts.netOut > 0n && opts.netOut < afterFee ? opts.netOut : afterFee;
+  return amountOutMinimum(received, opts.slippagePct);
 }
 
 export function liveBuyOverCap(amountUsd: number): boolean {

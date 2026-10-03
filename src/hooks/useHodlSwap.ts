@@ -14,7 +14,7 @@ import {
 } from "@/lib/approvalFlow";
 import {HODL_ROUTER_ADDRESS} from "@/lib/liveTrade";
 import {useSession} from "@/lib/session";
-import {amountOutMinimum, swapDeadlineSec} from "@/lib/tradePolicy";
+import {hodlRouterMinOut, swapDeadlineSec} from "@/lib/tradePolicy";
 import type {SwapQuote} from "@/lib/swapQuote";
 import {
   encodeHodlBuy,
@@ -283,11 +283,14 @@ export function useHodlSwap() {
         throw new Error("HodlRouter is not configured.");
       }
       const amountIn = BigInt(opts.quote.amountIn);
-      // Sells skim the output after the swap, so slippage binds the gross quoter
-      // amount. Buys already quoted the post-fee input, so netOut == amountOut.
-      const quotedOut =
-        opts.side === "sell" ? BigInt(opts.quote.amountOut) : BigInt(opts.quote.netOut);
-      const minOut = amountOutMinimum(quotedOut, opts.slippagePct);
+      // v2 checks a seller's minimum after its fee (v1: before). See hodlRouterMinOut.
+      const minOut = hodlRouterMinOut({
+        router,
+        side: opts.side,
+        amountOut: BigInt(opts.quote.amountOut),
+        netOut: BigInt(opts.quote.netOut),
+        slippagePct: opts.slippagePct,
+      });
       const deadline = swapDeadlineSec();
       const hint = hintFromQuote(opts.quote, opts.token, opts.side);
       const nativePay = opts.side === "buy" && opts.payNative;
