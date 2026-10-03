@@ -110,3 +110,5 @@ forge coverage --no-match-coverage "test|script" --no-match-contract Fork
 - `unused-return` (1): `observe()`'s seconds-per-liquidity array isn't needed.
 - `timestamp` (2): deadline and timelock comparisons.
 - Informational: low-level calls and assembly (ETH sends, `balanceOf`, venue calls, revert bubbling), `WETH`/`USDG` naming (kept for ABI compatibility), unindexed `Paused`/`Unpaused` (kept from v1), TickMath literals and complexity.
+
+**CI** (`.github/workflows/contracts.yml`): format, build, unit/fuzz/invariant tests, a ≥95% branch-coverage gate, and Slither failing on High. Fork tests can't run in CI (no archive RPC); run them locally before a deploy.

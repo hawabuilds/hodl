@@ -1,0 +1,52 @@
+name: contracts
+
+on:
+  pull_request:
+    paths: ["contracts/**", ".gitmodules", ".github/workflows/contracts.yml"]
+  push:
+    branches: [master]
+    paths: ["contracts/**", ".gitmodules", ".github/workflows/contracts.yml"]
+
+# Fork tests (HodlRouterFork) are not run here: Robinhood Chain RPCs keep only
+# ~20 minutes of state, so a pinned block can't be replayed from CI. Run them
+# locally with --fork-url before any deploy (see contracts/README.md).
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.4
+      - name: Format
+        run: forge fmt --check
+      - name: Build
+        run: forge build --sizes
+      - name: Unit, fuzz and invariant tests
+        run: forge test --no-match-contract Fork -vv
+      - name: Coverage (src only, branches must stay >= 95%)
+        run: |
+          forge coverage --no-match-coverage "test|script|lib" --no-match-contract Fork \
+            --report summary --report lcov --report-file lcov.info
+          awk -F: '/^BRF:/{f+=$2} /^BRH:/{h+=$2} END {
+            pct = (f == 0) ? 100 : 100 * h / f
+            printf "branch coverage: %d/%d = %.2f%%\n", h, f, pct
+            if (pct < 95) exit 1
+          }' lcov.info
+
+  slither:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: crytic/slither-action@v0.4.1
+        with:
+          target: contracts
+          slither-args: --filter-paths "test|script|lib"
+          fail-on: high
