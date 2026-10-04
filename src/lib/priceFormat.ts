@@ -99,6 +99,8 @@ export function priceMinMove(prices: readonly number[]): number {
     if (Number.isFinite(price) && price > 0 && price < smallest) smallest = price;
   }
   if (!Number.isFinite(smallest)) return 0.01;
-  const step = 10 ** (Math.floor(Math.log10(smallest)) - 3);
+  const exponent = Math.floor(Math.log10(smallest)) - 3;
+  // 1 / 10 ** n, not 10 ** -n: Node 22's V8 gives 10 ** -4 as 0.00009999999999999999.
+  const step = exponent < 0 ? 1 / 10 ** -exponent : 10 ** exponent;
   return Math.min(0.01, step);
 }
