@@ -41,6 +41,7 @@ import {
 } from "@/lib/localStore";
 import {
   amountOutMinimum,
+  LIVE_BUY_OVER_CAP,
   liveBuyOverCap,
   PRICE_IMPACT_TOO_HIGH,
   quoteMissButtonLabel,
@@ -286,7 +287,7 @@ export function OrderTicket({
   const urBuy = Boolean(buying && quote && (quote.hops?.length ?? 0) > 1);
   const oversized =
     valid && Number.isFinite(amountUsd) && urBuy && liveBuyOverCap(amountUsd)
-      ? "This size is above the current notional cap."
+      ? LIVE_BUY_OVER_CAP
       : null;
   const feeRow = quote ? platformFeeLabel() : null;
 

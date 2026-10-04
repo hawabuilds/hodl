@@ -14,7 +14,7 @@ import {
 } from "@/lib/approvalFlow";
 import {HODL_ROUTER_ADDRESS} from "@/lib/liveTrade";
 import {useSession} from "@/lib/session";
-import {hodlRouterMinOut, swapDeadlineSec} from "@/lib/tradePolicy";
+import {hodlRouterMinOut, LIVE_BUY_OVER_CAP, swapDeadlineSec} from "@/lib/tradePolicy";
 import type {SwapQuote} from "@/lib/swapQuote";
 import {
   encodeHodlBuy,
@@ -63,7 +63,7 @@ export function explainHodlError(error: unknown): string {
     return "Trade is below the $1 minimum.";
   }
   if (/Cap|maxNotional/i.test(message)) {
-    return "This size is above the current notional cap.";
+    return LIVE_BUY_OVER_CAP;
   }
   if (/DeadlineExpired|TransactionDeadlinePassed/i.test(message)) {
     return "The quote expired. Wait for a refresh and try again.";

@@ -693,7 +693,7 @@ describe("trade policy", () => {
     assert.equal(quoteMissButtonLabel("Can't buy with ETH"), "Can't buy with ETH");
     assert.equal(quoteMissButtonLabel("Can't exit to ETH"), "Can't exit to ETH");
     assert.equal(quoteMissButtonLabel(ROUTE_NO_LIQUIDITY), "No liquidity");
-    assert.equal(quoteMissButtonLabel(LIVE_BUY_OVER_CAP), "Over cap");
+    assert.equal(quoteMissButtonLabel(LIVE_BUY_OVER_CAP), "Max $100 per trade for now");
     assert.equal(quoteMissButtonLabel(null), "No pool");
     assert.equal(quoteMissReason("Can't buy with ETH"), "Can't buy with ETH");
     assert.equal(quoteMissReason(ROUTE_NO_LIQUIDITY), ROUTE_NO_LIQUIDITY);
@@ -902,7 +902,7 @@ describe("PRIMED-shaped UR buy must fail closed", () => {
     assert.equal(outputValueTooLow(100, 95), false);
     assert.equal(liveBuyOverCap(104), true);
     assert.equal(liveBuyOverCap(100), false);
-    assert.equal(LIVE_BUY_OVER_CAP, "This size is above the current notional cap.");
+    assert.equal(LIVE_BUY_OVER_CAP, "Max $100 per trade for now");
     assert.throws(() => requireBuyMinOut(ethIn, 0n), /no liquidity/i);
     assert.throws(() => requireBuyMinOut(ethIn, 1n), /no liquidity/i);
     assert.doesNotThrow(() => requireBuyMinOut(ethIn, primedOut));

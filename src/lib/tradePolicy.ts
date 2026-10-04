@@ -5,7 +5,11 @@ import type {SwapQuote} from "./swapQuote";
 import type {AssetKind} from "./types";
 import {PLATFORM_FEE_BPS, type VenueId} from "./venueQuote";
 
-/** Same ceiling HodlRouter enforces on-chain. UR buys had none. */
+/**
+ * Per-trade cap in USD while the contracts are unaudited: the same ceiling
+ * HodlRouter enforces on-chain (`maxNotionalUsd`). The app applies it to every
+ * route, buys and sells, so a trade over it never reaches the wallet.
+ */
 export const LIVE_BUY_MAX_USD = 100;
 
 /** Quoted USD out below this on a real-sized buy is dust, not a fill. */
@@ -18,7 +22,7 @@ export const DUST_OUTPUT_USD = 1;
 export const MIN_OUTPUT_VALUE_BPS = 1000;
 
 export const ROUTE_NO_LIQUIDITY = "This route has no liquidity.";
-export const LIVE_BUY_OVER_CAP = "This size is above the current notional cap.";
+export const LIVE_BUY_OVER_CAP = `Max $${LIVE_BUY_MAX_USD} per trade for now`;
 export const PRICE_IMPACT_TOO_HIGH = "Price impact too high";
 
 /** Uniswap yellow: show the %, still allow confirm. */
@@ -46,12 +50,17 @@ function realInput(payToken?: string | null): bigint {
   return isUsdg(payToken) ? REAL_USDG_IN : REAL_ETH_IN;
 }
 
+/** The cap message, or the older wording a cached response may still carry. */
+function isCapError(error?: string | null): boolean {
+  return Boolean(error && (error === LIVE_BUY_OVER_CAP || /notional cap/i.test(error)));
+}
+
 /** Ticket body when a quote miss is a missing hop, not a missing pool. */
 export function quoteMissReason(error?: string | null): string {
   if (error && /can't exit to eth/i.test(error)) return CANT_EXIT_TO_ETH;
   if (error && /can't buy with eth/i.test(error)) return CANT_ENTER_FROM_ETH;
   if (error && /no liquidity/i.test(error)) return ROUTE_NO_LIQUIDITY;
-  if (error && /notional cap/i.test(error)) return LIVE_BUY_OVER_CAP;
+  if (isCapError(error)) return LIVE_BUY_OVER_CAP;
   return error || "No Uniswap pool for this token.";
 }
 
@@ -60,7 +69,7 @@ export function quoteMissButtonLabel(error?: string | null): string {
   if (error && /can't exit to eth/i.test(error)) return CANT_EXIT_TO_ETH;
   if (error && /can't buy with eth/i.test(error)) return CANT_ENTER_FROM_ETH;
   if (error && /no liquidity/i.test(error)) return "No liquidity";
-  if (error && /notional cap/i.test(error)) return "Over cap";
+  if (isCapError(error)) return LIVE_BUY_OVER_CAP;
   return "No pool";
 }
 

@@ -28,6 +28,7 @@ import {fetchSwapQuote, tradeCurrency, type SwapQuote, type TradeCurrency} from 
 import {QUOTE_USDG} from "@/lib/contracts";
 import {erc20Abi} from "@/lib/swapTx";
 import {
+  LIVE_BUY_OVER_CAP,
   PRICE_IMPACT_TOO_HIGH,
   liveBuyOverCap,
   quoteMissReason,
@@ -131,7 +132,7 @@ export function quickBuyCurrency(): TradeCurrency {
 /**
  * The buy panel's checks for `amountUsd` of an asset, without signing: a
  * quote, the size minimum, the unsafe-quote guard, the price-impact block and
- * the notional cap. Top up runs this first so every refusal is shown with its
+ * the $100 trade cap. Top up runs this first so every refusal is shown with its
  * reason before anything is sent.
  */
 export async function checkBuy(
@@ -160,7 +161,7 @@ export async function checkBuy(
     return {ok: false, reason: `${PRICE_IMPACT_TOO_HIGH} (${preview.impactLabel})`, impact: true};
   }
   if ((quote.hops?.length ?? 0) > 1 && liveBuyOverCap(amountUsd)) {
-    return {ok: false, reason: "This size is above the current notional cap."};
+    return {ok: false, reason: LIVE_BUY_OVER_CAP};
   }
   return {ok: true, quote, token};
 }

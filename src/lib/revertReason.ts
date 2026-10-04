@@ -1,4 +1,5 @@
 import {decodeErrorResult, hexToString, parseAbi} from "viem";
+import {LIVE_BUY_OVER_CAP} from "./tradePolicy";
 
 const REVERT_ERRORS = parseAbi([
   "error AllowanceExpired(uint256 deadline)",
@@ -138,7 +139,7 @@ export function formatRevertForUser(error: unknown): string | null {
     return "Trade is below the $1 minimum.";
   }
   if (/\bCap\b|maxNotional/i.test(blob)) {
-    return "This size is above the current notional cap.";
+    return LIVE_BUY_OVER_CAP;
   }
   if (/PausedError|\bPaused\b/i.test(blob)) {
     return "Trading is paused.";
