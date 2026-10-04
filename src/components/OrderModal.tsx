@@ -46,6 +46,7 @@ import {
   PRICE_IMPACT_TOO_HIGH,
   quoteMissButtonLabel,
   quoteMissReason,
+  refuseOverCapSell,
   refuseUnsafeBuyQuote,
   ticketBlockReason,
 } from "@/lib/tradePolicy";
@@ -391,7 +392,7 @@ export function OrderTicket({
                 slippagePct: settings.slippagePct,
                 amountUsd: usd,
               })
-            : null;
+            : refuseOverCapSell({quote: result.quote, ethUsd});
           if (unsafe) {
             setQuote(null);
             setQuoteMiss(true);
@@ -430,7 +431,7 @@ export function OrderTicket({
       window.clearTimeout(start);
       window.clearInterval(refresh);
     };
-  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, oversized, buying, settings.slippagePct, settings.currency, receive, setHodlPhase]);
+  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, oversized, buying, ethUsd, settings.slippagePct, settings.currency, receive, setHodlPhase]);
 
   const blocked = ticketBlockReason({
     kind: asset?.kind ?? "token",
@@ -532,7 +533,7 @@ export function OrderTicket({
           slippagePct: settings.slippagePct,
           amountUsd,
         })
-      : null;
+      : refuseOverCapSell({quote: result.quote, ethUsd});
     if (unsafe) {
       setQuote(null);
       setQuoteMiss(true);

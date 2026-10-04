@@ -242,11 +242,15 @@ export async function GET(req: Request) {
   }
   if (!sized) return json({venue: null});
 
-  // The $100 trade cap, as HodlRouter measures it: a buy by what it pays.
-  // Checked on every route, so an over-cap trade never gets a quote to sign.
-  if (side === "buy") {
-    const inUsd = await amountInUsd(amountIn, sized.quoteToken, amountUsd);
-    if (inUsd != null && liveBuyOverCap(inUsd)) return json({error: LIVE_BUY_OVER_CAP}, 400);
+  // The $100 trade cap, as HodlRouter measures it: a buy by what it pays, a
+  // sell by what it pays out before the fee. Checked on every route, so an
+  // over-cap trade never gets a quote to sign.
+  const tradeUsd =
+    side === "buy"
+      ? await amountInUsd(amountIn, sized.quoteToken, amountUsd)
+      : await tokenAmountUsd(sized.amountOut, sized.quoteToken);
+  if (tradeUsd != null && liveBuyOverCap(tradeUsd)) {
+    return json({error: LIVE_BUY_OVER_CAP}, 400);
   }
 
   const decimals = await tokenDecimals(token as `0x${string}`);
