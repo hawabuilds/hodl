@@ -24,3 +24,7 @@ scripts/_*
 /brand/**/*.ai
 /brand/**/*.eps
 /brand/**/*.pdf
+
+# Editor and agent settings
+/.claude/
+/.cursor/
