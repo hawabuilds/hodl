@@ -88,8 +88,8 @@ function DesktopPortfolio() {
   const ready = book.nativeReady || book.tokensReady;
 
   const rows = useMemo(
-    () => buildRows(book.holdings, book.ethBalance, book.ethValueUsd, book.ethPending),
-    [book.holdings, book.ethBalance, book.ethValueUsd, book.ethPending],
+    () => buildRows(book.holdings, book.ethBalance, book.ethValueUsd, book.ethPending, book.usdgBalance),
+    [book.holdings, book.ethBalance, book.ethValueUsd, book.ethPending, book.usdgBalance],
   );
   const pnl = useMemo(() => totalPnl(rows, book.pnl), [rows, book.pnl]);
 

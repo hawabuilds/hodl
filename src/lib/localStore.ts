@@ -306,6 +306,8 @@ export interface PortfolioCache {
   walletKey: string;
   holdings: import("./types").Holding[];
   ethBalance: number;
+  /** Older caches have none: read as 0 until the live read lands. */
+  usdgBalance?: number;
   ethUsd: number | null;
   pnl: import("./types").PortfolioPnl | null;
   degraded: boolean;

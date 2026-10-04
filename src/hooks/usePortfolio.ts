@@ -19,11 +19,13 @@ import {useWallet} from "./useWallet";
 
 interface NativeResponse {
   ethBalance: number;
+  usdgBalance?: number;
 }
 
 interface PortfolioResponse {
   holdings: Holding[];
   ethBalance: number;
+  usdgBalance?: number;
   degraded: boolean;
   /** Null when no fills are saved for these wallets. */
   pnl?: PortfolioPnl | null;
@@ -155,6 +157,8 @@ export function usePortfolio(range: PortfolioRange = "1D") {
   const ethUsd = eth.ethUsd ?? usableCache?.ethUsd ?? null;
   const ethPending = ethBalance > 0 && ethUsd == null;
   const ethValueUsd = ethUsd != null ? ethBalance * ethUsd : 0;
+  // USDG is cash at $1.00: no price to wait on.
+  const usdgBalance = live?.usdgBalance ?? native.data?.usdgBalance ?? usableCache?.usdgBalance ?? 0;
 
   const pendingCount = holdings.filter((row) => priceStateOf(row) === "pending").length;
   const staleCount = holdings.filter((row) => priceStateOf(row) === "stale").length;
@@ -166,7 +170,7 @@ export function usePortfolio(range: PortfolioRange = "1D") {
     (sum, holding) => (priceStateOf(holding) === "pending" ? sum : sum + holding.valueUsd),
     0,
   );
-  const totalValue = positionsValue + ethValueUsd;
+  const totalValue = positionsValue + ethValueUsd + usdgBalance;
 
   // Save what was read, so the next visit opens on it.
   useEffect(() => {
@@ -175,6 +179,7 @@ export function usePortfolio(range: PortfolioRange = "1D") {
       walletKey,
       holdings: withLastKnownPrices(live.holdings ?? [], usableCache),
       ethBalance: live.ethBalance,
+      usdgBalance: live.usdgBalance ?? 0,
       ethUsd: eth.ethUsd ?? usableCache?.ethUsd ?? null,
       pnl: live.pnl ?? null,
       degraded: live.degraded,
@@ -212,6 +217,7 @@ export function usePortfolio(range: PortfolioRange = "1D") {
     ethBalance,
     ethValueUsd,
     ethPending,
+    usdgBalance,
     positionsValue,
     totalValue,
     points,

@@ -88,8 +88,8 @@ export function PhonePortfolio() {
   const ready = book.nativeReady || book.tokensReady;
 
   const rows = useMemo(
-    () => buildRows(book.holdings, book.ethBalance, book.ethValueUsd, book.ethPending),
-    [book.holdings, book.ethBalance, book.ethValueUsd, book.ethPending],
+    () => buildRows(book.holdings, book.ethBalance, book.ethValueUsd, book.ethPending, book.usdgBalance),
+    [book.holdings, book.ethBalance, book.ethValueUsd, book.ethPending, book.usdgBalance],
   );
 
   // Targets are set on tokens and RWAs; ETH is what buys them.
@@ -340,7 +340,7 @@ function PhoneHoldings({rows}: {rows: readonly PortfolioRow[]}) {
                 <Tag row={row} />
               </div>
               <div className="tabular-nums mt-[3px] truncate text-[12.5px] font-medium text-faint">
-                <span className="whitespace-nowrap">{compactAmount(row.amount)}</span> {row.symbol}
+                <span className="whitespace-nowrap">{compactAmount(row.amount)}</span> {row.unit ?? row.symbol}
               </div>
             </div>
             <div className="shrink-0 text-right">

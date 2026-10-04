@@ -2,8 +2,9 @@ import type {Holding, PortfolioPnl, PriceState} from "./types";
 import type {PortfolioCache} from "./localStore";
 
 /**
- * The portfolio page's rows: every holding plus ETH, which is a holding too
- * (tagged "Cash") and counts toward the totals, the filters and the donut.
+ * The portfolio page's rows: every holding plus the wallet's cash, ETH and
+ * USDG, which are holdings too (tagged "Cash") and count toward the totals,
+ * the filters and the donut. USDG shows as "USD", valued at $1.00.
  *
  * Shares are rounded to one decimal by largest remainder, so the shown
  * percentages always add up to exactly 100.0, in the table, the legend and
@@ -15,11 +16,13 @@ export type RowKind = "token" | "rwa" | "cash";
 export interface PortfolioRow {
   key: string;
   kind: RowKind;
-  /** The token or RWA, or null for the ETH row. */
+  /** The token or RWA, or null for a cash row (ETH, USDG). */
   holding: Holding | null;
   symbol: string;
   name: string;
   amount: number;
+  /** The unit the amount is shown in, when not the symbol: "USDG" under "USD". */
+  unit?: string;
   valueUsd: number;
   /** Null when there is no basis to measure from (and always for ETH). */
   pnlUsd: number | null;
@@ -58,12 +61,15 @@ export const HOLDING_COLORS = [
   "#22C7D6",
 ] as const;
 export const CASH_COLOR = "#8E93B8";
+/** USD cash: a lighter grey than ETH, so the two never read as one slice. */
+export const USD_COLOR = "#C9CCE6";
 export const OTHERS_COLOR = "#565B74";
 
 /** Slices in the donut before the rest fold into "Others". */
 export const DONUT_SLICES = 6;
 
 export const ETH_KEY = "cash:eth";
+export const USDG_KEY = "cash:usdg";
 
 export function buildRows(
   holdings: readonly Holding[],
@@ -71,6 +77,7 @@ export function buildRows(
   ethValueUsd: number,
   /** True while the ETH price is not in. */
   ethPending = false,
+  usdgBalance = 0,
 ): PortfolioRow[] {
   const rows: Omit<PortfolioRow, "share" | "color">[] = holdings.map((holding) => {
     const priceState = holding.priceState ?? "live";
@@ -108,6 +115,22 @@ export function buildRows(
       priceAt: null,
     });
   }
+  if (usdgBalance > 0) {
+    rows.push({
+      key: USDG_KEY,
+      kind: "cash",
+      holding: null,
+      symbol: "USD",
+      name: "USDG",
+      unit: "USDG",
+      amount: usdgBalance,
+      valueUsd: usdgBalance,
+      pnlUsd: null,
+      pnlPct: null,
+      priceState: "live",
+      priceAt: null,
+    });
+  }
   rows.sort((a, b) => b.valueUsd - a.valueUsd);
 
   const shares = roundedShares(rows.map((row) => row.valueUsd));
@@ -120,9 +143,11 @@ export function buildRows(
     share: shares[index],
     color: !inDonut.has(row.key)
       ? OTHERS_COLOR
-      : row.kind === "cash"
-        ? CASH_COLOR
-        : HOLDING_COLORS[hue++ % HOLDING_COLORS.length],
+      : row.key === USDG_KEY
+        ? USD_COLOR
+        : row.kind === "cash"
+          ? CASH_COLOR
+          : HOLDING_COLORS[hue++ % HOLDING_COLORS.length],
   }));
 }
 
