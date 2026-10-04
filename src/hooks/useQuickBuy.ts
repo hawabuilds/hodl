@@ -24,7 +24,8 @@ import {
 import {isUserDeclinedTrade, reportTradeNotify} from "@/lib/notifications/reportTrade";
 import {isPriced} from "@/lib/priceState";
 import {useSession} from "@/lib/session";
-import {fetchSwapQuote, type SwapQuote} from "@/lib/swapQuote";
+import {fetchSwapQuote, tradeCurrency, type SwapQuote, type TradeCurrency} from "@/lib/swapQuote";
+import {QUOTE_USDG} from "@/lib/contracts";
 import {erc20Abi} from "@/lib/swapTx";
 import {
   PRICE_IMPACT_TOO_HIGH,
@@ -49,7 +50,7 @@ export function useQuickBuySettings() {
   const user = useUser();
   const queryClient = useQueryClient();
   const [localAmount] = useLocalStore(readQuickBuyUsd, DEFAULT_QUICK_BUY_USD);
-  const [trade] = useLocalStore<TradeSettings>(readTradeSettings, {slippagePct: 1, currency: "USD"});
+  const [trade] = useLocalStore<TradeSettings>(readTradeSettings, {slippagePct: 1, currency: "USD", receive: "USD"});
   const signedIn = user.authenticated && session.mode === "privy";
   const userId = user.user?.id ?? "";
 
@@ -119,18 +120,31 @@ type BuyableAsset = TokenAsset | RwaAsset;
 
 const symbolOf = (asset: BuyableAsset) => (asset.kind === "rwa" ? asset.ticker : asset.symbol);
 
+/** Quick buy's copy when paying USD and the wallet's USDG is short. */
+export const QUICK_BUY_USDG_SHORT = "Not enough USDG. Switch to ETH in the buy panel to pay with ETH.";
+
+/** What quick buy pays with: the buy panel's saved USD/ETH choice. */
+export function quickBuyCurrency(): TradeCurrency {
+  return tradeCurrency(readTradeSettings().currency);
+}
+
 /**
  * The buy panel's checks for `amountUsd` of an asset, without signing: a
  * quote, the size minimum, the unsafe-quote guard, the price-impact block and
  * the notional cap. Top up runs this first so every refusal is shown with its
  * reason before anything is sent.
  */
-export async function checkBuy(asset: BuyableAsset, amountUsd: number, slippagePct: number): Promise<BuyCheck> {
+export async function checkBuy(
+  asset: BuyableAsset,
+  amountUsd: number,
+  slippagePct: number,
+  currency: TradeCurrency = quickBuyCurrency(),
+): Promise<BuyCheck> {
   const token = tradeTokenAddress(asset);
   if (!token) return {ok: false, reason: `${symbolOf(asset)} can't be bought here.`};
   const small = tooSmall(amountUsd);
   if (small) return {ok: false, reason: small};
-  const quoted = await fetchSwapQuote({token, side: "buy", amountUsd});
+  const quoted = await fetchSwapQuote({token, side: "buy", amountUsd, currency});
   if (!quoted.ok) return {ok: false, reason: quoteMissReason(quoted.error)};
   const quote = quoted.quote;
   const unsafe = refuseUnsafeBuyQuote({quote, slippagePct, amountUsd});
@@ -193,10 +207,22 @@ export function useQuickBuy() {
       let usedLive = true;
       try {
         report({kind: "working", text: `Getting a price for $${amountUsd} of ${symbol}…`});
-        const checked = await checkBuy(asset, amountUsd, slippagePct);
+        const currency = quickBuyCurrency();
+        const checked = await checkBuy(asset, amountUsd, slippagePct, currency);
         if (!checked.ok) return refuse(checked.reason);
         let {quote} = checked;
         const {token} = checked;
+
+        const payer = swap.address ?? hodl.address;
+        if (currency === "usdg" && payer && publicClient) {
+          const usdg = await publicClient.readContract({
+            address: QUOTE_USDG,
+            abi: erc20Abi,
+            functionName: "balanceOf",
+            args: [payer],
+          });
+          if (usdg < BigInt(quote.amountIn)) return refuse(QUICK_BUY_USDG_SHORT);
+        }
 
         const payNative = buyPaysNative(quote);
         const live = isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote, "buy");
@@ -225,7 +251,7 @@ export function useQuickBuy() {
               // Exactly this trade's size; never an unlimited allowance.
               await hodl.approve(spend, need);
               // The quote has aged while the approval confirmed.
-              const fresh = await fetchSwapQuote({token, side: "buy", amountUsd});
+              const fresh = await fetchSwapQuote({token, side: "buy", amountUsd, currency});
               if (!fresh.ok) return refuse(quoteMissReason(fresh.error));
               quote = fresh.quote;
             }

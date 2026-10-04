@@ -16,7 +16,7 @@ register(
   "data:text/javascript," +
     encodeURIComponent(`
       const SOURCE = ${JSON.stringify(SOURCE)};
-      const SUFFIXES = ["", ".ts", ".tsx", "/index.ts", "/index.tsx"];
+      const SUFFIXES = ["", ".ts", ".tsx", ".js", "/index.ts", "/index.tsx"];
 
       export async function resolve(specifier, context, next) {
         const mapped = specifier.startsWith("@/")

@@ -81,15 +81,20 @@ export function toggleWatch(kind: AssetKind, id: string): boolean {
 export interface TradeSettings {
   /** Maximum price move tolerated between quote and fill, in percent. */
   slippagePct: number;
-  /** Which currency the amount field is denominated in. */
+  /**
+   * What a buy pays with: USD pays USDG, ETH pays ETH. The amount field is
+   * entered in the same currency.
+   */
   currency: "USD" | "ETH";
+  /** What a sell pays out: USD is USDG, ETH is ETH. Remembered per browser. */
+  receive: "USD" | "ETH";
 }
 
 export const SLIPPAGE_PRESETS = [0.5, 1, 3] as const;
 export const MAX_SLIPPAGE_PCT = 15;
 export const SLIPPAGE_WARN_PCT = 5;
 
-const DEFAULT_TRADE_SETTINGS: TradeSettings = {slippagePct: 1, currency: "USD"};
+const DEFAULT_TRADE_SETTINGS: TradeSettings = {slippagePct: 1, currency: "USD", receive: "USD"};
 
 export function readTradeSettings(): TradeSettings {
   const stored = read<Partial<TradeSettings>>("trade", {});
@@ -100,6 +105,7 @@ export function readTradeSettings(): TradeSettings {
         ? slippage
         : DEFAULT_TRADE_SETTINGS.slippagePct,
     currency: stored.currency === "ETH" ? "ETH" : "USD",
+    receive: stored.receive === "ETH" ? "ETH" : "USD",
   };
 }
 

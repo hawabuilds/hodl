@@ -1,9 +1,9 @@
 import type {PublicClient} from "viem";
 import {amountOutFromQuoter, feeOnAmount, inputAfterBuyFee, pickBestVenue, PLATFORM_FEE_BPS, type VenueCandidate, type VenueDecision} from "@/lib/venueQuote";
 import {QUOTE_ETH, QUOTE_USDG, QUOTE_WETH} from "@/lib/contracts";
-import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, entryHopTooThin, ethPairHops, isEthish, isHodlQuoteToken, pickBestEthExit, type SwapHop} from "@/lib/swapRoute";
+import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, entryHopTooThin, ethPairHops, isEthish, isHodlQuoteToken, pickBestEthExit, pickBestQuotedHop, type SwapHop} from "@/lib/swapRoute";
 import {rpc} from "./chain";
-import {quoteEthToPair, quotePairToEth, quoteV3ExactIn} from "./ethExit";
+import {quoteEthToPair, quotePairToEth, quotePairToUsdg, quoteUsdgToPair, quoteV3ExactIn} from "./ethExit";
 import {discoverV3Pools, pickBestPool, readV3Pool, V3_QUOTES} from "./v3Pools";
 import {quoteV4ExactIn, resolveV4PoolKeys, vanillaV4Candidates, type V4PoolHit} from "./v4Pools";
 
@@ -23,6 +23,11 @@ export interface QuoteRequest {
    * Universal Router hops must pass false — UR does not take that fee.
    */
   applyBuyFee?: boolean;
+  /**
+   * ETH-paid buys of a USDG-only token (FIG) enter WETH → USDG → token.
+   * Off by default: without a pay choice a USDG pool means paying USDG.
+   */
+  allowUsdgPair?: boolean;
 }
 
 function v4ZeroForOne(hit: V4PoolHit, tokenIn: string): boolean {
@@ -290,7 +295,7 @@ export async function resolveBuyFromEth(req: QuoteRequest): Promise<BuyFromEthRe
   }
   for (const candidate of probe) {
     const pair = candidate.quoteToken.toLowerCase() as `0x${string}`;
-    if (!isHodlQuoteToken(pair)) pairs.add(pair);
+    if (!isHodlQuoteToken(pair) || (req.allowUsdgPair && pair === QUOTE_USDG)) pairs.add(pair);
   }
   if (pairs.size === 0) {
     return probe.length === 0
@@ -363,5 +368,188 @@ export async function resolveBuyFromEth(req: QuoteRequest): Promise<BuyFromEthRe
     hops: win.hops,
     pairToken: win.pairToken,
     quoteToken: win.quoteToken,
+  };
+}
+
+/** What the buyer pays with, or the seller receives. */
+export type TradeCurrency = "eth" | "usdg";
+
+export type RouteResult =
+  | {
+      ok: true;
+      decision: VenueDecision;
+      /** Empty for a single hop (HodlRouter can run it). */
+      hops: SwapHop[];
+      pairToken: `0x${string}`;
+      quoteToken: `0x${string}`;
+    }
+  | {ok: false; reason: "no_pool"}
+  | {ok: false; reason: "no_route"; error: string};
+
+export const CANT_BUY_WITH_USDG = "Can't buy with USDG";
+export const CANT_SELL_TO_USDG = "Can't sell to USDG";
+
+function matchesCurrency(quote: string, currency: TradeCurrency): boolean {
+  return currency === "eth" ? isEthish(quote) : quote.toLowerCase() === QUOTE_USDG;
+}
+
+/** A pool whose quote side is `pair`, or either ETH form when `pair` is ETH. */
+function pairsWith(quote: string, pair: string): boolean {
+  if (isEthish(pair)) return isEthish(quote);
+  return quote.toLowerCase() === pair.toLowerCase();
+}
+
+/**
+ * A buy paid in the chosen currency.
+ *
+ * A pool quoted in that currency is used directly: one hop, which HodlRouter
+ * runs. Otherwise the input enters the token's own pool through one extra hop
+ * (ETH → USDG → FIG, USDG → WETH → ORBIO, USDG → stock → token) on the
+ * Universal Router. Either way 50 bps of the input is the platform fee, and
+ * `amountIn` is in the paying currency's units.
+ */
+export async function resolveBuyPaying(
+  req: QuoteRequest & {pay: TradeCurrency},
+): Promise<RouteResult> {
+  const token = req.token.toLowerCase() as `0x${string}`;
+  if (req.amountIn <= 0n) return {ok: false, reason: "no_pool"};
+
+  const direct = (await gatherVenueCandidates({...req, side: "buy"})).filter((row) =>
+    matchesCurrency(row.quoteToken, req.pay),
+  );
+  const single = pickBestVenue(direct, PLATFORM_FEE_BPS, false, req.amountIn);
+  if (single) {
+    return {ok: true, decision: single, hops: [], pairToken: single.quoteToken, quoteToken: single.quoteToken};
+  }
+
+  if (req.pay === "eth") {
+    const bought = await resolveBuyFromEth({...req, allowUsdgPair: true, applyBuyFee: false});
+    if (bought.ok) return bought;
+    if (bought.reason === "no_eth_entry") return {ok: false, reason: "no_route", error: bought.error};
+    return {ok: false, reason: "no_pool"};
+  }
+
+  const feeAmount = feeOnAmount(req.amountIn);
+  const swapIn = inputAfterBuyFee(req.amountIn);
+  if (swapIn <= 0n) return {ok: false, reason: "no_pool"};
+  const probe = await gatherVenueCandidates({
+    ...req,
+    side: "buy",
+    amountIn: req.amountIn > 10n ** 12n ? 10n ** 12n : req.amountIn,
+    applyBuyFee: false,
+  });
+  const pairs = new Set<`0x${string}`>();
+  for (const candidate of probe) {
+    const pair = candidate.quoteToken.toLowerCase() as `0x${string}`;
+    if (pair !== QUOTE_USDG) pairs.add(isEthish(pair) ? QUOTE_WETH : pair);
+  }
+  if (pairs.size === 0) {
+    return probe.length === 0
+      ? {ok: false, reason: "no_pool"}
+      : {ok: false, reason: "no_route", error: CANT_BUY_WITH_USDG};
+  }
+
+  type Ranked = {tokenOut: bigint; hops: SwapHop[]; pairToken: `0x${string}`; second: VenueCandidate};
+  const ranked: Ranked[] = [];
+  for (const pair of pairs) {
+    const entry = await quoteUsdgToPair({pairToken: pair, amountIn: swapIn, client: req.client});
+    if (!entry || entry.amountOut <= 0n) continue;
+    const second = await gatherVenueCandidates({
+      ...req,
+      side: "buy",
+      amountIn: entry.amountOut,
+      extraQuotes: isEthish(pair) ? req.extraQuotes : [pair],
+      applyBuyFee: false,
+    });
+    const best2 = pickBestQuotedHop(second.filter((row) => pairsWith(row.quoteToken, pair)));
+    if (!best2) continue;
+    const hop2 = hopFromCandidate(best2, token, "buy");
+    hop2.amountIn = entry.amountOut.toString();
+    ranked.push({tokenOut: best2.amountOut, hops: [...ethPairHops(entry), hop2], pairToken: pair, second: best2});
+  }
+  if (ranked.length === 0) return {ok: false, reason: "no_route", error: CANT_BUY_WITH_USDG};
+  ranked.sort((a, b) => (a.tokenOut === b.tokenOut ? 0 : a.tokenOut > b.tokenOut ? -1 : 1));
+  const win = ranked[0];
+  const decided = pickBestVenue([win.second], PLATFORM_FEE_BPS, false, req.amountIn);
+  if (!decided) return {ok: false, reason: "no_pool"};
+  return {
+    ok: true,
+    decision: {
+      ...decided,
+      amountOut: win.tokenOut,
+      netOut: win.tokenOut,
+      feeAmount,
+      platformFeeBps: PLATFORM_FEE_BPS,
+      quoteToken: QUOTE_USDG,
+    },
+    hops: win.hops,
+    pairToken: win.pairToken,
+    quoteToken: QUOTE_USDG,
+  };
+}
+
+/**
+ * A sell that pays out in the chosen currency.
+ *
+ * ETH keeps the existing exit (`resolveSellToEth`). USDG uses the token's own
+ * USDG pool when it has one (one hop, HodlRouter), else exits through its pool
+ * pair (WETH or a stock) into USDG on the Universal Router. The 50 bps fee
+ * comes off the USDG received.
+ */
+export async function resolveSellReceiving(
+  req: QuoteRequest & {receive: TradeCurrency},
+): Promise<RouteResult> {
+  if (req.receive === "eth") {
+    const sold = await resolveSellToEth(req);
+    if (sold.ok) return sold;
+    if (sold.reason === "no_eth_exit") return {ok: false, reason: "no_route", error: sold.error};
+    return {ok: false, reason: "no_pool"};
+  }
+
+  const token = req.token.toLowerCase() as `0x${string}`;
+  const candidates = await gatherVenueCandidates({...req, side: "sell"});
+  if (candidates.length === 0) return {ok: false, reason: "no_pool"};
+
+  const direct = pickBestVenue(
+    candidates.filter((row) => matchesCurrency(row.quoteToken, "usdg")),
+    PLATFORM_FEE_BPS,
+    true,
+    req.amountIn,
+  );
+  if (direct) {
+    return {ok: true, decision: direct, hops: [], pairToken: QUOTE_USDG, quoteToken: QUOTE_USDG};
+  }
+
+  type Ranked = {usdgOut: bigint; first: VenueCandidate; exitHops: SwapHop[]};
+  const ranked: Ranked[] = [];
+  for (const first of candidates) {
+    if (first.amountOut <= 0n) continue;
+    const exit = await quotePairToUsdg({
+      pairToken: first.quoteToken,
+      amountIn: first.amountOut,
+      client: req.client,
+    });
+    if (!exit || exit.amountOut <= 0n) continue;
+    ranked.push({usdgOut: exit.amountOut, first, exitHops: ethPairHops(exit)});
+  }
+  if (ranked.length === 0) return {ok: false, reason: "no_route", error: CANT_SELL_TO_USDG};
+  ranked.sort((a, b) => (a.usdgOut === b.usdgOut ? 0 : a.usdgOut > b.usdgOut ? -1 : 1));
+  const win = ranked[0];
+  const decided = pickBestVenue([win.first], undefined, true, req.amountIn);
+  if (!decided) return {ok: false, reason: "no_pool"};
+  const feeAmount = feeOnAmount(win.usdgOut);
+  return {
+    ok: true,
+    decision: {
+      ...decided,
+      amountOut: win.usdgOut,
+      netOut: win.usdgOut - feeAmount,
+      feeAmount,
+      platformFeeBps: PLATFORM_FEE_BPS,
+      quoteToken: QUOTE_USDG,
+    },
+    hops: [hopFromCandidate(win.first, token, "sell"), ...win.exitHops],
+    pairToken: win.first.quoteToken,
+    quoteToken: QUOTE_USDG,
   };
 }

@@ -368,6 +368,36 @@ export async function quotePairToEth(opts: {
 }
 
 /**
+ * USDG → pair, one hop. WETH comes from the deep WETH/USDG 0.01% book; a stock
+ * from its own USDG book. A USD-paid buy of a token that has no USDG pool of
+ * its own enters through here.
+ */
+export async function quoteUsdgToPair(opts: {
+  pairToken: `0x${string}`;
+  amountIn: bigint;
+  client?: PublicClient;
+}): Promise<EthExitHop | null> {
+  const pair = opts.pairToken.toLowerCase() as `0x${string}`;
+  if (pair === QUOTE_USDG || opts.amountIn <= 0n) return null;
+  const client = opts.client ?? rpc();
+  if (isEthish(pair)) return quoteWethUsdg(opts.amountIn, false, client);
+  return quoteUsdgPair(pair, opts.amountIn, false, client);
+}
+
+/** Pair → USDG, one hop. The exit of a USD-received sell with no USDG pool. */
+export async function quotePairToUsdg(opts: {
+  pairToken: `0x${string}`;
+  amountIn: bigint;
+  client?: PublicClient;
+}): Promise<EthExitHop | null> {
+  const pair = opts.pairToken.toLowerCase() as `0x${string}`;
+  if (pair === QUOTE_USDG || opts.amountIn <= 0n) return null;
+  const client = opts.client ?? rpc();
+  if (isEthish(pair)) return quoteWethUsdg(opts.amountIn, true, client);
+  return quoteUsdgPair(pair, opts.amountIn, true, client);
+}
+
+/**
  * First hop of a stock-paired buy: ETH/WETH → pair (SPCX, IBM, SPY, …).
  *
  * Does not invent a fee tier. Uniswap QuoterV2 + V4 Quoter answer every

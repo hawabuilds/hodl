@@ -1,4 +1,4 @@
-import {HODL_ROUTER_V1} from "./contracts";
+import {HODL_ROUTER_V1, QUOTE_USDG} from "./contracts";
 import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH} from "./swapRoute";
 import type {SwapHop} from "./swapRoute";
 import type {SwapQuote} from "./swapQuote";
@@ -32,6 +32,19 @@ export type BuyImpactLevel = "ok" | "warn" | "block";
 const REAL_ETH_IN = 10n ** 15n;
 /** < 0.0001 of an 18-decimal pair token against a real ETH clip is crumbs. */
 const DUST_PAIR_OUT = 10n ** 14n;
+/** $1 of USDG (6 decimals): the same "real clip" line for a USD-paid buy. */
+const REAL_USDG_IN = 10n ** 6n;
+/** < 0.0001 USDG is crumbs, the 6-decimal twin of DUST_PAIR_OUT. */
+const DUST_USDG_OUT = 10n ** 2n;
+
+function isUsdg(token: string | null | undefined): boolean {
+  return (token ?? "").toLowerCase() === QUOTE_USDG;
+}
+
+/** The raw input below which dust checks stay quiet, in the paying token's units. */
+function realInput(payToken?: string | null): bigint {
+  return isUsdg(payToken) ? REAL_USDG_IN : REAL_ETH_IN;
+}
 
 /** Ticket body when a quote miss is a missing hop, not a missing pool. */
 export function quoteMissReason(error?: string | null): string {
@@ -166,9 +179,14 @@ export function buyImpactLevel(
  * Hop-1 pair crumbs vs a real ETH clip. PRIMED: 0.04 ETH → 2.49e12 AMZN.
  * A $100 AMZN book (~0.4 shares, 18 dec) is 4e17 and passes.
  */
-export function intermediateOutIsDust(ethIn: bigint, pairOut: bigint): boolean {
-  if (ethIn < REAL_ETH_IN) return false;
-  return pairOut < DUST_PAIR_OUT;
+export function intermediateOutIsDust(
+  ethIn: bigint,
+  pairOut: bigint,
+  /** Units of `ethIn` and `pairOut` when either is USDG (6 decimals), not 18. */
+  tokens: {payToken?: string | null; pairToken?: string | null} = {},
+): boolean {
+  if (ethIn < realInput(tokens.payToken)) return false;
+  return pairOut < (isUsdg(tokens.pairToken) ? DUST_USDG_OUT : DUST_PAIR_OUT);
 }
 
 export function quotedPairOut(hops: SwapHop[] | undefined): bigint {
@@ -184,8 +202,12 @@ export function quotedPairOut(hops: SwapHop[] | undefined): bigint {
 }
 
 /** UR / V4 buy: never encode minOut of 0 or 1 against a real ETH clip. */
-export function requireBuyMinOut(amountIn: bigint, minOut: bigint): bigint {
-  if (amountIn >= REAL_ETH_IN && minOut <= 1n) {
+export function requireBuyMinOut(
+  amountIn: bigint,
+  minOut: bigint,
+  payToken?: string | null,
+): bigint {
+  if (amountIn >= realInput(payToken) && minOut <= 1n) {
     throw new Error(ROUTE_NO_LIQUIDITY);
   }
   return minOut;
@@ -201,11 +223,13 @@ export function assertSaneUrBuy(opts: {
   amountOutMinimum: bigint;
   hops?: SwapHop[];
 }): void {
-  requireBuyMinOut(opts.amountIn, opts.amountOutMinimum);
   const hops = opts.hops ?? [];
+  const payToken = hops[0]?.tokenIn ?? null;
+  requireBuyMinOut(opts.amountIn, opts.amountOutMinimum, payToken);
   if (hops.length < 2) return;
   const pairOut = quotedPairOut(hops);
-  if (pairOut <= 0n || intermediateOutIsDust(opts.amountIn, pairOut)) {
+  const pairToken = hops[hops.length - 1]?.tokenIn ?? null;
+  if (pairOut <= 0n || intermediateOutIsDust(opts.amountIn, pairOut, {payToken, pairToken})) {
     throw new Error(ROUTE_NO_LIQUIDITY);
   }
 }

@@ -49,8 +49,7 @@ import {
   ticketBlockReason,
 } from "@/lib/tradePolicy";
 import {
-  buyAvailableIsEth,
-  buyMaxEntered,
+  buyAvailableLabel,
   buyPaysNative,
   buyReceivePreview,
   feeAmountSymbol,
@@ -59,17 +58,19 @@ import {
   sellAmountInRaw,
   sellMaxEntered,
   sellPreviewUsd,
+  sellReceiveLabel,
   sellRouteLabel,
   ticketNetOut,
   ticketReceivedSymbol,
   tradeTokenAddress,
+  usdgShortfall,
 } from "@/lib/tradeTicket";
 import {humanToRaw} from "@/lib/quoteAmounts";
 import {tradeHashFromError} from "@/lib/revertReason";
 import {cn} from "@/lib/cn";
 import {formatPriceUsd, isPriced} from "@/lib/priceState";
 import {money, units} from "@/lib/format";
-import {fetchSwapQuote, type SwapQuote} from "@/lib/swapQuote";
+import {fetchSwapQuote, tradeCurrency, type SwapQuote} from "@/lib/swapQuote";
 import {erc20Abi} from "@/lib/swapTx";
 import type {Asset} from "@/lib/types";
 import {Modal} from "./ui/Modal";
@@ -79,7 +80,7 @@ const QUICK_USD = [25, 100, 500];
 const QUICK_ETH = [0.01, 0.05, 0.25];
 const SELL_STEPS = [25, 50, 75, 100];
 
-const DEFAULT_SETTINGS: TradeSettings = {slippagePct: 1, currency: "USD"};
+const DEFAULT_SETTINGS: TradeSettings = {slippagePct: 1, currency: "USD", receive: "USD"};
 
 /**
  * Buy and sell.
@@ -165,7 +166,9 @@ export function OrderTicket({
 
   const symbol = asset?.kind === "rwa" ? asset.ticker : (asset?.symbol ?? "");
   const token = tradeTokenAddress(asset);
+  // Buy: what you pay with (USD = USDG). Sell: what you receive.
   const eth = settings.currency === "ETH";
+  const receive = settings.receive;
   const live =
     isLiveTrader(swap.address ?? hodl.address) && hodlCanExecuteQuote(quote, activeSide);
   const ticket = live ? hodl : swap;
@@ -188,18 +191,6 @@ export function OrderTicket({
     args: wallet ? [wallet] : undefined,
     chainId: RH_MAINNET_ID,
     query: {enabled: Boolean(wallet)},
-  });
-  const spendToken =
-    quote && !quote.quoteIsNative && !quote.quoteIsWeth
-      ? quote.quoteToken
-      : null;
-  const spendBal = useReadContract({
-    address: spendToken ?? QUOTE_USDG,
-    abi: erc20Abi,
-    functionName: "balanceOf",
-    args: wallet ? [wallet] : undefined,
-    chainId: RH_MAINNET_ID,
-    query: {enabled: Boolean(wallet && spendToken && spendToken !== QUOTE_USDG)},
   });
   const tokenBal = useReadContract({
     address: token ?? QUOTE_USDG,
@@ -262,12 +253,6 @@ export function OrderTicket({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- close while a signature is pending
   }, [asset]);
 
-  useEffect(() => {
-    if (eth && ethUsd === null) {
-      writeTradeSettings({...settings, currency: "USD"});
-    }
-  }, [eth, ethUsd, settings]);
-
   const buying = activeSide === "buy";
   const rate = eth ? (ethUsd ?? 0) : 1;
   const entered = Number.parseFloat(amount);
@@ -281,34 +266,16 @@ export function OrderTicket({
     ? Number.isFinite(amountUsd) && amountUsd > 0
     : Number.isFinite(entered) && entered > 0;
   const tokenDecimals = Number(tokenDecimalsQ.data ?? quote?.tokenDecimals ?? 18);
-  const quoteDecimals = quote?.quoteDecimals ?? 18;
   const ethUnits = ethBal.data ? Number(formatUnits(ethBal.data.value, 18)) : 0;
   const usdgUsd = usdgBal.data != null ? Number(formatUnits(usdgBal.data, 6)) : 0;
   const heldUnits =
     tokenBal.data != null ? Number(formatUnits(tokenBal.data, tokenDecimals)) : 0;
   const heldUsd =
     asset && isPriced(asset.priceUsd) ? heldUnits * asset.priceUsd : 0;
-  const paysNative = buying ? buyAvailableIsEth(quote) : false;
-  const spendUnits =
-    spendBal.data != null
-      ? Number(formatUnits(spendBal.data, quoteDecimals))
-      : 0;
-  const quotedIn =
-    quote && valid ? Number(formatUnits(BigInt(quote.amountIn), quoteDecimals)) : 0;
-  const spendUsd =
-    quotedIn > 0 && spendToken && spendToken !== QUOTE_USDG
-      ? spendUnits * (amountUsd / quotedIn)
-      : usdgUsd;
-
-  const maxEntered = buying
-    ? buyMaxEntered({
-        paysNative,
-        ethUnits,
-        ethUsd,
-        currencyEth: eth,
-        spendUsd,
-      })
-    : sellMaxEntered({heldUnits});
+  // Max spends the selected currency's whole balance.
+  const maxEntered = buying ? (eth ? ethUnits : usdgUsd) : sellMaxEntered({heldUnits});
+  const usdgShort =
+    buying && Boolean(wallet) && usdgShortfall({payEth: eth, enteredUsd: entered, usdgRaw: usdgBal.data});
   const heldRaw = tokenBal.data ?? null;
   const sellBalancePending = Boolean(
     !buying && wallet && token && tokenBal.isLoading && heldRaw == null,
@@ -351,10 +318,9 @@ export function OrderTicket({
 
   const quoteAmountIn = useMemo(() => {
     if (!valid) return undefined;
-    // ETH-denomination is only raw wei when the venue actually takes ETH/WETH.
-    // RWA-paired New tokens must size via amountUsd so the server can convert.
-    if (buying && buyPaysNative(quote) && eth) {
-      return humanToRaw(entered, 18);
+    // A buy is sized in the currency it pays with: wei, or USDG's 6 decimals.
+    if (buying) {
+      return humanToRaw(entered, eth ? 18 : 6);
     }
     if (!buying) {
       return sellAmountInRaw({
@@ -365,7 +331,7 @@ export function OrderTicket({
       });
     }
     return undefined;
-  }, [valid, buying, eth, entered, tokenDecimals, quote, sellAll, tokenBal.data]);
+  }, [valid, buying, eth, entered, tokenDecimals, sellAll, tokenBal.data]);
 
   const sellBlocked = sellBalanceBlockReason({
     side: activeSide,
@@ -401,6 +367,7 @@ export function OrderTicket({
     const sideNow = activeSide;
     const usd = amountUsd;
     const rawIn = quoteAmountIn;
+    const currencyNow = tradeCurrency(buying ? settings.currency : receive);
     const ctrl = new AbortController();
     let first = true;
 
@@ -413,6 +380,7 @@ export function OrderTicket({
           side: sideNow,
           amountUsd: usd,
           amountIn: rawIn,
+          currency: currencyNow,
           signal: ctrl.signal,
         });
         if (result.ok) {
@@ -461,7 +429,7 @@ export function OrderTicket({
       window.clearTimeout(start);
       window.clearInterval(refresh);
     };
-  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, buying, settings.slippagePct, setHodlPhase]);
+  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, buying, settings.slippagePct, settings.currency, receive, setHodlPhase]);
 
   const blocked = ticketBlockReason({
     kind: asset?.kind ?? "token",
@@ -519,8 +487,17 @@ export function OrderTicket({
     setTxHash(null);
   }
 
+  function switchReceive(next: "USD" | "ETH") {
+    if (next === receive) return;
+    setQuote(null);
+    setQuoteAt(0);
+    writeTradeSettings({...settings, receive: next});
+  }
+
   function switchCurrency(next: "USD" | "ETH") {
     if (next === settings.currency) return;
+    setQuote(null);
+    setQuoteAt(0);
     if (next === "ETH" && (ethUsd === null || ethUsd <= 0)) return;
     if (valid) {
       const nextRate = next === "ETH" ? (ethUsd ?? 1) : 1;
@@ -539,6 +516,7 @@ export function OrderTicket({
       side: activeSide,
       amountUsd,
       amountIn: quoteAmountIn,
+      currency: tradeCurrency(buying ? settings.currency : receive),
     });
     if (!result.ok) {
       setQuote(null);
@@ -609,6 +587,10 @@ export function OrderTicket({
     }
     if (buying && !isPriced(asset.priceUsd) && quote.usdOut == null) {
       setError("No price yet for this token.");
+      return;
+    }
+    if (usdgShort) {
+      setError("Not enough USDG. Switch to ETH");
       return;
     }
     if (undersized) {
@@ -755,6 +737,7 @@ export function OrderTicket({
     ticket.submitting ||
     (blocked != null && ticket.authenticated) ||
     (!valid && ticket.authenticated) ||
+    usdgShort ||
     undersized !== null ||
     oversized !== null ||
     impactBlocked ||
@@ -891,7 +874,31 @@ export function OrderTicket({
                   })}
                 </div>
               ) : (
-                <span className="text-[10.5px] font-extrabold text-faint">{symbol}</span>
+                <div className="flex items-center gap-0.5 rounded-full bg-[var(--segment-track)] p-[2px]">
+                  <span className="pl-1.5 pr-0.5 text-[10.5px] font-extrabold text-faint">
+                    Receive
+                  </span>
+                  {(["USD", "ETH"] as const).map((option) => {
+                    const active = option === receive;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        aria-pressed={active}
+                        aria-label={`Receive ${option === "USD" ? "USDG" : "ETH"}`}
+                        onClick={() => switchReceive(option)}
+                        className={cn(
+                          "tabular-nums rounded-full px-2 py-1 text-[10.5px] font-extrabold transition-colors",
+                          active
+                            ? "bg-[var(--bg-input)] text-ink shadow-tab-active"
+                            : "text-faint hover:text-muted",
+                        )}
+                      >
+                        {option}
+                      </button>
+                    );
+                  })}
+                </div>
               )}
             </div>
 
@@ -1006,18 +1013,37 @@ export function OrderTicket({
               {!wallet
                 ? "—"
                 : buying
-                  ? paysNative
-                    ? ethBal.data == null && ethBal.isLoading
-                      ? "—"
-                      : `${ethUnits.toFixed(4)} ETH`
-                    : spendToken && spendToken !== QUOTE_USDG
-                      ? `${units(spendUnits)} · ${money(spendUsd)}`
-                      : money(usdgUsd)
+                  ? buyAvailableLabel({
+                      payEth: eth,
+                      ethUnits: ethBal.data != null ? ethUnits : null,
+                      usdgUnits: usdgBal.data != null ? usdgUsd : null,
+                    })
                   : tokenBal.data != null
                     ? `${units(heldUnits)} · ${money(heldUsd)}`
                     : "—"}
             </span>
           </div>
+
+          {usdgShort ? (
+            <p role="alert" className="mt-1.5 px-1 text-[12px] font-semibold text-warning">
+              Not enough USDG.{" "}
+              <button
+                type="button"
+                onClick={() => switchCurrency("ETH")}
+                disabled={ethUsd === null}
+                className="font-bold underline underline-offset-2 disabled:no-underline disabled:opacity-60"
+              >
+                Switch to ETH
+              </button>
+            </p>
+          ) : null}
+
+          {!buying && valid && quote ? (
+            <div className="mt-1.5 flex items-center justify-between gap-3 px-3.5 py-1 text-[12.5px] font-semibold">
+              <span className="text-faint">You receive</span>
+              <span className="tabular-nums truncate font-extrabold">{sellReceiveLabel(quote)}</span>
+            </div>
+          ) : null}
 
           {valid && quote ? (
             <TicketBreakdown

@@ -186,17 +186,29 @@ function optionalFinite(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** A buy's paying currency, or a sell's payout currency. */
+export type TradeCurrency = "eth" | "usdg";
+
+/** The ticket's USD/ETH toggle as the quote API's currency. */
+export function tradeCurrency(choice: "USD" | "ETH"): TradeCurrency {
+  return choice === "ETH" ? "eth" : "usdg";
+}
+
 export async function fetchSwapQuote(opts: {
   token: string;
   side: "buy" | "sell";
   amountUsd?: number;
+  /** Raw units of the paying currency (buy) or of the token (sell). */
   amountIn?: bigint;
+  /** Buy: pay with this. Sell: receive this. Omitted: the pool's own quote. */
+  currency?: TradeCurrency;
   signal?: AbortSignal;
 }): Promise<QuoteResult> {
   const params = new URLSearchParams({
     token: opts.token,
     side: opts.side,
   });
+  if (opts.currency) params.set(opts.side === "buy" ? "pay" : "receive", opts.currency);
   if (opts.amountIn != null && opts.amountIn > 0n) {
     params.set("amountIn", opts.amountIn.toString());
   }

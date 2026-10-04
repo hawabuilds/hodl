@@ -10,6 +10,7 @@ import {
   FEE_COLLECTOR,
   PERMIT2,
   QUOTE_ETH,
+  QUOTE_USDG,
   QUOTE_WETH,
   UNIVERSAL_ROUTER,
   UNISWAP_SWAP_ROUTER_02,
@@ -45,6 +46,8 @@ export const UR_COMMAND_V3_SWAP_EXACT_IN = 0x00;
 export const UR_COMMAND_PERMIT2_TRANSFER_FROM = 0x02;
 /** Sweep leftover ETH/ERC-20 to a recipient (our 50 bps buy skim). */
 export const UR_COMMAND_SWEEP = 0x04;
+/** Send an exact amount of a token on the router (our 50 bps USDG buy skim). */
+export const UR_COMMAND_TRANSFER = 0x05;
 /** Pay a bips portion of a token on the router (our 50 bps sell skim). */
 export const UR_COMMAND_PAY_PORTION = 0x06;
 /** Wrap msg.value into WETH and leave it on the router. */
@@ -183,6 +186,37 @@ export function encodeV3ExactIn(opts: {
       [], // maxHopSlippage
     ],
   );
+}
+
+function encodeTransferOnRouter(
+  token: `0x${string}`,
+  recipient: `0x${string}`,
+  amount: bigint,
+): `0x${string}` {
+  return encodeAbiParameters(
+    [{type: "address"}, {type: "address"}, {type: "uint256"}],
+    [token, recipient, amount],
+  );
+}
+
+/**
+ * Native ETH and WETH are different currencies to a pool. When one hop pays
+ * out the form the next hop does not take (a native-ETH V4 pool into the
+ * WETH/USDG book, or back), convert everything the router holds in between.
+ */
+function bridgeEthForm(
+  prevOut: `0x${string}`,
+  nextIn: `0x${string}`,
+): {command: number; input: `0x${string}`} | null {
+  const from = prevOut.toLowerCase();
+  const to = nextIn.toLowerCase();
+  if (from === QUOTE_ETH && to === QUOTE_WETH) {
+    return {command: UR_COMMAND_WRAP_ETH, input: encodeWrapEth(UR_ADDRESS_THIS, UR_CONTRACT_BALANCE)};
+  }
+  if (from === QUOTE_WETH && to === QUOTE_ETH) {
+    return {command: UR_COMMAND_UNWRAP_WETH, input: encodeUnwrapWeth(UR_ADDRESS_THIS, 0n)};
+  }
+  return null;
 }
 
 function encodeUnwrapWeth(recipient: `0x${string}`, amountMin: bigint): `0x${string}` {
@@ -359,16 +393,18 @@ function encodeHopInput(opts: {
 }
 
 /**
- * Sell path: token → … → WETH/ETH via Universal Router, then unwrap WETH.
- * Never leaves the user in SPCX / USDG / a stock token.
+ * Sell path: token → … → ETH or USDG via Universal Router. A WETH payout is
+ * unwrapped to ETH. The 50 bps fee is paid from the output before the seller
+ * is swept the rest. Never leaves the user in SPCX or a stock token.
  */
 export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
   const hops = hopsForSwap(swap);
-  const tokenOut = hops.length > 0 ? hops[hops.length - 1].tokenOut : swap.quoteToken;
-  if (hops.length === 0 || !isEthish(tokenOut)) {
+  const tokenOut = (hops.length > 0 ? hops[hops.length - 1].tokenOut : swap.quoteToken).toLowerCase();
+  const toUsdg = tokenOut === QUOTE_USDG;
+  if (hops.length === 0 || (!isEthish(tokenOut) && !toUsdg)) {
     throw new Error(CANT_EXIT_TO_ETH);
   }
-  const unwrap = tokenOut.toLowerCase() === QUOTE_WETH;
+  const unwrap = tokenOut === QUOTE_WETH;
   const commands: number[] = [UR_COMMAND_PERMIT2_TRANSFER_FROM];
   const inputs: `0x${string}`[] = [
     encodePermit2Pull(swap.token, swap.amountIn, UNIVERSAL_ROUTER),
@@ -378,7 +414,11 @@ export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
 
   for (let i = 0; i < hops.length; i++) {
     const hop = hops[i];
-    const last = i === hops.length - 1;
+    const bridge = i > 0 ? bridgeEthForm(hops[i - 1].tokenOut, hop.tokenIn) : null;
+    if (bridge) {
+      commands.push(bridge.command);
+      inputs.push(bridge.input);
+    }
     const takeToRouter = true;
     const fromRouterBalance = i > 0 && hop.venue === "v4";
     const amountIn =
@@ -404,7 +444,7 @@ export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
     );
   }
 
-  const outToken = unwrap ? QUOTE_WETH : QUOTE_ETH;
+  const outToken = toUsdg ? QUOTE_USDG : unwrap ? QUOTE_WETH : QUOTE_ETH;
   commands.push(UR_COMMAND_PAY_PORTION);
   inputs.push(encodePayPortion(outToken, FEE_COLLECTOR, PLATFORM_FEE_BPS));
 
@@ -413,7 +453,7 @@ export function buildSellToEth(swap: ExactInSwapBuild): PreparedTx {
     inputs.push(encodeUnwrapWeth(UR_MSG_SENDER, userMin));
   } else {
     commands.push(UR_COMMAND_SWEEP);
-    inputs.push(encodeSweep(QUOTE_ETH, UR_MSG_SENDER, userMin));
+    inputs.push(encodeSweep(outToken, UR_MSG_SENDER, userMin));
   }
 
   const tx: PreparedTx = {
@@ -463,6 +503,11 @@ export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
   for (let i = 0; i < hops.length; i++) {
     const hop = hops[i];
     const last = i === hops.length - 1;
+    const bridge = i > 0 ? bridgeEthForm(hops[i - 1].tokenOut, hop.tokenIn) : null;
+    if (bridge) {
+      commands.push(bridge.command);
+      inputs.push(bridge.input);
+    }
     const fromRouterBalance = i > 0 && hop.venue === "v4";
     const amountIn =
       i === 0
@@ -509,11 +554,91 @@ export function buildBuyFromEth(swap: ExactInSwapBuild): PreparedTx {
 }
 
 /**
+ * Buy path paid in an ERC-20 (USDG): USDG → token, or USDG → pair → token,
+ * via Universal Router. Permit2 pulls the whole input onto the router, the
+ * exact 50 bps fee goes to FeeCollector, and the rest is swapped.
+ */
+export function buildBuyFromToken(swap: ExactInSwapBuild): PreparedTx {
+  const hops = hopsForSwap(swap);
+  if (hops.length === 0) {
+    throw new Error("No Uniswap pool for this token.");
+  }
+  const payToken = hops[0].tokenIn.toLowerCase() as `0x${string}`;
+  if (isEthish(payToken)) {
+    throw new Error("This route pays ETH, not a token.");
+  }
+  assertSaneUrBuy({
+    amountIn: swap.amountIn,
+    amountOutMinimum: swap.amountOutMinimum,
+    hops,
+  });
+  const pairMinOut = amountOutMinimum(quotedPairOut(hops), 5);
+  const feeAmount = feeOnAmount(swap.amountIn);
+  const swapIn = inputAfterBuyFee(swap.amountIn);
+  if (swapIn <= 0n) {
+    throw new Error("No Uniswap pool for this token.");
+  }
+
+  const commands: number[] = [UR_COMMAND_PERMIT2_TRANSFER_FROM];
+  const inputs: `0x${string}`[] = [
+    encodePermit2Pull(payToken, swap.amountIn, UNIVERSAL_ROUTER),
+  ];
+  if (feeAmount > 0n) {
+    commands.push(UR_COMMAND_TRANSFER);
+    inputs.push(encodeTransferOnRouter(payToken, FEE_COLLECTOR, feeAmount));
+  }
+
+  for (let i = 0; i < hops.length; i++) {
+    const hop = hops[i];
+    const last = i === hops.length - 1;
+    const bridge = i > 0 ? bridgeEthForm(hops[i - 1].tokenOut, hop.tokenIn) : null;
+    if (bridge) {
+      commands.push(bridge.command);
+      inputs.push(bridge.input);
+    }
+    const fromRouterBalance = i > 0 && hop.venue === "v4";
+    const amountIn =
+      i === 0
+        ? swapIn
+        : hop.venue === "v3"
+          ? UR_CONTRACT_BALANCE
+          : fromRouterBalance
+            ? 0n
+            : BigInt(hop.amountIn ?? "0");
+    commands.push(hop.venue === "v4" ? UR_COMMAND_V4_SWAP : UR_COMMAND_V3_SWAP_EXACT_IN);
+    inputs.push(
+      encodeHopInput({
+        hop,
+        amountIn,
+        amountOutMinimum: last
+          ? swap.amountOutMinimum
+          : i === hops.length - 2
+            ? pairMinOut
+            : 0n,
+        takeToRouter: !last,
+        // The input sits on the router after the Permit2 pull.
+        payerIsUser: false,
+        fromRouterBalance,
+      }),
+    );
+  }
+
+  const tx: PreparedTx = {
+    to: UNIVERSAL_ROUTER,
+    data: encodeUrExecute(packCommands(commands), inputs, swap.deadline),
+    value: 0n,
+  };
+  assertSwapNotErc20Transfer(tx);
+  return tx;
+}
+
+/**
  * Value-moving swap the ticket signs. Always UR `execute`, and every route
  * pays the 50 bps platform fee. Never `token.transfer(router, amount)`.
  *
- * Sells always exit to ETH. A missing ETH hop fails instead of paying SPCX.
- * Buys pay ETH; stock-paired buys hop ETH → pair → token.
+ * Sells exit to ETH or USDG. A missing exit hop fails instead of paying SPCX.
+ * Buys pay ETH or USDG; a token without a pool in that currency hops through
+ * its own pair (ETH → USDG → FIG, USDG → WETH → ORBIO, ETH → pair → token).
  */
 export function prepareExactInSwap(swap: ExactInSwapBuild): PreparedTx {
   if (swap.side === "sell") {
@@ -524,7 +649,7 @@ export function prepareExactInSwap(swap: ExactInSwapBuild): PreparedTx {
     amountOutMinimum: swap.amountOutMinimum,
     hops: swap.hops,
   });
-  return buildBuyFromEth(swap);
+  return swap.payNative ? buildBuyFromEth(swap) : buildBuyFromToken(swap);
 }
 
 export function isNativeQuote(token: string): boolean {

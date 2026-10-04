@@ -16,7 +16,14 @@ import {erc20Abi, rpc} from "@/lib/server/live/chain";
 import {poolFor} from "@/lib/server/live/market";
 import {ethUsd} from "@/lib/server/live/onchainPrice";
 import {RWA_BY_ADDRESS} from "@/lib/server/live/robinhood";
-import {resolveBuyFromEth, resolveSellToEth, resolveVenue} from "@/lib/server/live/venueResolve";
+import {
+  resolveBuyFromEth,
+  resolveBuyPaying,
+  resolveSellReceiving,
+  resolveSellToEth,
+  resolveVenue,
+  type TradeCurrency,
+} from "@/lib/server/live/venueResolve";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +71,18 @@ async function buyAmountIn(
   return humanToRaw(amountUsd / price, await tokenDecimals(quoteToken));
 }
 
+/** The dollar size of a buy's input, from the request or the input itself. */
+async function amountInUsd(
+  amountIn: bigint,
+  payToken: `0x${string}`,
+  amountUsd: number,
+): Promise<number | null> {
+  if (Number.isFinite(amountUsd) && amountUsd > 0) return amountUsd;
+  if (payToken === QUOTE_USDG) return Number(formatUnits(amountIn, 6));
+  const eth = await ethUsd();
+  return eth && eth > 0 ? Number(formatEther(amountIn)) * eth : null;
+}
+
 /**
  * Per-size venue quote. Does not persist a venue on the token.
  *
@@ -94,12 +113,44 @@ export async function GET(req: Request) {
   const rawAmountIn = url.searchParams.get("amountIn") ?? "";
   const amountInParam = /^\d+$/.test(rawAmountIn) ? BigInt(rawAmountIn) : null;
 
+  // The ticket's currency choice: what a buy pays with, what a sell pays out.
+  // Absent, the venue's own quote currency decides (the original behaviour).
+  const currencyParam = url.searchParams.get(side === "buy" ? "pay" : "receive");
+  const currency: TradeCurrency | null =
+    currencyParam === "eth" || currencyParam === "usdg" ? currencyParam : null;
+
   let amountIn = await sizedAmountIn({side, amountUsd, amountInParam});
   let hops: SwapHop[] = [];
   let pairToken: `0x${string}` | null = null;
 
   let sized = null as Awaited<ReturnType<typeof resolveVenue>>;
-  if (side === "sell") {
+  if (currency) {
+    if (side === "buy" && (amountInParam == null || amountInParam <= 0n)) {
+      const sizedIn =
+        Number.isFinite(amountUsd) && amountUsd > 0
+          ? await buyAmountIn(amountUsd, currency === "usdg" ? QUOTE_USDG : QUOTE_WETH)
+          : null;
+      if (sizedIn == null || sizedIn <= 0n) return json({venue: null});
+      amountIn = sizedIn;
+    }
+    const venueReq = {token, amountIn, v4PoolId, extraQuotes, v3Pool: v3PoolHint};
+    const routed =
+      side === "buy"
+        ? await resolveBuyPaying({...venueReq, side: "buy", pay: currency})
+        : await resolveSellReceiving({...venueReq, side: "sell", receive: currency});
+    if (!routed.ok) {
+      return routed.reason === "no_route" ? json({error: routed.error}) : json({venue: null});
+    }
+    sized = routed.decision;
+    hops = routed.hops;
+    pairToken = routed.pairToken;
+    if (side === "buy" && hops.length > 1) {
+      const inUsd = await amountInUsd(amountIn, sized.quoteToken, amountUsd);
+      if (inUsd != null && liveBuyOverCap(inUsd)) {
+        return json({error: LIVE_BUY_OVER_CAP}, 400);
+      }
+    }
+  } else if (side === "sell") {
     const sold = await resolveSellToEth({
       token,
       side: "sell",
@@ -217,15 +268,10 @@ export async function GET(req: Request) {
   let impactBps: number | null = null;
   if (side === "buy") {
     const eth = await ethUsd();
-    const inUsd =
-      Number.isFinite(amountUsd) && amountUsd > 0
-        ? amountUsd
-        : eth && eth > 0
-          ? Number(formatEther(amountIn)) * eth
-          : null;
+    const inUsd = await amountInUsd(amountIn, sized.quoteToken, amountUsd);
 
     if (hops.length > 1 && pairToken) {
-      const pairUsd = await quotePriceUsd(pairToken);
+      const pairUsd = isEthish(pairToken) ? eth : await quotePriceUsd(pairToken);
       if (pairUsd != null && pairUsd > 0) {
         const pairDec = await tokenDecimals(pairToken);
         usdOut = Number(formatUnits(quotedPairOut(hops), pairDec)) * pairUsd;
@@ -296,5 +342,6 @@ export async function GET(req: Request) {
     hops,
     usdOut,
     priceImpactBps: impactBps,
+    currency,
   });
 }

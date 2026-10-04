@@ -236,9 +236,15 @@ export function useSwap() {
       if (!address) throw new Error("Sign in to trade from your wallet.");
       const amountIn = BigInt(opts.quote.amountIn);
       const quotedOut = BigInt(opts.quote.amountOut);
+      // What leaves the wallet: the asset on a sell; ETH or a token on a buy.
+      const payToken = (opts.quote.hops?.[0]?.tokenIn ?? opts.quote.quoteToken) as `0x${string}`;
       const minOut =
         opts.side === "buy"
-          ? requireBuyMinOut(amountIn, amountOutMinimum(quotedOut, opts.slippagePct))
+          ? requireBuyMinOut(
+              amountIn,
+              amountOutMinimum(quotedOut, opts.slippagePct),
+              opts.payNative ? null : payToken,
+            )
           : amountOutMinimum(quotedOut, opts.slippagePct);
       if (opts.side === "buy") {
         assertSaneUrBuy({
@@ -269,12 +275,14 @@ export function useSwap() {
           hops: opts.quote.hops,
         });
 
-        // Buys pay ETH as msg.value. Sells approve exactly this amount to
-        // Permit2 and a 30-minute Permit2 allowance to the Universal Router.
-        if (opts.side === "sell") {
-          const held = await readBalance(opts.token);
+        // ETH buys pay msg.value. Sells, and buys paid in USDG, approve
+        // exactly this amount to Permit2 and a 30-minute Permit2 allowance to
+        // the Universal Router.
+        const spend = opts.side === "sell" ? opts.token : opts.payNative ? null : payToken;
+        if (spend) {
+          const held = await readBalance(spend);
           assertSpendCovered({heldRaw: held, amount: amountIn});
-          await ensurePermit2(opts.token, amountIn);
+          await ensurePermit2(spend, amountIn);
         }
 
         const hash = await sendTx(swapTx);

@@ -1,6 +1,7 @@
+import {formatUnits} from "viem";
 import {QUOTE_USDG} from "./contracts";
 import {hodlCanExecuteQuote} from "./liveTrade";
-import {price, units} from "./format";
+import {money, price, units} from "./format";
 import {humanToRaw} from "./quoteAmounts";
 import type {SwapQuote} from "./swapQuote";
 import type {Asset} from "./types";
@@ -223,4 +224,51 @@ export function sellPreviewUsd(opts: {
     return Number.NaN;
   }
   return opts.amountTokens * opts.priceUsd;
+}
+
+/** ETH amounts on the ticket: 4 decimals, more only when 4 would read as 0. */
+function ethAmount(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  return value > 0 && value < 0.0001 ? units(value) : value.toFixed(4);
+}
+
+/**
+ * The buy panel's "Available" figure for the paying currency: "$48.20 USDG"
+ * when paying USD, "0.0097 ETH" when paying ETH. "—" before the balance loads.
+ */
+export function buyAvailableLabel(opts: {
+  payEth: boolean;
+  ethUnits: number | null;
+  usdgUnits: number | null;
+}): string {
+  if (opts.payEth) return opts.ethUnits == null ? "—" : `${ethAmount(opts.ethUnits)} ETH`;
+  return opts.usdgUnits == null ? "—" : `${money(opts.usdgUnits)} USDG`;
+}
+
+/**
+ * The sell panel's "You receive" figure, after the platform fee:
+ * "≈ $12.17 USDG" or "≈ 0.0045 ETH".
+ */
+export function sellReceiveLabel(
+  quote: Pick<SwapQuote, "amountOut" | "netOut" | "outDecimals" | "quoteIsNative" | "quoteIsWeth" | "quoteToken" | "quoteSymbol">,
+): string {
+  const net = Number(formatUnits(ticketNetOut(quote), quote.outDecimals));
+  const symbol = quoteOutSymbol(quote);
+  if (symbol === "USDG") return `≈ ${money(net)} USDG`;
+  if (symbol === "ETH") return `≈ ${ethAmount(net)} ETH`;
+  return `≈ ${units(net)} ${symbol}`;
+}
+
+/**
+ * A USD-paid buy the wallet's USDG cannot cover. The ticket shows "Not enough
+ * USDG. Switch to ETH" and keeps Buy disabled. Unknown balance is not short.
+ */
+export function usdgShortfall(opts: {
+  payEth: boolean;
+  enteredUsd: number;
+  usdgRaw: bigint | null | undefined;
+}): boolean {
+  if (opts.payEth || opts.usdgRaw == null) return false;
+  if (!Number.isFinite(opts.enteredUsd) || opts.enteredUsd <= 0) return false;
+  return humanToRaw(opts.enteredUsd, 6) > opts.usdgRaw;
 }
