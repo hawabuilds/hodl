@@ -6,8 +6,18 @@
 >
 > - **Live:** [hodl.fan](https://hodl.fan)
 > - **Demo video:** [DEMO_VIDEO_LINK]
-> - **USDG:** Supports USDG, Robinhood Chain's stablecoin: pay and receive in USDG. Example: [buy ORBIO with 2 USDG](https://robin.etherscan.io/tx/0x92942f2d76fdcc814da2b86324623e2121b044727a697914f59f6a17a8b6a661).
+> - **USDG:** Supports USDG, Robinhood Chain's stablecoin: pay and receive in USDG. Example: [buy FIG with 2 USDG through HodlRouter v2](https://robin.etherscan.io/tx/0xf123c6c15b92393927435b2f34d7ce7275896db4b5c4e790379d9e27376971d3) ([more](#built-with-paxos-usdg)).
 > - **Contracts:** HodlRouter v2 and FeeCollector v2 on chain 4663, owned by a 2-of-3 Safe ([details](#smart-contracts))
+
+## Judges: 2-minute check
+
+1. **Open the app:** [hodl.fan](https://hodl.fan). Sign in, open any token, and the buy box quotes a live route.
+2. **Look at three real trades through HodlRouter v2**, each paying 0.5% to the FeeCollector:
+   - [Buy FIG, paid 2 USDG](https://robin.etherscan.io/tx/0xf123c6c15b92393927435b2f34d7ce7275896db4b5c4e790379d9e27376971d3) (`buyWithToken`)
+   - [Buy ORBIO, paid 0.0007 ETH](https://robin.etherscan.io/tx/0xbd1c0c86fd5397193f1e210ccea700c87a740146f6aca2b2efab2521b44d1d31) (`buy`)
+   - [Sell 18 ORBIO for ETH](https://robin.etherscan.io/tx/0x9531fbe93a0ef76c391cfe0ed02909eeb53883e8442fc47ac226e08edaa8356b) (`sell`)
+3. **Check the contracts are verified** on robin.etherscan.io: [HodlRouter v2](https://robin.etherscan.io/address/0xBcf97C486DB56642BD27FCbE9CDeBed9A72468eb#code) and [FeeCollector v2](https://robin.etherscan.io/address/0x380b8Ced6F27c3800BA9F16796a34Ea74cC3BfCf#code), both exact match.
+4. **Run the contract tests:** `npm run forge:test` (needs [Foundry](https://getfoundry.sh)) gives **95 passing**: unit, fuzz, invariant and attack tests, no network needed. The other **8 are fork tests** against real Pons and Long pools; they need a 4663 RPC and a recent `FORK_BLOCK`, because public RPCs keep only ~20 minutes of state ([how](contracts/README.md#tests)).
 
 ## The problem
 
@@ -20,7 +30,9 @@ Robinhood Chain has official tokenized stocks, and community launchpads (Pons an
 ## How HODL solves it
 
 - **An indexed universe.** An on-chain indexer walks the Pons and Long factories and keeps every token whose pool is a verified RWA, or that pairs against ETH/USDG and pays holders in an RWA. The chain decides what exists, Supabase stores it, and price providers only add data to rows that already exist. If every provider is down, the lists still render.
-- **One-transaction trades.** Buys and sells go through `HodlRouter`, a small, tested contract that does the V3 or V4 swap, takes a 0.5% fee and checks your minimum in the same transaction. Multi-hop routes through stock tokens go through Uniswap's Universal Router with the same fee.
+- **One-transaction trades, on two routes.** Every trade is one transaction and pays the same 0.5% fee, but which contract runs it depends on the pool:
+  - **Single-hop trades** (the token has a pool against ETH, WETH or USDG) go through **HodlRouter v2**, our contract. It does the V3 or V4 swap, takes the fee and enforces your minimum and the **$100 cap on-chain**.
+  - **Multi-hop trades** (for example ETH → USDG → stock → token) go through **Uniswap's Universal Router**. HodlRouter only handles single-hop pools, so these can't use it. The app builds the route so the same 0.5% fee goes to our FeeCollector, and **the app enforces the $100 cap** before the wallet opens: there is no contract of ours in that path to enforce it.
 - **A real portfolio.** Balances come from the chain across every connected wallet (Privy embedded wallet plus imported wallets). The portfolio view shows value over time, allocation, and target weights you can top up toward.
 - **Social, built on trades.** Follow traders, see their verified on-chain fills, and comment on any token or stock.
 
@@ -43,6 +55,15 @@ Robinhood Chain has official tokenized stocks, and community launchpads (Pons an
 | --- | --- |
 | <img src="docs/screenshot-desktop.webp" alt="HODL on desktop: token chart, trades and the buy box" width="720"> | <img src="docs/screenshot-phone.webp" alt="HODL on a phone: the buy box paying in USD" width="240"> |
 
+## Built with Paxos USDG
+
+[USDG](https://robin.etherscan.io/token/0x5fc5360d0400a0fd4f2af552add042d716f1d168) (Global Dollar, issued by Paxos) at `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168` is HODL's dollar:
+
+- **Pay and receive in the trade box.** USD in the buy box pays USDG; USD in the sell box pays out USDG. ETH is the other choice. The portfolio shows USDG as a USD cash line at $1.00. Example: [buy FIG with 2 USDG through HodlRouter v2](https://robin.etherscan.io/tx/0xf123c6c15b92393927435b2f34d7ce7275896db4b5c4e790379d9e27376971d3).
+- **Fees in USDG.** When USDG is the quote side of a trade, the 0.5% fee is taken in USDG and sent to the FeeCollector.
+- **Limits priced in USDG.** The router's $1 minimum and $100 cap are compared in raw USDG units (`usdgRaw > maxNotionalUsd * 1e6`).
+- **The ETH price comes from the WETH/USDG pool.** ETH amounts are converted with a 10-minute TWAP of the WETH/USDG 0.01% Uniswap V3 pool ([`0x52e65B17…71Ca`](https://robin.etherscan.io/address/0x52e65B17fB6E5BA00Ed806f37Afcd2DaA50271Ca)), through HodlRouter's `quoteUsdg`. The app uses the same call for its own cap check, so the two always agree.
+
 ## Smart contracts
 
 Two contracts on Robinhood Chain (chain id 4663), Solidity `0.8.26`, built on OpenZeppelin Contracts v5.7.0. Full details: [`contracts/README.md`](contracts/README.md).
@@ -64,7 +85,7 @@ Two contracts on Robinhood Chain (chain id 4663), Solidity `0.8.26`, built on Op
 5. It swaps through Uniswap V4 (Universal Router) or V3 (SwapRouter02), building the swap itself. It never accepts router commands from the caller.
 6. It pays you and checks **what you actually received** against `minAmountOut`, then checks that it holds no more of any token than before the trade. Otherwise the whole trade reverts.
 
-Tokens two hops away from ETH (ETH → USDG → stock → token) go through Uniswap's Universal Router directly, with the same 0.5% fee paid to `FeeCollector`.
+**Which route a trade takes.** HodlRouter v2 handles **single-hop** trades only: one pool, with ETH, WETH or USDG on one side. That is where the 0.5% fee, your minimum and the $100 cap are all enforced **on-chain**. A token that is two hops away (ETH → USDG → stock → token) has no such pool, so the app sends it through **Uniswap's Universal Router** instead. The transaction still pays the same 0.5% to `FeeCollector` (a `PAY_PORTION` or `TRANSFER` step the app adds), and the app enforces the $100 cap and your minimum before the wallet opens, since no HodlRouter check runs on that path.
 
 **Live trades through v2** (each paid exactly 0.5% to the v2 FeeCollector and received at least its minimum):
 
@@ -83,7 +104,12 @@ Tokens two hops away from ETH (ETH → USDG → stock → token) go through Unis
   - **V3 multi-hop `SliceOutOfBounds`.** The app's Universal Router call for multi-hop trades (ETH → USDG → stock → token) left out UR 2.1's `maxHopSlippage` array, so every such trade reverted. Fixed in the app's encoder (`src/lib/swapTx.ts`), with a regression test.
   - Also fixed: seller minimum now checked after the fee, two-step ownership, 2-day timelock on fee / cap / venue changes, a 10-minute TWAP for the size limits, and a FeeCollector that can always be withdrawn.
 - **OpenZeppelin Contracts v5.7.0:** `Ownable2Step`, `ReentrancyGuardTransient`, `SafeERC20`, `SafeCast`.
-- **103 tests:** unit, fuzz, invariant, attack and fork tests (8 against real Pons and Long pools).
+- **Why the app asks for an unlimited approval, once per token.** HodlRouter has exactly one place that pulls tokens, and it only ever pulls from the wallet calling it, for that trade's amount:
+  ```solidity
+  IERC20(token).safeTransferFrom(msg.sender, address(this), amountIn);   // HodlRouter.sol, _pullExact
+  ```
+  No function takes a target or calldata from the caller, and the contract isn't upgradeable, so an allowance to it can't be used to move your tokens outside your own trade. Multi-hop trades use Permit2 with a 30-day allowance to Uniswap's Universal Router, which only spends it when you call it. Details: [`contracts/README.md`](contracts/README.md#approvals).
+- **103 tests:** 95 unit, fuzz, invariant and attack tests that run offline (`npm run forge:test`), plus 8 fork tests against real Pons and Long pools.
 - **100% branch coverage** (123/123 branches, 417/417 statements) on `HodlRouter` and `FeeCollector`.
 - **Slither: 0 High.** Every Medium and Low was reviewed; see [`contracts/README.md`](contracts/README.md#tests).
 - **Contracts CI** ([`.github/workflows/contracts.yml`](.github/workflows/contracts.yml)): format, build, tests, a ≥95% branch-coverage gate, and Slither failing on any High.
