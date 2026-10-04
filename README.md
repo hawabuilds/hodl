@@ -175,7 +175,7 @@ flowchart LR
 
 ## Run locally
 
-Requirements: Node ≥ 22.12, npm. For contracts: [Foundry](https://getfoundry.sh).
+Requirements: Node ≥ 22.18 (the tests import `.ts` files directly, which Node does by default from 22.18), npm. For contracts: [Foundry](https://getfoundry.sh).
 
 ```bash
 git clone --recurse-submodules https://github.com/hawabuilds/rwa.git

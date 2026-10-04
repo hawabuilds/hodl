@@ -31,7 +31,7 @@
     "vapid": "node --import ./test/resolver.mjs scripts/vapid-keys.ts"
   },
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.18.0"
   },
   "dependencies": {
     "@base-org/account": "^2.5.10",
