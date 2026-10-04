@@ -61,6 +61,8 @@ forge fmt --check
 
 ## Trade flow
 
+**Which trades come here.** HodlRouter handles **single-hop** trades only: one V3 or V4 pool with ETH, WETH or USDG on one side. For those, the fee, the caller's minimum and the $1 / $100 limits are enforced on-chain, as below. A token that is two hops away (for example ETH → USDG → stock → token) has no such pool, so the app sends it through Uniswap's Universal Router directly. That transaction pays the same 0.5% to `FeeCollector` (a `PAY_PORTION` or `TRANSFER` step the app adds), and **the app**, not this contract, enforces the $100 cap and the minimum before the wallet opens. It uses this router's own `quoteUsdg` for ETH amounts, so both paths measure a trade the same way.
+
 `buy` (ETH in), `buyWithToken` (USDG or WETH in) and `sell` (any token in; ETH, WETH or USDG out) all run `_trade`:
 
 1. **Checks.** Deadline, `tokenIn != tokenOut`, and the hint:

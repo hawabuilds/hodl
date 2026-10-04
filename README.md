@@ -20,7 +20,9 @@ Robinhood Chain has official tokenized stocks, and community launchpads (Pons an
 ## How HODL solves it
 
 - **An indexed universe.** An on-chain indexer walks the Pons and Long factories and keeps every token whose pool is a verified RWA, or that pairs against ETH/USDG and pays holders in an RWA. The chain decides what exists, Supabase stores it, and price providers only add data to rows that already exist. If every provider is down, the lists still render.
-- **One-transaction trades.** Buys and sells go through `HodlRouter`, a small, tested contract that does the V3 or V4 swap, takes a 0.5% fee and checks your minimum in the same transaction. Multi-hop routes through stock tokens go through Uniswap's Universal Router with the same fee.
+- **One-transaction trades, on two routes.** Every trade is one transaction and pays the same 0.5% fee, but which contract runs it depends on the pool:
+  - **Single-hop trades** (the token has a pool against ETH, WETH or USDG) go through **HodlRouter v2**, our contract. It does the V3 or V4 swap, takes the fee and enforces your minimum and the **$100 cap on-chain**.
+  - **Multi-hop trades** (for example ETH → USDG → stock → token) go through **Uniswap's Universal Router**. HodlRouter only handles single-hop pools, so these can't use it. The app builds the route so the same 0.5% fee goes to our FeeCollector, and **the app enforces the $100 cap** before the wallet opens: there is no contract of ours in that path to enforce it.
 - **A real portfolio.** Balances come from the chain across every connected wallet (Privy embedded wallet plus imported wallets). The portfolio view shows value over time, allocation, and target weights you can top up toward.
 - **Social, built on trades.** Follow traders, see their verified on-chain fills, and comment on any token or stock.
 
@@ -64,7 +66,7 @@ Two contracts on Robinhood Chain (chain id 4663), Solidity `0.8.26`, built on Op
 5. It swaps through Uniswap V4 (Universal Router) or V3 (SwapRouter02), building the swap itself. It never accepts router commands from the caller.
 6. It pays you and checks **what you actually received** against `minAmountOut`, then checks that it holds no more of any token than before the trade. Otherwise the whole trade reverts.
 
-Tokens two hops away from ETH (ETH → USDG → stock → token) go through Uniswap's Universal Router directly, with the same 0.5% fee paid to `FeeCollector`.
+**Which route a trade takes.** HodlRouter v2 handles **single-hop** trades only: one pool, with ETH, WETH or USDG on one side. That is where the 0.5% fee, your minimum and the $100 cap are all enforced **on-chain**. A token that is two hops away (ETH → USDG → stock → token) has no such pool, so the app sends it through **Uniswap's Universal Router** instead. The transaction still pays the same 0.5% to `FeeCollector` (a `PAY_PORTION` or `TRANSFER` step the app adds), and the app enforces the $100 cap and your minimum before the wallet opens, since no HodlRouter check runs on that path.
 
 **Live trades through v2** (each paid exactly 0.5% to the v2 FeeCollector and received at least its minimum):
 
