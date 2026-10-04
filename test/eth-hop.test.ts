@@ -68,7 +68,8 @@ describe("ETH ↔ stock hops", () => {
     assert.equal(PLATFORM_FEE_BPS, 50);
     assert.equal(feeOnAmount(ethIn), 50_000_000_000_000n);
     assert.equal(inputAfterBuyFee(ethIn), 9_950_000_000_000_000n);
-    assert.equal(FEE_COLLECTOR, "0x1090d265749c1199919a754a8c2dd00150d1f0f9");
+    // With no env override the fee goes to the live v2 FeeCollector.
+    assert.equal(FEE_COLLECTOR, "0x380b8ced6f27c3800ba9f16796a34ea74cc3bfcf");
   });
 
   it("reads pair out from the last hop so a 3-leg buy still prices AMZN", () => {

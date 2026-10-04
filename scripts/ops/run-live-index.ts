@@ -6,10 +6,10 @@
  */
 import dns from "node:dns";
 import pg from "pg";
-import {ALL_FACTORIES} from "../src/lib/contracts";
-import {upsertTokensAdmin} from "../src/lib/server/live/adminCatalogue";
-import {indexTokens} from "../src/lib/server/live/tokenIndexer";
-import type {TokenWrite} from "../src/lib/server/live/universeStore";
+import {ALL_FACTORIES} from "../../src/lib/contracts";
+import {upsertTokensAdmin} from "../../src/lib/server/live/adminCatalogue";
+import {indexTokens} from "../../src/lib/server/live/tokenIndexer";
+import type {TokenWrite} from "../../src/lib/server/live/universeStore";
 
 dns.setDefaultResultOrder("ipv4first");
 

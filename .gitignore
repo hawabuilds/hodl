@@ -21,6 +21,10 @@ _tmp-*
 scripts/_*
 
 # Brand design source files (kept outside the repo)
-/brand/Brand Style Guides - Editable.ai
-/brand/Brand Style Guides - PDF.pdf
-/brand/Social Media Kits/Cover/Social Cover 2.ai
+/brand/**/*.ai
+/brand/**/*.eps
+/brand/**/*.pdf
+
+# Editor and agent settings
+/.claude/
+/.cursor/
