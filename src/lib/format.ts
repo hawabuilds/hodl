@@ -10,11 +10,14 @@ const compactUsd = new Intl.NumberFormat("en-US", {
   currency: "USD",
   notation: "compact",
   maximumFractionDigits: 1,
+  // "$1M", not "$1.0M": runtimes disagree on the default.
+  trailingZeroDisplay: "stripIfInteger",
 });
 
 const compactNumber = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
+  trailingZeroDisplay: "stripIfInteger",
 });
 
 export function money(value: number): string {
