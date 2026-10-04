@@ -248,7 +248,7 @@ export function useQuickBuy() {
                   quoteSymbol: quote.quoteSymbol,
                 })} first — confirm in your wallet, then confirm the buy.`,
               });
-              // Exactly this trade's size; never an unlimited allowance.
+              // One-time max approval; later buys skip this step.
               await hodl.approve(spend, need);
               // The quote has aged while the approval confirmed.
               const fresh = await fetchSwapQuote({token, side: "buy", amountUsd, currency});

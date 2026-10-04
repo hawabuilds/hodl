@@ -22,7 +22,14 @@ import {
   prepareExactInSwap,
   type PreparedTx,
 } from "@/lib/swapTx";
-import {assertSpendCovered, walletKindFrom, type WalletKind} from "@/lib/approvalFlow";
+import {
+  assertSpendCovered,
+  MAX_PERMIT2_APPROVAL,
+  MAX_TOKEN_APPROVAL,
+  permit2ApprovalSteps,
+  walletKindFrom,
+  type WalletKind,
+} from "@/lib/approvalFlow";
 import {formatRevertForUser, waitForTradeReceipt} from "@/lib/revertReason";
 import {estimatePreparedGas, privyUnsignedTx, readTxFeeFields, rpcTxRequest} from "@/lib/txGas";
 import {useUser} from "./useUser";
@@ -184,45 +191,56 @@ export function useSwap() {
     [address, publicClient],
   );
 
-  const ensureErc20Allowance = useCallback(
-    async (token: `0x${string}`, spender: `0x${string}`, amount: bigint) => {
-      const current = await readAllowance(token, spender);
-      if (current >= amount) return;
-      const hash = await sendTx(encodeApprove(token, spender, amount));
-      await wait(hash);
+  const readPermit2 = useCallback(
+    async (token: `0x${string}`) => {
+      if (!address || !publicClient) {
+        throw new Error("Wallet is not ready. Wait a moment and try again.");
+      }
+      const [amount, expiration] = await publicClient.readContract({
+        address: PERMIT2,
+        abi: permit2Abi,
+        functionName: "allowance",
+        args: [address, token, UNIVERSAL_ROUTER],
+      });
+      return {amount: BigInt(amount), expiration: Number(expiration)};
     },
-    [readAllowance, sendTx, wait],
+    [address, publicClient],
   );
 
+  /**
+   * Max approve to Permit2 once per token, and a 30-day max Permit2
+   * allowance to the Universal Router. Skips whatever already covers `amount`.
+   */
   const ensurePermit2 = useCallback(
     async (token: `0x${string}`, amount: bigint) => {
-      if (!address) throw new Error("Sign in to trade from your wallet.");
-      if (!publicClient) throw new Error("Wallet is not ready. Wait a moment and try again.");
-      await ensureErc20Allowance(token, PERMIT2, amount);
-      const [allowed, expiration] = await publicClient.readContract({
-        address: PERMIT2,
-        abi: permit2Abi,
-        functionName: "allowance",
-        args: [address, token, UNIVERSAL_ROUTER],
+      const [tokenAllowance, permit2] = await Promise.all([
+        readAllowance(token, PERMIT2),
+        readPermit2(token),
+      ]);
+      const steps = permit2ApprovalSteps({
+        tokenAllowance,
+        permit2Amount: permit2.amount,
+        permit2Expiration: permit2.expiration,
+        need: amount,
+        nowSec: Math.floor(Date.now() / 1000),
       });
-      const fresh = BigInt(expiration) > BigInt(Math.floor(Date.now() / 1000) + 600);
-      if (allowed >= amount && fresh) return;
-      const hash = await sendTx(
-        encodePermit2Approve(token, UNIVERSAL_ROUTER, amount, permit2Expiry()),
-      );
-      await wait(hash);
-      const [after, afterExp] = await publicClient.readContract({
-        address: PERMIT2,
-        abi: permit2Abi,
-        functionName: "allowance",
-        args: [address, token, UNIVERSAL_ROUTER],
-      });
-      const landed = BigInt(afterExp) > BigInt(Math.floor(Date.now() / 1000) + 60);
-      if (after < amount || !landed) {
-        throw new Error("Permit2 is not approved for this token. Approve, then sell.");
+      if (steps.includes("approve-permit2")) {
+        await wait(await sendTx(encodeApprove(token, PERMIT2, MAX_TOKEN_APPROVAL)));
+      }
+      if (steps.includes("permit2-allow")) {
+        await wait(
+          await sendTx(
+            encodePermit2Approve(token, UNIVERSAL_ROUTER, MAX_PERMIT2_APPROVAL, permit2Expiry()),
+          ),
+        );
+        const after = await readPermit2(token);
+        const landed = after.expiration > Math.floor(Date.now() / 1000) + 60;
+        if (after.amount < amount || !landed) {
+          throw new Error("Permit2 is not approved for this token. Approve, then sell.");
+        }
       }
     },
-    [address, ensureErc20Allowance, publicClient, sendTx, wait],
+    [readAllowance, readPermit2, sendTx, wait],
   );
 
   const submit = useCallback(
@@ -275,9 +293,8 @@ export function useSwap() {
           hops: opts.quote.hops,
         });
 
-        // ETH buys pay msg.value. Sells, and buys paid in USDG, approve
-        // exactly this amount to Permit2 and a 30-minute Permit2 allowance to
-        // the Universal Router.
+        // ETH buys pay msg.value. Sells, and buys paid in USDG, go through
+        // Permit2; the approvals are one-time, so a repeat trade is one prompt.
         const spend = opts.side === "sell" ? opts.token : opts.payNative ? null : payToken;
         if (spend) {
           const held = await readBalance(spend);

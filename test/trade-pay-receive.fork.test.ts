@@ -176,7 +176,7 @@ describe("pay / receive USD or ETH on a 4663 fork", {skip: !FORK}, () => {
         slippagePct,
       });
       const hint = m.hodl.hintFromQuote(q, token, side);
-      if (spend) await approve(m.approval.encodeHodlApprove(spend, V2_ROUTER, amountIn));
+      if (spend) await approve(m.approval.encodeHodlApprove(spend, V2_ROUTER));
       const ZERO = "0x0000000000000000000000000000000000000000" as const;
       const tx = payNative
         ? m.hodl.encodeHodlBuy({router: V2_ROUTER, tokenOut: token, minAmountOut: minOut, hint, deadline, value: amountIn})

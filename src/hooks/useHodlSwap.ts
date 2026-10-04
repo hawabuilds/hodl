@@ -251,7 +251,7 @@ export function useHodlSwap() {
         }
         await ensureNativeForPath(2);
         setPhase("approving");
-        const hash = await sendTx(encodeHodlApprove(token, router, amount));
+        const hash = await sendTx(encodeHodlApprove(token, router));
         if (gen !== runId.current) return hash;
         setPhase("pending");
         await wait(hash);

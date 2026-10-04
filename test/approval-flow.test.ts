@@ -1,12 +1,13 @@
 import {describe, it} from "node:test";
 import assert from "node:assert/strict";
-import {maxUint256} from "viem";
+import {maxUint160, maxUint256} from "viem";
 import {
   PERMIT2,
   QUOTE_ETH,
   QUOTE_USDG,
   UNIVERSAL_ROUTER,
 } from "../src/lib/contracts";
+import {permit2Expiry} from "../src/lib/swapTx";
 import {
   allowanceSufficient,
   approvalSpendToken,
@@ -18,7 +19,8 @@ import {
   decodedApprove,
   encodeHodlApprove,
   idleSignHint,
-  isExactApproveAmount,
+  hodlApprovalSteps,
+  permit2ApprovalSteps,
   nativeWeiForPath,
   nextTicketAction,
   pendingSignatureCopy,
@@ -190,24 +192,73 @@ describe("sell balance must cover approve", () => {
   });
 });
 
-describe("exact HodlRouter approve", () => {
-  it("encodes approve(HodlRouter, exact) and never max uint or Permit2", () => {
-    const tx = encodeHodlApprove(QUOTE_USDG, ROUTER, AMOUNT);
+describe("HodlRouter approve", () => {
+  it("encodes approve(HodlRouter, max) and never Universal Router or Permit2", () => {
+    const tx = encodeHodlApprove(QUOTE_USDG, ROUTER);
     assert.equal(tx.to, QUOTE_USDG);
     assert.equal(tx.value, 0n);
     const decoded = decodedApprove(tx);
     assert.equal(decoded.spender.toLowerCase(), ROUTER);
-    assert.equal(decoded.amount, AMOUNT);
-    assert.notEqual(decoded.amount, maxUint256);
-    assert.ok(isExactApproveAmount(decoded.amount));
-    assert.notEqual(decoded.spender.toLowerCase(), UNIVERSAL_ROUTER);
-    assert.notEqual(decoded.spender.toLowerCase(), PERMIT2);
+    assert.equal(decoded.amount, maxUint256);
   });
 
-  it("rejects unlimited and non-router spenders", () => {
-    assert.throws(() => encodeHodlApprove(QUOTE_USDG, ROUTER, maxUint256), /exact/i);
-    assert.throws(() => encodeHodlApprove(QUOTE_USDG, UNIVERSAL_ROUTER, AMOUNT), /HodlRouter/i);
-    assert.throws(() => encodeHodlApprove(QUOTE_USDG, PERMIT2, AMOUNT), /HodlRouter/i);
+  it("rejects non-router spenders", () => {
+    assert.throws(() => encodeHodlApprove(QUOTE_USDG, UNIVERSAL_ROUTER), /HodlRouter/i);
+    assert.throws(() => encodeHodlApprove(QUOTE_USDG, PERMIT2), /HodlRouter/i);
+  });
+});
+
+describe("wallet prompts, first trade vs repeat trade", () => {
+  const NOW = 1_800_000_000;
+  const DAY = 24 * 60 * 60;
+
+  it("HodlRouter: approve + swap first, swap only after", () => {
+    assert.deepEqual(hodlApprovalSteps({allowance: 0n, need: AMOUNT}), ["approve-router"]);
+    // max allowance is never spent down below a trade size
+    assert.deepEqual(hodlApprovalSteps({allowance: maxUint256 - AMOUNT, need: AMOUNT}), []);
+    assert.deepEqual(hodlApprovalSteps({allowance: maxUint256, need: AMOUNT * 1000n}), []);
+  });
+
+  it("an old exact allowance left from before still asks once more", () => {
+    assert.deepEqual(hodlApprovalSteps({allowance: AMOUNT - 1n, need: AMOUNT}), ["approve-router"]);
+  });
+
+  it("Universal Router: approve + Permit2 + swap first, swap only after", () => {
+    assert.deepEqual(
+      permit2ApprovalSteps({tokenAllowance: 0n, permit2Amount: 0n, permit2Expiration: 0, need: AMOUNT, nowSec: NOW}),
+      ["approve-permit2", "permit2-allow"],
+    );
+    assert.deepEqual(
+      permit2ApprovalSteps({
+        tokenAllowance: maxUint256 - AMOUNT,
+        permit2Amount: maxUint160,
+        permit2Expiration: permit2Expiry(NOW),
+        need: AMOUNT,
+        nowSec: NOW + DAY,
+      }),
+      [],
+    );
+  });
+
+  it("re-signs only Permit2 once its 30 days run out", () => {
+    assert.equal(permit2Expiry(NOW), NOW + 30 * DAY);
+    assert.deepEqual(
+      permit2ApprovalSteps({
+        tokenAllowance: maxUint256,
+        permit2Amount: maxUint160,
+        permit2Expiration: permit2Expiry(NOW),
+        need: AMOUNT,
+        nowSec: NOW + 30 * DAY,
+      }),
+      ["permit2-allow"],
+    );
+  });
+
+  it("an old 30-minute exact Permit2 allowance is replaced", () => {
+    assert.deepEqual(
+      permit2ApprovalSteps({tokenAllowance: 0n, permit2Amount: AMOUNT, permit2Expiration: NOW + 1800, need: AMOUNT * 2n, nowSec: NOW}),
+      ["approve-permit2", "permit2-allow"],
+    );
   });
 });
 

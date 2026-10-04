@@ -31,10 +31,10 @@ import {
 } from "./v4Encoding";
 
 /**
- * A Permit2 allowance for the Universal Router lives 30 minutes: long enough
- * to sign the swap after the approve lands, never a standing allowance.
+ * A Permit2 allowance for the Universal Router lives 30 days, as in the
+ * Uniswap app, so repeat trades skip it. The swap still needs its own signature.
  */
-export const PERMIT2_APPROVAL_TTL_SEC = 30 * 60;
+export const PERMIT2_APPROVAL_TTL_SEC = 30 * 24 * 60 * 60;
 
 export function permit2Expiry(nowSec: number = Math.floor(Date.now() / 1000)): number {
   return nowSec + PERMIT2_APPROVAL_TTL_SEC;
@@ -226,7 +226,7 @@ function encodeUnwrapWeth(recipient: `0x${string}`, amountMin: bigint): `0x${str
   );
 }
 
-/** Exact-amount ERC-20 approve. There is no unlimited default. */
+/** ERC-20 approve of `amount` to `spender`. */
 export function encodeApprove(
   token: `0x${string}`,
   spender: `0x${string}`,
@@ -286,8 +286,8 @@ export function assertSwapNotErc20Transfer(tx: PreparedTx): void {
 }
 
 /**
- * Permit2 allowance for exactly this trade, expiring at `expiration`
- * (see `permit2Expiry`). Never max, never open-ended.
+ * Permit2 allowance for `spender`, expiring at `expiration` (see
+ * `permit2Expiry`). Max uint160 is never spent down by Permit2.
  */
 export function encodePermit2Approve(
   token: `0x${string}`,
