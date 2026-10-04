@@ -6,6 +6,7 @@ import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, isEthish, isHodlQuoteToken, type 
 import {
   LIVE_BUY_OVER_CAP,
   liveBuyOverCap,
+  usdgRawOverCap,
   priceImpactBps,
   quotedPairOut,
 } from "@/lib/tradePolicy";
@@ -15,6 +16,7 @@ import {quotePriceUsd} from "@/lib/server/quotePrice";
 import {erc20Abi, rpc} from "@/lib/server/live/chain";
 import {poolFor} from "@/lib/server/live/market";
 import {ethUsd} from "@/lib/server/live/onchainPrice";
+import {overTradeCap} from "@/lib/server/live/tradeCap";
 import {RWA_BY_ADDRESS} from "@/lib/server/live/robinhood";
 import {
   resolveBuyFromEth,
@@ -109,9 +111,13 @@ export async function GET(req: Request) {
   if (!token) {
     return json({error: "token required"}, 400);
   }
-  // A buy sized in dollars is checked against the cap before any pool lookup.
-  if (side === "buy" && liveBuyOverCap(Number(url.searchParams.get("amountUsd") ?? ""))) {
-    return json({error: LIVE_BUY_OVER_CAP}, 400);
+  // A USDG-paid buy sized in dollars is checked before any pool lookup. Its
+  // input is exactly that many dollars, so this is the contract's check.
+  if (side === "buy" && url.searchParams.get("pay") === "usdg") {
+    const usd = Number(url.searchParams.get("amountUsd") ?? "");
+    if (Number.isFinite(usd) && usd > 0 && usdgRawOverCap(usdgRawFromUsd(usd))) {
+      return json({error: LIVE_BUY_OVER_CAP}, 400);
+    }
   }
 
   const rwa = RWA_BY_ADDRESS.get(token);
@@ -243,15 +249,17 @@ export async function GET(req: Request) {
   if (!sized) return json({venue: null});
 
   // The $100 trade cap, as HodlRouter measures it: a buy by what it pays, a
-  // sell by what it pays out before the fee. Checked on every route, so an
-  // over-cap trade never gets a quote to sign.
-  const tradeUsd =
-    side === "buy"
-      ? await amountInUsd(amountIn, sized.quoteToken, amountUsd)
-      : await tokenAmountUsd(sized.amountOut, sized.quoteToken);
-  if (tradeUsd != null && liveBuyOverCap(tradeUsd)) {
-    return json({error: LIVE_BUY_OVER_CAP}, 400);
+  // sell by what it pays out before the fee, ETH priced by the router's own
+  // quoteUsdg. Checked on every route, so an over-cap trade never gets a
+  // quote to sign.
+  const capToken = side === "buy" ? (hops[0]?.tokenIn ?? sized.quoteToken) : sized.quoteToken;
+  const capAmount = side === "buy" ? amountIn : sized.amountOut;
+  let overCap = await overTradeCap(capToken, capAmount);
+  if (overCap == null) {
+    const usd = await tokenAmountUsd(capAmount, capToken);
+    overCap = usd != null && liveBuyOverCap(usd);
   }
+  if (overCap) return json({error: LIVE_BUY_OVER_CAP}, 400);
 
   const decimals = await tokenDecimals(token as `0x${string}`);
   const copy = venueTicketCopy(sized);

@@ -915,17 +915,20 @@ describe("PRIMED-shaped UR buy must fail closed", () => {
         }),
       /no liquidity/i,
     );
+    // ETH-paid: the quote API checks the cap at HodlRouter's own TWAP, so the
+    // ticket does not second-guess it with a spot dollar figure.
     assert.equal(
       refuseUnsafeBuyQuote({
         quote: {
           amountIn: ethIn.toString(),
           amountOut: primedOut.toString(),
           hops: primedHops,
+          quoteToken: QUOTE_ETH,
         },
         slippagePct: 1,
         amountUsd: 104,
       }),
-      LIVE_BUY_OVER_CAP,
+      null,
     );
     assert.equal(
       refuseUnsafeBuyQuote({
@@ -933,6 +936,7 @@ describe("PRIMED-shaped UR buy must fail closed", () => {
           amountIn: ethIn.toString(),
           amountOut: primedOut.toString(),
           hops: primedHops,
+          quoteToken: QUOTE_ETH,
         },
         slippagePct: 1,
         amountUsd: 100,

@@ -7,6 +7,7 @@ import {usePublicClient} from "wagmi";
 
 import {RH_MAINNET_ID} from "@/config/chain";
 import {tooSmall} from "@/config/fees";
+import {usdgRawFromUsd} from "@/lib/quoteAmounts";
 import {useHodlSwap} from "@/hooks/useHodlSwap";
 import {useLocalStore} from "@/hooks/useLocalStore";
 import {useSwap} from "@/hooks/useSwap";
@@ -30,7 +31,7 @@ import {erc20Abi} from "@/lib/swapTx";
 import {
   LIVE_BUY_OVER_CAP,
   PRICE_IMPACT_TOO_HIGH,
-  liveBuyOverCap,
+  usdgRawOverCap,
   quoteMissReason,
   refuseUnsafeBuyQuote,
 } from "@/lib/tradePolicy";
@@ -145,7 +146,11 @@ export async function checkBuy(
   if (!token) return {ok: false, reason: `${symbolOf(asset)} can't be bought here.`};
   const small = tooSmall(amountUsd);
   if (small) return {ok: false, reason: small};
-  if (liveBuyOverCap(amountUsd)) return {ok: false, reason: LIVE_BUY_OVER_CAP};
+  // Paying USDG, the dollars are the input, so this is the contract's check.
+  // Paying ETH, the quote API checks it at the router's own ETH price.
+  if (currency === "usdg" && usdgRawOverCap(usdgRawFromUsd(amountUsd))) {
+    return {ok: false, reason: LIVE_BUY_OVER_CAP};
+  }
   const quoted = await fetchSwapQuote({token, side: "buy", amountUsd, currency});
   if (!quoted.ok) return {ok: false, reason: quoteMissReason(quoted.error)};
   const quote = quoted.quote;

@@ -1,6 +1,5 @@
 import {HODL_ROUTER_V1, QUOTE_USDG} from "./contracts";
-import {formatUnits} from "viem";
-import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH, isEthish} from "./swapRoute";
+import {CANT_ENTER_FROM_ETH, CANT_EXIT_TO_ETH} from "./swapRoute";
 import type {SwapHop} from "./swapRoute";
 import type {SwapQuote} from "./swapQuote";
 import type {AssetKind} from "./types";
@@ -24,6 +23,14 @@ export const MIN_OUTPUT_VALUE_BPS = 1000;
 
 export const ROUTE_NO_LIQUIDITY = "This route has no liquidity.";
 export const LIVE_BUY_OVER_CAP = `Max $${LIVE_BUY_MAX_USD} per trade for now`;
+
+/** The cap in raw USDG units (6 decimals), the way HodlRouter compares it. */
+export const LIVE_CAP_USDG_RAW = BigInt(LIVE_BUY_MAX_USD) * 1_000_000n;
+
+/** HodlRouter's check: `usdgRaw > maxNotionalUsd * 1e6` reverts with `Cap()`. */
+export function usdgRawOverCap(usdgRaw: bigint): boolean {
+  return usdgRaw > LIVE_CAP_USDG_RAW;
+}
 export const PRICE_IMPACT_TOO_HIGH = "Price impact too high";
 
 /** Uniswap yellow: show the %, still allow confirm. */
@@ -245,45 +252,31 @@ export function assertSaneUrBuy(opts: {
 }
 
 /**
- * Quote-time drop only: a buy over the trade cap, on any route. Dust / 99%
- * impact stays on the ticket so the user can see token out, receive USD, and
- * impact. Encode still fail-closes.
+ * Quote-time drop only: a USDG-paid buy over the trade cap, on any route.
+ * ETH-paid buys are checked by the quote API with HodlRouter's own TWAP
+ * (`quoteUsdg`), so the app never refuses what the contract would accept.
+ * Dust / 99% impact stays on the ticket so the user can see token out,
+ * receive USD, and impact. Encode still fail-closes.
  */
 export function refuseUnsafeBuyQuote(opts: {
-  quote: Pick<SwapQuote, "amountIn" | "amountOut" | "hops">;
+  quote: Pick<SwapQuote, "amountIn" | "amountOut" | "hops" | "quoteToken">;
   slippagePct: number;
   amountUsd: number;
 }): string | null {
-  if (liveBuyOverCap(opts.amountUsd)) return LIVE_BUY_OVER_CAP;
+  const payToken = opts.quote.hops?.[0]?.tokenIn ?? opts.quote.quoteToken;
+  if (isUsdg(payToken) && usdgRawOverCap(BigInt(opts.quote.amountIn))) return LIVE_BUY_OVER_CAP;
   return null;
 }
 
 /**
- * A sell's size as HodlRouter measures it: what it pays out before the fee,
- * in USD. Null when the payout is not ETH, WETH or USDG, or ETH has no price.
+ * A USDG-paid sell over the trade cap: HodlRouter checks what it pays out
+ * before the fee. ETH payouts are checked by the quote API with `quoteUsdg`.
  */
-export function sellOutUsd(opts: {
-  amountOut: bigint;
-  quoteToken: string;
-  ethUsd: number | null | undefined;
-}): number | null {
-  if (isUsdg(opts.quoteToken)) return Number(formatUnits(opts.amountOut, 6));
-  if (!isEthish(opts.quoteToken)) return null;
-  if (opts.ethUsd == null || !(opts.ethUsd > 0)) return null;
-  return Number(formatUnits(opts.amountOut, 18)) * opts.ethUsd;
-}
-
-/** A sell quote over the trade cap, on any route. */
 export function refuseOverCapSell(opts: {
   quote: Pick<SwapQuote, "amountOut" | "quoteToken">;
-  ethUsd: number | null | undefined;
 }): string | null {
-  const usd = sellOutUsd({
-    amountOut: BigInt(opts.quote.amountOut),
-    quoteToken: opts.quote.quoteToken,
-    ethUsd: opts.ethUsd,
-  });
-  return usd != null && liveBuyOverCap(usd) ? LIVE_BUY_OVER_CAP : null;
+  if (!isUsdg(opts.quote.quoteToken)) return null;
+  return usdgRawOverCap(BigInt(opts.quote.amountOut)) ? LIVE_BUY_OVER_CAP : null;
 }
 
 export function swapDeadlineSec(minutes = 5): bigint {

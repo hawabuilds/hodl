@@ -42,13 +42,13 @@ import {
 import {
   amountOutMinimum,
   LIVE_BUY_OVER_CAP,
-  liveBuyOverCap,
   PRICE_IMPACT_TOO_HIGH,
   quoteMissButtonLabel,
   quoteMissReason,
   refuseOverCapSell,
   refuseUnsafeBuyQuote,
   ticketBlockReason,
+  usdgRawOverCap,
 } from "@/lib/tradePolicy";
 import {
   buyAvailableLabel,
@@ -285,9 +285,10 @@ export function OrderTicket({
 
   const fee = useMemo(() => feeFor(amountUsd), [amountUsd]);
   const undersized = valid && Number.isFinite(amountUsd) ? tooSmall(amountUsd) : null;
-  // Every buy route, HodlRouter or Universal Router: no quote, no wallet.
+  // A USDG-paid buy over the cap, on every route: no quote, no wallet. An
+  // ETH-paid buy is checked by the quote API at the router's own ETH price.
   const oversized =
-    buying && valid && Number.isFinite(amountUsd) && liveBuyOverCap(amountUsd)
+    buying && !eth && valid && Number.isFinite(entered) && usdgRawOverCap(humanToRaw(entered, 6))
       ? LIVE_BUY_OVER_CAP
       : null;
   const feeRow = quote ? platformFeeLabel() : null;
@@ -392,7 +393,7 @@ export function OrderTicket({
                 slippagePct: settings.slippagePct,
                 amountUsd: usd,
               })
-            : refuseOverCapSell({quote: result.quote, ethUsd});
+            : refuseOverCapSell({quote: result.quote});
           if (unsafe) {
             setQuote(null);
             setQuoteMiss(true);
@@ -431,7 +432,7 @@ export function OrderTicket({
       window.clearTimeout(start);
       window.clearInterval(refresh);
     };
-  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, oversized, buying, ethUsd, settings.slippagePct, settings.currency, receive, setHodlPhase]);
+  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, oversized, buying, settings.slippagePct, settings.currency, receive, setHodlPhase]);
 
   const blocked = ticketBlockReason({
     kind: asset?.kind ?? "token",
@@ -533,7 +534,7 @@ export function OrderTicket({
           slippagePct: settings.slippagePct,
           amountUsd,
         })
-      : refuseOverCapSell({quote: result.quote, ethUsd});
+      : refuseOverCapSell({quote: result.quote});
     if (unsafe) {
       setQuote(null);
       setQuoteMiss(true);
