@@ -38,6 +38,16 @@ Live trades through v2 from the app preview (wallet `0xA16CeB5857F880d86b35309fB
 
 Not covered live: the V4 route (Pons/Long pools paired directly with ETH, WETH or USDG). No token the app lists uses it today; every listed V4 token is multi-hop and goes through the Universal Router. That route is covered by the fork tests against real Pons ETH, Pons USDG and Long WETH pools. A FIG sell from the app went FIG → USDG → ETH through the Universal Router ([`0xbb47dfcf…8769`](https://robin.etherscan.io/tx/0xbb47dfcf6ff484a93f7f7ffdb7b8151fe0c1fea5d92c2051eb386c9c7d958769)), with its 0.5% fee paid to the v2 FeeCollector.
 
+USDG trades from hodl.fan on 2026-10-04 (same wallet). ORBIO has no USDG pool, so each went ORBIO ⇄ WETH ⇄ USDG through the Universal Router. Each paid its 0.5% fee in USDG to the v2 FeeCollector:
+
+| Time (UTC) | Trade | Fee | Tx |
+| --- | --- | --- | --- |
+| 05:51 | Buy 16.95 ORBIO, paid 2 USDG | 0.01 USDG | [`0x92942f2d…a661`](https://robin.etherscan.io/tx/0x92942f2d76fdcc814da2b86324623e2121b044727a697914f59f6a17a8b6a661) |
+| 05:53 | Sell 20 ORBIO, received 2.322 USDG | 0.011669 USDG | [`0x48926d3c…5c40`](https://robin.etherscan.io/tx/0x48926d3c52ac107047f64def550b5cbe7860fd994843799e56eff3ba07e45c40) |
+| 05:54 | Sell 20 ORBIO, received 2.325 USDG | 0.011684 USDG | [`0x278d630b…6e54`](https://robin.etherscan.io/tx/0x278d630b8d6f06a931c6cf69ec6ea71d26a26714c277cf02cecc083be8ef6e54) |
+| 06:05 | Sell 20 ORBIO, received 2.391 USDG | 0.012014 USDG | [`0xd257b3f1…a161`](https://robin.etherscan.io/tx/0xd257b3f12bdc76a27d926ea4598d375f6e45609d7402e3ce54b2af43431da161) |
+| 06:06 | Sell 20 ORBIO, received 2.348 USDG | 0.011797 USDG | [`0xaac02207…c7aa`](https://robin.etherscan.io/tx/0xaac022072b31f5873c58c3c6cfa432956a42baee5b2a0c83655a499d390dc7aa) |
+
 ## Build
 
 Requires [Foundry](https://getfoundry.sh). The dependencies are git submodules (`lib/forge-std`, `lib/openzeppelin-contracts`), pinned in `foundry.lock`.
