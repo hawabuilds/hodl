@@ -6,6 +6,7 @@
 >
 > - **Live:** [hodl.fan](https://hodl.fan)
 > - **Demo video:** [youtu.be/faf5RZsmXp8](https://youtu.be/faf5RZsmXp8)
+> - **Pitch deck:** [HODL-pitch-deck.pdf](docs/HODL-pitch-deck.pdf)
 > - **USDG:** Supports USDG, Robinhood Chain's stablecoin: pay and receive in USDG. Example: [buy FIG with 2 USDG through HodlRouter v2](https://robin.etherscan.io/tx/0xf123c6c15b92393927435b2f34d7ce7275896db4b5c4e790379d9e27376971d3) ([more](#built-with-paxos-usdg)).
 > - **Contracts:** HodlRouter v2 and FeeCollector v2 on chain 4663, owned by a 2-of-3 Safe ([details](#smart-contracts))
 
