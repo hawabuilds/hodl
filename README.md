@@ -6,8 +6,18 @@
 >
 > - **Live:** [hodl.fan](https://hodl.fan)
 > - **Demo video:** [DEMO_VIDEO_LINK]
-> - **USDG:** Supports USDG, Robinhood Chain's stablecoin: pay and receive in USDG. Example: [buy ORBIO with 2 USDG](https://robin.etherscan.io/tx/0x92942f2d76fdcc814da2b86324623e2121b044727a697914f59f6a17a8b6a661).
+> - **USDG:** Supports USDG, Robinhood Chain's stablecoin: pay and receive in USDG. Example: [buy FIG with 2 USDG through HodlRouter v2](https://robin.etherscan.io/tx/0xf123c6c15b92393927435b2f34d7ce7275896db4b5c4e790379d9e27376971d3) ([more](#built-with-paxos-usdg)).
 > - **Contracts:** HodlRouter v2 and FeeCollector v2 on chain 4663, owned by a 2-of-3 Safe ([details](#smart-contracts))
+
+## Judges: 2-minute check
+
+1. **Open the app:** [hodl.fan](https://hodl.fan). Sign in, open any token, and the buy box quotes a live route.
+2. **Look at three real trades through HodlRouter v2**, each paying 0.5% to the FeeCollector:
+   - [Buy FIG, paid 2 USDG](https://robin.etherscan.io/tx/0xf123c6c15b92393927435b2f34d7ce7275896db4b5c4e790379d9e27376971d3) (`buyWithToken`)
+   - [Buy ORBIO, paid 0.0007 ETH](https://robin.etherscan.io/tx/0xbd1c0c86fd5397193f1e210ccea700c87a740146f6aca2b2efab2521b44d1d31) (`buy`)
+   - [Sell 18 ORBIO for ETH](https://robin.etherscan.io/tx/0x9531fbe93a0ef76c391cfe0ed02909eeb53883e8442fc47ac226e08edaa8356b) (`sell`)
+3. **Check the contracts are verified** on robin.etherscan.io: [HodlRouter v2](https://robin.etherscan.io/address/0xBcf97C486DB56642BD27FCbE9CDeBed9A72468eb#code) and [FeeCollector v2](https://robin.etherscan.io/address/0x380b8Ced6F27c3800BA9F16796a34Ea74cC3BfCf#code), both exact match.
+4. **Run the contract tests:** `npm run forge:test` (needs [Foundry](https://getfoundry.sh)) gives **95 passing**: unit, fuzz, invariant and attack tests, no network needed. The other **8 are fork tests** against real Pons and Long pools; they need a 4663 RPC and a recent `FORK_BLOCK`, because public RPCs keep only ~20 minutes of state ([how](contracts/README.md#tests)).
 
 ## The problem
 
@@ -44,6 +54,15 @@ Robinhood Chain has official tokenized stocks, and community launchpads (Pons an
 | Desktop | Phone |
 | --- | --- |
 | <img src="docs/screenshot-desktop.webp" alt="HODL on desktop: token chart, trades and the buy box" width="720"> | <img src="docs/screenshot-phone.webp" alt="HODL on a phone: the buy box paying in USD" width="240"> |
+
+## Built with Paxos USDG
+
+[USDG](https://robin.etherscan.io/token/0x5fc5360d0400a0fd4f2af552add042d716f1d168) (Global Dollar, issued by Paxos) at `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168` is HODL's dollar:
+
+- **Pay and receive in the trade box.** USD in the buy box pays USDG; USD in the sell box pays out USDG. ETH is the other choice. The portfolio shows USDG as a USD cash line at $1.00. Example: [buy FIG with 2 USDG through HodlRouter v2](https://robin.etherscan.io/tx/0xf123c6c15b92393927435b2f34d7ce7275896db4b5c4e790379d9e27376971d3).
+- **Fees in USDG.** When USDG is the quote side of a trade, the 0.5% fee is taken in USDG and sent to the FeeCollector.
+- **Limits priced in USDG.** The router's $1 minimum and $100 cap are compared in raw USDG units (`usdgRaw > maxNotionalUsd * 1e6`).
+- **The ETH price comes from the WETH/USDG pool.** ETH amounts are converted with a 10-minute TWAP of the WETH/USDG 0.01% Uniswap V3 pool ([`0x52e65B17…71Ca`](https://robin.etherscan.io/address/0x52e65B17fB6E5BA00Ed806f37Afcd2DaA50271Ca)), through HodlRouter's `quoteUsdg`. The app uses the same call for its own cap check, so the two always agree.
 
 ## Smart contracts
 
