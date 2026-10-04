@@ -37,7 +37,7 @@ const sellTx = encodeHodlSell({
   deadline: 1n,
 });
 
-const approveTx = encodeHodlApprove(TOKEN, ROUTER, 1_000_000n);
+const approveTx = encodeHodlApprove(TOKEN, ROUTER);
 
 describe("tx gas limits", () => {
   it("never sends 0 or 21000 for a contract call", () => {

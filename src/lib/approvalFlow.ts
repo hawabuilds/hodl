@@ -1,4 +1,4 @@
-import {decodeFunctionData, maxUint256} from "viem";
+import {decodeFunctionData, maxUint160, maxUint256} from "viem";
 import {
   PERMIT2,
   QUOTE_ETH,
@@ -144,9 +144,42 @@ export function requiresAllowanceReset(token: string): boolean {
   return USDT_STYLE_RESET.has(token.toLowerCase());
 }
 
-export function isExactApproveAmount(amount: bigint): boolean {
-  return amount > 0n && amount < maxUint256;
+/**
+ * Wallet prompts before an ERC-20 spend through HodlRouter. Approvals are
+ * max, once per token: HodlRouter only pulls from msg.sender, and an exact
+ * approval was used up by every swap, so each repeat trade asked again.
+ */
+export type ApprovalStep = "approve-router" | "approve-permit2" | "permit2-allow";
+
+export function hodlApprovalSteps(opts: {allowance: bigint; need: bigint}): ApprovalStep[] {
+  return allowanceSufficient(opts.allowance, opts.need) ? [] : ["approve-router"];
 }
+
+/**
+ * Wallet prompts before an ERC-20 spend through the Universal Router: the
+ * token's allowance to Permit2 (max, once), then Permit2's allowance to the
+ * router (max uint160, which Permit2 never spends down, re-signed only when
+ * it nears expiry). A repeat trade needs neither.
+ */
+export function permit2ApprovalSteps(opts: {
+  tokenAllowance: bigint;
+  permit2Amount: bigint;
+  permit2Expiration: number | bigint;
+  need: bigint;
+  nowSec: number;
+}): ApprovalStep[] {
+  const steps: ApprovalStep[] = [];
+  if (!allowanceSufficient(opts.tokenAllowance, opts.need)) steps.push("approve-permit2");
+  const fresh = BigInt(opts.permit2Expiration) > BigInt(opts.nowSec + PERMIT2_EXPIRY_MARGIN_SEC);
+  if (!fresh || !allowanceSufficient(opts.permit2Amount, opts.need)) steps.push("permit2-allow");
+  return steps;
+}
+
+/** Re-sign the Permit2 allowance when it has less than this left. */
+export const PERMIT2_EXPIRY_MARGIN_SEC = 10 * 60;
+
+export const MAX_TOKEN_APPROVAL = maxUint256;
+export const MAX_PERMIT2_APPROVAL = maxUint160;
 
 /** Confirm copy. Embedded never tells someone to leave the app. */
 export function pendingSignatureCopy(
@@ -186,18 +219,15 @@ export function coversNative(balance: bigint, needed: bigint): boolean {
   return balance >= needed;
 }
 
+/** approve(HodlRouter, max). Only HodlRouter may be the spender here. */
 export function encodeHodlApprove(
   token: `0x${string}`,
   router: `0x${string}`,
-  amount: bigint,
 ): PreparedTx {
-  if (!isExactApproveAmount(amount)) {
-    throw new Error("Approve the exact trade size, not unlimited.");
-  }
   if (router.toLowerCase() === UNIVERSAL_ROUTER || router.toLowerCase() === PERMIT2) {
     throw new Error("Spender must be HodlRouter, not Universal Router or Permit2.");
   }
-  return encodeApprove(token, router, amount);
+  return encodeApprove(token, router, MAX_TOKEN_APPROVAL);
 }
 
 export function decodedApprove(tx: PreparedTx): {
