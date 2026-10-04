@@ -20,7 +20,7 @@ Built on **OpenZeppelin Contracts v5.7.0** (`lib/openzeppelin-contracts`, pinned
 - Source verified (exact match) on RobinScan: [HodlRouter](https://robin.etherscan.io/address/0xBcf97C486DB56642BD27FCbE9CDeBed9A72468eb#code), [FeeCollector](https://robin.etherscan.io/address/0x380b8Ced6F27c3800BA9F16796a34Ea74cC3BfCf#code). Also on Sourcify (below).
 - The app reads the addresses from `NEXT_PUBLIC_HODL_ROUTER` / `NEXT_PUBLIC_FEE_COLLECTOR`; unset, it falls back to v1 (`src/lib/contracts.ts`).
 
-v2 was deployed on 2026-10-03 from master `4f13b71` by `0x4523D729d7dac7445EDb6806677AB1EB667FD0BD`, paused, with a 50 bps fee and a $100 cap:
+v2 was deployed on 2026-10-03 from master `3e76f23` by `0x4523D729d7dac7445EDb6806677AB1EB667FD0BD`, paused, with a 50 bps fee and a $100 cap:
 - FeeCollector: tx [`0x597757f0…6f50`](https://robin.etherscan.io/tx/0x597757f06915b70b3ee88a6b2645da84df84c778458b5d64dec2c00eb9536f50), block 79428729
 - HodlRouter: tx [`0x3cbd9f7a…42e9`](https://robin.etherscan.io/tx/0x3cbd9f7ab5517d6b6520ea673a1b27d1d1d2f4779eb072ad85efc313d98142e9), block 79428755
 - Source verified on Sourcify (`exact_match`, creation and runtime): [FeeCollector](https://repo.sourcify.dev/4663/0x380b8Ced6F27c3800BA9F16796a34Ea74cC3BfCf), [HodlRouter](https://repo.sourcify.dev/4663/0xBcf97C486DB56642BD27FCbE9CDeBed9A72468eb)
