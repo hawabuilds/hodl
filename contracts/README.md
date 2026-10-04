@@ -9,8 +9,30 @@ Built on **OpenZeppelin Contracts v5.7.0** (`lib/openzeppelin-contracts`, pinned
 | `HodlRouter` | Single-transaction swap wrapper around Uniswap V4 (Pons and Long pools, through the Universal Router) and Uniswap V3 (SwapRouter02). Takes a 0.5% fee on the ETH / WETH / USDG side of every trade and sends it to `FeeCollector`. It never accepts router `commands` or `inputs` from the caller. |
 | `FeeCollector` | Holds the fees, away from the router. The owner withdraws to the owner. Nothing else can move funds. |
 
-v1 is deployed: router `0x50cb78e0034b4869d8d42ad901c614866f5c5e99`, collector
-`0x1090d265749c1199919a754a8c2dd00150d1f0f9`. v2 is not deployed.
+## Deployments (Robinhood Chain 4663)
+
+| | v2 (current) | v1 (to retire) |
+| --- | --- | --- |
+| HodlRouter | [`0xBcf97C486DB56642BD27FCbE9CDeBed9A72468eb`](https://robinhoodchain.blockscout.com/address/0xBcf97C486DB56642BD27FCbE9CDeBed9A72468eb) | `0x50cb78e0034b4869d8d42ad901c614866f5c5e99` |
+| FeeCollector | [`0x380b8Ced6F27c3800BA9F16796a34Ea74cC3BfCf`](https://robinhoodchain.blockscout.com/address/0x380b8Ced6F27c3800BA9F16796a34Ea74cC3BfCf) | `0x1090d265749c1199919a754a8c2dd00150d1f0f9` |
+
+v2 was deployed on 2026-10-03 from master `4f13b71` by `0x4523D729d7dac7445EDb6806677AB1EB667FD0BD`, paused, with a 50 bps fee and a $100 cap:
+- FeeCollector: tx [`0x597757f0…6f50`](https://robinhoodchain.blockscout.com/tx/0x597757f06915b70b3ee88a6b2645da84df84c778458b5d64dec2c00eb9536f50), block 79428729
+- HodlRouter: tx [`0x3cbd9f7a…42e9`](https://robinhoodchain.blockscout.com/tx/0x3cbd9f7ab5517d6b6520ea673a1b27d1d1d2f4779eb072ad85efc313d98142e9), block 79428755
+- Source verified on Sourcify (`exact_match`, creation and runtime): [FeeCollector](https://repo.sourcify.dev/4663/0x380b8Ced6F27c3800BA9F16796a34Ea74cC3BfCf), [HodlRouter](https://repo.sourcify.dev/4663/0xBcf97C486DB56642BD27FCbE9CDeBed9A72468eb)
+- Forge record: `broadcast/Deploy.s.sol/4663/run-1791065414976.json`
+
+Unpaused on 2026-10-04: tx [`0xdb38a13f…2a4f`](https://robinhoodchain.blockscout.com/tx/0xdb38a13f1071a728493d00f9f0d07f4d9e09a3a129a993d73af33f4211d82a4f), block 79450272.
+
+Live test trades through v2 from the app preview (wallet `0xA16CeB5857F880d86b35309fBF9Ac021644b6516`). Each fee was exactly 50 bps and landed in the v2 FeeCollector. Each trade received at least its minimum, and the router held nothing afterwards:
+
+| Trade | Route | Fee | Minimum → received | Tx |
+| --- | --- | --- | --- | --- |
+| Buy FIG, paid 2 USDG | `buyWithToken`, V3 USDG pool | 0.01 USDG | 0.0921 → 0.0930 FIG | [`0xf123c6c1…71d3`](https://robinhoodchain.blockscout.com/tx/0xf123c6c15b92393927435b2f34d7ce7275896db4b5c4e790379d9e27376971d3) |
+| Buy ORBIO (Pons), paid 0.0007 ETH | `buy`, V3 WETH pool | 0.0000035 ETH | 17.96 → 18.10 ORBIO | [`0xbd1c0c86…1d31`](https://robinhoodchain.blockscout.com/tx/0xbd1c0c86fd5397193f1e210ccea700c87a740146f6aca2b2efab2521b44d1d31) |
+| Sell 18 ORBIO for ETH | `sell`, V3 WETH pool, minimum checked after fee | 0.00000344 ETH | 0.000676 → 0.000684 ETH | [`0x9531fbe9…356b`](https://robinhoodchain.blockscout.com/tx/0x9531fbe93a0ef76c391cfe0ed02909eeb53883e8442fc47ac226e08edaa8356b) |
+
+Not covered live: the V4 route (Pons/Long pools paired directly with ETH, WETH or USDG). No token the app lists uses it today; every listed V4 token is multi-hop and goes through the Universal Router. That route is covered by the fork tests against real Pons ETH, Pons USDG and Long WETH pools. A FIG sell from the app went FIG → USDG → ETH through the Universal Router ([`0xbb47dfcf…8769`](https://robinhoodchain.blockscout.com/tx/0xbb47dfcf6ff484a93f7f7ffdb7b8151fe0c1fea5d92c2051eb386c9c7d958769)), with its 0.5% fee paid to the v2 FeeCollector.
 
 ## Trade flow
 
