@@ -104,7 +104,12 @@ Two contracts on Robinhood Chain (chain id 4663), Solidity `0.8.26`, built on Op
   - **V3 multi-hop `SliceOutOfBounds`.** The app's Universal Router call for multi-hop trades (ETH → USDG → stock → token) left out UR 2.1's `maxHopSlippage` array, so every such trade reverted. Fixed in the app's encoder (`src/lib/swapTx.ts`), with a regression test.
   - Also fixed: seller minimum now checked after the fee, two-step ownership, 2-day timelock on fee / cap / venue changes, a 10-minute TWAP for the size limits, and a FeeCollector that can always be withdrawn.
 - **OpenZeppelin Contracts v5.7.0:** `Ownable2Step`, `ReentrancyGuardTransient`, `SafeERC20`, `SafeCast`.
-- **103 tests:** unit, fuzz, invariant, attack and fork tests (8 against real Pons and Long pools).
+- **Why the app asks for an unlimited approval, once per token.** HodlRouter has exactly one place that pulls tokens, and it only ever pulls from the wallet calling it, for that trade's amount:
+  ```solidity
+  IERC20(token).safeTransferFrom(msg.sender, address(this), amountIn);   // HodlRouter.sol, _pullExact
+  ```
+  No function takes a target or calldata from the caller, and the contract isn't upgradeable, so an allowance to it can't be used to move your tokens outside your own trade. Multi-hop trades use Permit2 with a 30-day allowance to Uniswap's Universal Router, which only spends it when you call it. Details: [`contracts/README.md`](contracts/README.md#approvals).
+- **103 tests:** 95 unit, fuzz, invariant and attack tests that run offline (`npm run forge:test`), plus 8 fork tests against real Pons and Long pools.
 - **100% branch coverage** (123/123 branches, 417/417 statements) on `HodlRouter` and `FeeCollector`.
 - **Slither: 0 High.** Every Medium and Low was reviewed; see [`contracts/README.md`](contracts/README.md#tests).
 - **Contracts CI** ([`.github/workflows/contracts.yml`](.github/workflows/contracts.yml)): format, build, tests, a ≥95% branch-coverage gate, and Slither failing on any High.

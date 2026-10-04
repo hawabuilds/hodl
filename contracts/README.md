@@ -82,6 +82,23 @@ forge fmt --check
 
 The $1 floor and `maxNotionalUsd` cap ($100 at deploy) use a **10-minute TWAP** of the WETH/USDG 0.01% V3 pool (`observe([600, 0])`, mean tick rounded down, Uniswap TickMath). These are risk limits on trade size only. No amount paid or received is derived from this price. A same-block push of the pool moves the TWAP by roughly one second's worth of the window, so neither limit can be bypassed cheaply. If the pool's oracle can't answer, ETH-sized trades revert; USDG-sized trades don't need it.
 
+**The oracle is deep enough.** On-chain at the time of writing, the WETH/USDG pool ([`0x52e65B17…71Ca`](https://robin.etherscan.io/address/0x52e65B17fB6E5BA00Ed806f37Afcd2DaA50271Ca)) has an observation cardinality of **10,809** (`slot0().observationCardinality` and `observationCardinalityNext`). `observe([600, 0])` returns, and so do 1-hour, 6-hour and 24-hour windows; a 48-hour window reverts with `OLD`. So the 10-minute window has well over a day of margin. If the pool's oracle ever can't answer, ETH-sized trades revert (see Known limits).
+
+## Approvals
+
+The app asks for an **unlimited** approval to HodlRouter, once per token, so a repeat trade is a single signature. That is safe because of how the router moves tokens:
+
+- **One pull, from the caller only.** `_pullExact` is the only place the router takes tokens, and the `from` address is always `msg.sender`:
+  ```solidity
+  IERC20(token).safeTransferFrom(msg.sender, address(this), amountIn);
+  ```
+  It runs only from `buy`, `buyWithToken` and `sell`, for that call's `amountIn`.
+- **No caller-supplied calls.** There is no function that executes a target or calldata from the caller. The router calls SwapRouter02 with a fixed selector and the Universal Router with a single `V4_SWAP` command, both built from validated arguments. Its own allowance to SwapRouter02 is for one trade and is reset to 0 straight after.
+- **Not upgradeable.** No proxy, no `delegatecall`, no `selfdestruct`; the EIP-1967 slots are empty on-chain.
+- **What the owner can change.** The Safe can point the router at a different Universal Router or SwapRouter02 after a 2-day timelock. Even then the router never pulls from anyone but the caller, so a standing allowance can't be drained. The most a bad venue could take is the input of a trade in progress.
+
+Multi-hop trades approve **Permit2** (unlimited) and give the Universal Router a Permit2 allowance (max amount, 30-day expiry). The Universal Router only spends it inside a transaction the same wallet sends.
+
 ## Admin powers and delays
 
 | Action | Who | Delay |
@@ -175,6 +192,20 @@ If you ran `forge coverage` just before, forge may report "no tests match" for t
 - `unused-return` (1): `observe()`'s seconds-per-liquidity array isn't needed.
 - `timestamp` (2): deadline and timelock comparisons.
 - Informational: low-level calls and assembly (ETH sends, `balanceOf`, venue calls, revert bubbling), `WETH`/`USDG` naming (kept for ABI compatibility), unindexed `Paused`/`Unpaused` (kept from v1), TickMath literals and complexity.
+
+**forge lint** (`forge lint src`): 14 warnings, all in `HodlRouter.sol`, all reviewed:
+
+| Lint | Where | Why it's safe |
+| --- | --- | --- |
+| `unsafe-typecast` (5) | `int24(delta / window)` in `quoteUsdg` | A mean tick over a Uniswap pool is bounded by ±887,272, which fits `int24`. |
+| | `address(uint160(next))` ×2 in `executeChange` | `next` was queued from an `address` (`uint256(uint160(addr))`), so it always fits `uint160`. |
+| | `uint256(-int256(tick))`, `uint256(int256(tick))` in TickMath | `tick` is an `int24`, so the `int256` widening and its negation are lossless. |
+| `arbitrary-send-eth` (3) | `swapRouter02.call{value:…}`, `universalRouter.call{value:…}` | Not user-controlled: both are owner-set venues behind a 2-day timelock, and `value` is the current trade's own ETH. |
+| | `_sendETH` | `to` is only ever `msg.sender`, the immutable `feeCollector`, or the owner's `sweep` recipient (paused only). |
+| `reentrancy-events` (2) | `emit Trade` after the swap, `emit Sweep` after the transfer | Both functions are `nonReentrant` (transient guard), so nothing can re-enter and reorder logs. The amounts come from balance changes, not from the external calls. |
+| `block-timestamp` (2) | deadline check, timelock `eta` check | Second-level drift can't matter against a 5-minute deadline or a 2-day delay. |
+| `non-reentrant-not-first` (1) | `sweep(…) onlyOwner nonReentrant` | `onlyOwner` makes no external call, so the order of the two modifiers changes nothing. |
+| `unused-return` (1) | `observe()` | The seconds-per-liquidity array isn't needed; only the tick cumulatives are used. |
 
 **CI** (`.github/workflows/contracts.yml`): format, build, unit/fuzz/invariant tests, a ≥95% branch-coverage gate, and Slither failing on High. Fork tests can't run in CI (no archive RPC); run them locally before a deploy.
 
