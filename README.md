@@ -6,7 +6,7 @@
 >
 > - **Live:** [hodl.fan](https://hodl.fan)
 > - **Demo video:** [DEMO_VIDEO_LINK]
-> - **USDG:** Supports USDG, Robinhood Chain's stablecoin: pay and receive in USDG. [USDG_TRADE_TX_LINK]
+> - **USDG:** Supports USDG, Robinhood Chain's stablecoin: pay and receive in USDG. Example: [buy ORBIO with 2 USDG](https://robin.etherscan.io/tx/0x92942f2d76fdcc814da2b86324623e2121b044727a697914f59f6a17a8b6a661).
 > - **Contracts:** HodlRouter v2 and FeeCollector v2 on chain 4663, owned by a 2-of-3 Safe ([details](#smart-contracts))
 
 ## The problem
