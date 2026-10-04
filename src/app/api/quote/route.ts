@@ -78,9 +78,21 @@ async function amountInUsd(
   amountUsd: number,
 ): Promise<number | null> {
   if (Number.isFinite(amountUsd) && amountUsd > 0) return amountUsd;
-  if (payToken === QUOTE_USDG) return Number(formatUnits(amountIn, 6));
-  const eth = await ethUsd();
-  return eth && eth > 0 ? Number(formatEther(amountIn)) * eth : null;
+  return tokenAmountUsd(amountIn, payToken);
+}
+
+/** USD value of a raw amount of ETH, WETH, USDG or a priced quote token. */
+async function tokenAmountUsd(
+  amount: bigint,
+  token: `0x${string}`,
+): Promise<number | null> {
+  if (token === QUOTE_USDG) return Number(formatUnits(amount, 6));
+  if (isEthish(token)) {
+    const eth = await ethUsd();
+    return eth && eth > 0 ? Number(formatEther(amount)) * eth : null;
+  }
+  const price = await quotePriceUsd(token);
+  return price && price > 0 ? Number(formatUnits(amount, await tokenDecimals(token))) * price : null;
 }
 
 /**
@@ -96,6 +108,10 @@ export async function GET(req: Request) {
   const side = url.searchParams.get("side") === "sell" ? "sell" : "buy";
   if (!token) {
     return json({error: "token required"}, 400);
+  }
+  // A buy sized in dollars is checked against the cap before any pool lookup.
+  if (side === "buy" && liveBuyOverCap(Number(url.searchParams.get("amountUsd") ?? ""))) {
+    return json({error: LIVE_BUY_OVER_CAP}, 400);
   }
 
   const rwa = RWA_BY_ADDRESS.get(token);
@@ -144,12 +160,6 @@ export async function GET(req: Request) {
     sized = routed.decision;
     hops = routed.hops;
     pairToken = routed.pairToken;
-    if (side === "buy" && hops.length > 1) {
-      const inUsd = await amountInUsd(amountIn, sized.quoteToken, amountUsd);
-      if (inUsd != null && liveBuyOverCap(inUsd)) {
-        return json({error: LIVE_BUY_OVER_CAP}, 400);
-      }
-    }
   } else if (side === "sell") {
     const sold = await resolveSellToEth({
       token,
@@ -228,19 +238,16 @@ export async function GET(req: Request) {
       sized = bought.decision;
       hops = bought.hops;
       pairToken = bought.pairToken;
-      const eth = await ethUsd();
-      const inUsd =
-        Number.isFinite(amountUsd) && amountUsd > 0
-          ? amountUsd
-          : eth && eth > 0
-            ? Number(formatEther(ethAmount)) * eth
-            : null;
-      if (inUsd != null && liveBuyOverCap(inUsd)) {
-        return json({error: LIVE_BUY_OVER_CAP}, 400);
-      }
     }
   }
   if (!sized) return json({venue: null});
+
+  // The $100 trade cap, as HodlRouter measures it: a buy by what it pays.
+  // Checked on every route, so an over-cap trade never gets a quote to sign.
+  if (side === "buy") {
+    const inUsd = await amountInUsd(amountIn, sized.quoteToken, amountUsd);
+    if (inUsd != null && liveBuyOverCap(inUsd)) return json({error: LIVE_BUY_OVER_CAP}, 400);
+  }
 
   const decimals = await tokenDecimals(token as `0x${string}`);
   const copy = venueTicketCopy(sized);

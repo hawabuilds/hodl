@@ -145,6 +145,7 @@ export async function checkBuy(
   if (!token) return {ok: false, reason: `${symbolOf(asset)} can't be bought here.`};
   const small = tooSmall(amountUsd);
   if (small) return {ok: false, reason: small};
+  if (liveBuyOverCap(amountUsd)) return {ok: false, reason: LIVE_BUY_OVER_CAP};
   const quoted = await fetchSwapQuote({token, side: "buy", amountUsd, currency});
   if (!quoted.ok) return {ok: false, reason: quoteMissReason(quoted.error)};
   const quote = quoted.quote;
@@ -159,9 +160,6 @@ export async function checkBuy(
   });
   if (preview.impactLevel === "block") {
     return {ok: false, reason: `${PRICE_IMPACT_TOO_HIGH} (${preview.impactLabel})`, impact: true};
-  }
-  if ((quote.hops?.length ?? 0) > 1 && liveBuyOverCap(amountUsd)) {
-    return {ok: false, reason: LIVE_BUY_OVER_CAP};
   }
   return {ok: true, quote, token};
 }

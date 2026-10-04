@@ -244,15 +244,15 @@ export function assertSaneUrBuy(opts: {
 }
 
 /**
- * Quote-time drop only. Dust / 99% impact stays on the ticket so the user
- * can see token out, receive USD, and impact. Encode still fail-closes.
+ * Quote-time drop only: a buy over the trade cap, on any route. Dust / 99%
+ * impact stays on the ticket so the user can see token out, receive USD, and
+ * impact. Encode still fail-closes.
  */
 export function refuseUnsafeBuyQuote(opts: {
   quote: Pick<SwapQuote, "amountIn" | "amountOut" | "hops">;
   slippagePct: number;
   amountUsd: number;
 }): string | null {
-  if ((opts.quote.hops?.length ?? 0) < 2) return null;
   if (liveBuyOverCap(opts.amountUsd)) return LIVE_BUY_OVER_CAP;
   return null;
 }
