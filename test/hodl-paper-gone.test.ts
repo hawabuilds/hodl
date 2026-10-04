@@ -22,7 +22,7 @@ describe("paper fill and fee floor are gone", () => {
     const roots = ["src", "test", "contracts", "scripts"].map((d) =>
       join(process.cwd(), d),
     );
-    const banned = new RegExp(["applyFill", "FEE_MIN_USD", "0" + ".95", "9" + ".50"].join("|"));
+    const banned = new RegExp(["applyFill", "FEE_MIN_USD", "0" + "\\.95", "9" + "\\.50"].join("|"));
     const hits: string[] = [];
     for (const root of roots) {
       for (const file of walk(root)) {

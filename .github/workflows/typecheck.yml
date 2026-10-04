@@ -16,3 +16,15 @@ jobs:
       # before tsc and would hide the actual typecheck this gate exists for.
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The unit tests import .ts files directly, which needs Node's built-in
+      # type stripping (on by default from 22.18 / 23.6).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm test
