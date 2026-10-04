@@ -41,7 +41,7 @@ Robinhood Chain has official tokenized stocks, and community launchpads (Pons an
 
 | Desktop | Phone |
 | --- | --- |
-| [SCREENSHOT_DESKTOP] | [SCREENSHOT_PHONE] |
+| <img src="docs/screenshot-desktop.webp" alt="HODL on desktop: token chart, trades and the buy box" width="720"> | <img src="docs/screenshot-phone.webp" alt="HODL on a phone: the buy box paying in USD" width="240"> |
 
 ## Smart contracts
 
