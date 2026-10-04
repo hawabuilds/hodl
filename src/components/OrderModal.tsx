@@ -41,12 +41,14 @@ import {
 } from "@/lib/localStore";
 import {
   amountOutMinimum,
-  liveBuyOverCap,
+  LIVE_BUY_OVER_CAP,
   PRICE_IMPACT_TOO_HIGH,
   quoteMissButtonLabel,
   quoteMissReason,
+  refuseOverCapSell,
   refuseUnsafeBuyQuote,
   ticketBlockReason,
+  usdgRawOverCap,
 } from "@/lib/tradePolicy";
 import {
   buyAvailableLabel,
@@ -283,10 +285,11 @@ export function OrderTicket({
 
   const fee = useMemo(() => feeFor(amountUsd), [amountUsd]);
   const undersized = valid && Number.isFinite(amountUsd) ? tooSmall(amountUsd) : null;
-  const urBuy = Boolean(buying && quote && (quote.hops?.length ?? 0) > 1);
+  // A USDG-paid buy over the cap, on every route: no quote, no wallet. An
+  // ETH-paid buy is checked by the quote API at the router's own ETH price.
   const oversized =
-    valid && Number.isFinite(amountUsd) && urBuy && liveBuyOverCap(amountUsd)
-      ? "This size is above the current notional cap."
+    buying && !eth && valid && Number.isFinite(entered) && usdgRawOverCap(humanToRaw(entered, 6))
+      ? LIVE_BUY_OVER_CAP
       : null;
   const feeRow = quote ? platformFeeLabel() : null;
 
@@ -348,7 +351,7 @@ export function OrderTicket({
   }, []);
 
   useEffect(() => {
-    if (!token || !valid || sellBlocked || sellBalancePending) {
+    if (!token || !valid || sellBlocked || sellBalancePending || oversized) {
       setQuote(null);
       setQuoteMiss(false);
       setQuoteError(null);
@@ -390,7 +393,7 @@ export function OrderTicket({
                 slippagePct: settings.slippagePct,
                 amountUsd: usd,
               })
-            : null;
+            : refuseOverCapSell({quote: result.quote});
           if (unsafe) {
             setQuote(null);
             setQuoteMiss(true);
@@ -429,7 +432,7 @@ export function OrderTicket({
       window.clearTimeout(start);
       window.clearInterval(refresh);
     };
-  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, buying, settings.slippagePct, settings.currency, receive, setHodlPhase]);
+  }, [token, valid, activeSide, amountUsd, quoteAmountIn, ticket.address, sellBlocked, sellBalancePending, oversized, buying, settings.slippagePct, settings.currency, receive, setHodlPhase]);
 
   const blocked = ticketBlockReason({
     kind: asset?.kind ?? "token",
@@ -531,7 +534,7 @@ export function OrderTicket({
           slippagePct: settings.slippagePct,
           amountUsd,
         })
-      : null;
+      : refuseOverCapSell({quote: result.quote});
     if (unsafe) {
       setQuote(null);
       setQuoteMiss(true);
@@ -759,6 +762,7 @@ export function OrderTicket({
     if (!ticket.authenticated) return "Sign in to trade";
     if (sellBalancePending) return "Checking balance…";
     if (sellBlocked) return `${buying ? "Buy" : "Sell"} ${symbol}`;
+    if (oversized) return oversized;
     if (quotePending) return "Finding route…";
     if (impactBlocked) return PRICE_IMPACT_TOO_HIGH;
     if (quoteMiss || (blocked && quote == null)) return quoteMissButtonLabel(quoteError);

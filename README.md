@@ -20,7 +20,7 @@ Robinhood Chain has official tokenized stocks, and community launchpads (Pons an
 ## How HODL solves it
 
 - **An indexed universe.** An on-chain indexer walks the Pons and Long factories and keeps every token whose pool is a verified RWA, or that pairs against ETH/USDG and pays holders in an RWA. The chain decides what exists, Supabase stores it, and price providers only add data to rows that already exist. If every provider is down, the lists still render.
-- **One-transaction trades.** Buys and sells go through `HodlRouter`, a small audited contract that does the V3 or V4 swap, takes a 0.5% fee and checks your minimum in the same transaction. Multi-hop routes through stock tokens go through Uniswap's Universal Router with the same fee.
+- **One-transaction trades.** Buys and sells go through `HodlRouter`, a small, tested contract that does the V3 or V4 swap, takes a 0.5% fee and checks your minimum in the same transaction. Multi-hop routes through stock tokens go through Uniswap's Universal Router with the same fee.
 - **A real portfolio.** Balances come from the chain across every connected wallet (Privy embedded wallet plus imported wallets). The portfolio view shows value over time, allocation, and target weights you can top up toward.
 - **Social, built on trades.** Follow traders, see their verified on-chain fills, and comment on any token or stock.
 
@@ -76,6 +76,7 @@ Tokens two hops away from ETH (ETH → USDG → stock → token) go through Unis
 
 ## Security
 
+- **Trades are capped at $100 while the contracts are unaudited.** The cap is set by our Safe and any change is timelocked for 2 days. We raise it after an audit.
 - **Self-audit, with fixes shipped in v2:**
   - **Donation DoS (High).** v1 required the router's balances to be zero after every trade, so anyone could send it 1 wei of USDG and block all trading. v2 only requires that balances are no higher than before the trade.
   - **V4 encoding.** v1 encoded V4 swap params as flat fields, which the Universal Router read as a struct offset, so only native-ETH pools worked. v2 encodes `ExactInputSingleParams` and is fork-tested on Pons ETH, Pons USDG and Long WETH pools.

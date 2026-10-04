@@ -47,7 +47,7 @@ describe("revert reason", () => {
       errorName: "Cap",
     });
     assert.equal(decodeRevertHex(cap)?.name, "Cap");
-    assert.match(formatRevertForUser({data: cap}) ?? "", /notional cap/i);
+    assert.equal(formatRevertForUser({data: cap}), "Max $100 per trade for now");
     assert.doesNotMatch(formatRevertForUser({data: cap}) ?? "", /Swap reverted/i);
   });
 

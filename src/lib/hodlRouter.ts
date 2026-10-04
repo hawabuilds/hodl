@@ -9,6 +9,7 @@ export const hodlRouterAbi = parseAbi([
   "function sell(address tokenIn, uint256 amountIn, address tokenOut, uint128 minAmountOut, (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) hint, uint256 deadline)",
   "function feeBps() view returns (uint16)",
   "function paused() view returns (bool)",
+  "function quoteUsdg(uint256 ethWei) view returns (uint256)",
   "event Trade(address indexed user, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 feeAmount, address feeToken, uint8 venue)",
 ]);
 

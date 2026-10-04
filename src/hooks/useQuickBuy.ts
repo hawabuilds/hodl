@@ -7,6 +7,7 @@ import {usePublicClient} from "wagmi";
 
 import {RH_MAINNET_ID} from "@/config/chain";
 import {tooSmall} from "@/config/fees";
+import {usdgRawFromUsd} from "@/lib/quoteAmounts";
 import {useHodlSwap} from "@/hooks/useHodlSwap";
 import {useLocalStore} from "@/hooks/useLocalStore";
 import {useSwap} from "@/hooks/useSwap";
@@ -28,8 +29,9 @@ import {fetchSwapQuote, tradeCurrency, type SwapQuote, type TradeCurrency} from 
 import {QUOTE_USDG} from "@/lib/contracts";
 import {erc20Abi} from "@/lib/swapTx";
 import {
+  LIVE_BUY_OVER_CAP,
   PRICE_IMPACT_TOO_HIGH,
-  liveBuyOverCap,
+  usdgRawOverCap,
   quoteMissReason,
   refuseUnsafeBuyQuote,
 } from "@/lib/tradePolicy";
@@ -131,7 +133,7 @@ export function quickBuyCurrency(): TradeCurrency {
 /**
  * The buy panel's checks for `amountUsd` of an asset, without signing: a
  * quote, the size minimum, the unsafe-quote guard, the price-impact block and
- * the notional cap. Top up runs this first so every refusal is shown with its
+ * the $100 trade cap. Top up runs this first so every refusal is shown with its
  * reason before anything is sent.
  */
 export async function checkBuy(
@@ -144,6 +146,11 @@ export async function checkBuy(
   if (!token) return {ok: false, reason: `${symbolOf(asset)} can't be bought here.`};
   const small = tooSmall(amountUsd);
   if (small) return {ok: false, reason: small};
+  // Paying USDG, the dollars are the input, so this is the contract's check.
+  // Paying ETH, the quote API checks it at the router's own ETH price.
+  if (currency === "usdg" && usdgRawOverCap(usdgRawFromUsd(amountUsd))) {
+    return {ok: false, reason: LIVE_BUY_OVER_CAP};
+  }
   const quoted = await fetchSwapQuote({token, side: "buy", amountUsd, currency});
   if (!quoted.ok) return {ok: false, reason: quoteMissReason(quoted.error)};
   const quote = quoted.quote;
@@ -158,9 +165,6 @@ export async function checkBuy(
   });
   if (preview.impactLevel === "block") {
     return {ok: false, reason: `${PRICE_IMPACT_TOO_HIGH} (${preview.impactLabel})`, impact: true};
-  }
-  if ((quote.hops?.length ?? 0) > 1 && liveBuyOverCap(amountUsd)) {
-    return {ok: false, reason: "This size is above the current notional cap."};
   }
   return {ok: true, quote, token};
 }
