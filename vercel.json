@@ -1,6 +1,12 @@
 {
   "redirects": [
     {
+      "source": "/",
+      "has": [{"type": "host", "value": "rwa-mauve.vercel.app"}],
+      "destination": "https://hodl.fan/",
+      "permanent": true
+    },
+    {
       "source": "/:path*",
       "has": [{"type": "host", "value": "rwa-mauve.vercel.app"}],
       "destination": "https://hodl.fan/:path*",

@@ -29,7 +29,7 @@ describe("appOrigin", () => {
 
   it("uses VERCEL_URL when explicit origin is unset", () => {
     delete process.env.NEXT_PUBLIC_APP_URL;
-    process.env.VERCEL_URL = "rwa-mauve.vercel.app";
-    assert.equal(appOrigin(), "https://rwa-mauve.vercel.app");
+    process.env.VERCEL_URL = "hodl-git-preview.vercel.app";
+    assert.equal(appOrigin(), "https://hodl-git-preview.vercel.app");
   });
 });

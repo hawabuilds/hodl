@@ -1,4 +1,4 @@
--- RWA — Supabase schema
+-- HODL — Supabase schema
 --
 -- Paste this into the Supabase SQL Editor and run it once.
 -- Safe to re-run: tables, indexes and the seed row are created if missing.

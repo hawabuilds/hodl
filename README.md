@@ -178,8 +178,8 @@ flowchart LR
 Requirements: Node ≥ 22.12, npm. For contracts: [Foundry](https://getfoundry.sh).
 
 ```bash
-git clone --recurse-submodules https://github.com/hawabuilds/rwa.git
-cd rwa
+git clone --recurse-submodules https://github.com/hawabuilds/hodl.git
+cd hodl
 npm ci
 cp .env.local.example .env.local
 npm run dev
