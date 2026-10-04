@@ -6,16 +6,16 @@
  *
  *   npm run hide:fake-longs
  */
-import {normalizeAddress} from "../src/lib/address";
+import {normalizeAddress} from "../../src/lib/address";
 import {
   FAKE_LONG_EXAMPLE,
   hasCloneLongVanity,
   hasLongAppVanity,
   isDeniedFakeLong,
-} from "../src/lib/longAuthenticity";
-import {db, hasDatabase} from "../src/lib/server/db";
-import {resolveLongAuthenticity} from "../src/lib/server/live/longAuthenticity";
-import {applyThreeStateFilter} from "../src/lib/threeState";
+} from "../../src/lib/longAuthenticity";
+import {db, hasDatabase} from "../../src/lib/server/db";
+import {resolveLongAuthenticity} from "../../src/lib/server/live/longAuthenticity";
+import {applyThreeStateFilter} from "../../src/lib/threeState";
 
 async function markFalse(addresses: string[]): Promise<number> {
   if (addresses.length === 0) return 0;

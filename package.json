@@ -24,7 +24,7 @@
     "backfill:pools": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-pools.ts",
     "audit:charts": "node --import ./test/resolver.mjs --env-file=.env.local scripts/audit-chart-inversion.ts",
     "backfill:eligible": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-eligible.ts",
-    "hide:fake-longs": "node --import ./test/resolver.mjs --env-file=.env.local scripts/hide-fake-longs.ts",
+    "hide:fake-longs": "node --import ./test/resolver.mjs --env-file=.env.local scripts/ops/hide-fake-longs.ts",
     "backfill:prices": "node --import ./test/resolver.mjs --env-file=.env.local scripts/backfill-prices.ts",
     "worker": "node --import ./test/resolver.mjs src/worker/index.ts",
     "cron:railway": "node --import ./test/resolver.mjs scripts/railway-cron.ts",
