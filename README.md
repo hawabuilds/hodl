@@ -20,7 +20,7 @@ Robinhood Chain has official tokenized stocks, and community launchpads (Pons an
 ## How HODL solves it
 
 - **An indexed universe.** An on-chain indexer walks the Pons and Long factories and keeps every token whose pool is a verified RWA, or that pairs against ETH/USDG and pays holders in an RWA. The chain decides what exists, Supabase stores it, and price providers only add data to rows that already exist. If every provider is down, the lists still render.
-- **One-transaction trades.** Buys and sells go through `HodlRouter`, a small audited contract that does the V3 or V4 swap, takes a 0.5% fee and checks your minimum in the same transaction. Multi-hop routes through stock tokens go through Uniswap's Universal Router with the same fee.
+- **One-transaction trades.** Buys and sells go through `HodlRouter`, a small, tested contract that does the V3 or V4 swap, takes a 0.5% fee and checks your minimum in the same transaction. Multi-hop routes through stock tokens go through Uniswap's Universal Router with the same fee.
 - **A real portfolio.** Balances come from the chain across every connected wallet (Privy embedded wallet plus imported wallets). The portfolio view shows value over time, allocation, and target weights you can top up toward.
 - **Social, built on trades.** Follow traders, see their verified on-chain fills, and comment on any token or stock.
 
