@@ -19,3 +19,8 @@ scripts/.backfill-pools-cursor.json
 screenshots/
 _tmp-*
 scripts/_*
+
+# Brand design source files (kept outside the repo)
+/brand/Brand Style Guides - Editable.ai
+/brand/Brand Style Guides - PDF.pdf
+/brand/Social Media Kits/Cover/Social Cover 2.ai
