@@ -76,6 +76,7 @@ Tokens two hops away from ETH (ETH → USDG → stock → token) go through Unis
 
 ## Security
 
+- **Trades are capped at $100 while the contracts are unaudited.** The cap is set by our Safe and any change is timelocked for 2 days. We raise it after an audit.
 - **Self-audit, with fixes shipped in v2:**
   - **Donation DoS (High).** v1 required the router's balances to be zero after every trade, so anyone could send it 1 wei of USDG and block all trading. v2 only requires that balances are no higher than before the trade.
   - **V4 encoding.** v1 encoded V4 swap params as flat fields, which the Universal Router read as a struct offset, so only native-ETH pools worked. v2 encodes `ExactInputSingleParams` and is fork-tested on Pons ETH, Pons USDG and Long WETH pools.

@@ -111,6 +111,7 @@ The $1 floor and `maxNotionalUsd` cap ($100 at deploy) use a **10-minute TWAP** 
 
 ## Known limits
 
+- **Trades are capped at $100 while the contracts are unaudited.** The cap is set by our Safe and any change is timelocked for 2 days. We raise it after an audit.
 - **No renounce.** Ownership can only be handed over (two-step), never dropped, so pause, sweep, timelocked changes and fee withdrawals always have someone able to act.
 - **Trusted owner.** The owner can pause indefinitely and can, after 2 days, point the router at a different Universal Router or SwapRouter02. Users who don't trust a queued change have 2 days to stop trading. Use a multisig.
 - **Hook allow-list is fixed.** A new Pons or Long hook needs a new router.
