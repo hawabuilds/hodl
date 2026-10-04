@@ -42,10 +42,19 @@ function stubProviders(replies: Record<string, Reply>): string[] {
 const json = (body: unknown, status = 200) => async () =>
   new Response(JSON.stringify(body), {status, headers: {"content-type": "application/json"}});
 
-/** Never answers; rejects when the caller's timeout aborts it, as fetch does. */
+/**
+ * Never answers; rejects when the caller's timeout aborts it, as fetch does.
+ * A real request holds a socket open, which keeps the event loop alive until
+ * the (unref'd) AbortSignal.timeout fires. This stub does no I/O, so it holds
+ * a timer instead; without it Node 22 cancels the test as unresolved.
+ */
 const hang: Reply = (init) =>
   new Promise((_, reject) => {
-    init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    const keepAlive = setInterval(() => {}, 1_000);
+    init.signal?.addEventListener("abort", () => {
+      clearInterval(keepAlive);
+      reject(init.signal?.reason);
+    });
   });
 
 describe("tape rpc failover", () => {
