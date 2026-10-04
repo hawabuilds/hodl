@@ -2,6 +2,7 @@ import type {Holding} from "@/lib/types";
 import {normalizeAddress, isAddress} from "@/lib/address";
 import {feedImageUrl} from "@/lib/tokenImage";
 import {RH_MAINNET_ID} from "@/config/chain";
+import {QUOTE_USDG} from "@/lib/contracts";
 import {erc20Abi} from "viem";
 import {db, hasDatabase} from "../db";
 import {cached, cachedLocal, keepAlive} from "./cache";
@@ -9,6 +10,8 @@ import {nativeBalance, rpc, walletSnapshot} from "./chain";
 import {readShared, writeShared} from "./shared";
 import {RWA_BY_ADDRESS, RWA_REGISTRY, rwaPricesFor, type RwaPrice} from "./robinhood";
 import {getTokenRows, statsFor, type TokenRow} from "./universeStore";
+
+const USDG_DECIMALS = 6;
 
 export interface PortfolioTiming {
   discoverMs: number;
@@ -22,6 +25,8 @@ export interface PortfolioTiming {
 export interface HoldingsResult {
   holdings: Holding[];
   ethBalance: number;
+  /** USDG, held as cash beside ETH: never a token holding, always $1. */
+  usdgBalance: number;
   degraded: boolean;
   wallets: string[];
   chainId: number;
@@ -222,6 +227,7 @@ export async function holdingsFor(
     return {
       holdings: [],
       ethBalance: 0,
+      usdgBalance: 0,
       degraded: false,
       wallets: [],
       chainId: RH_MAINNET_ID,
@@ -269,10 +275,14 @@ export async function holdingsFor(
   );
   const discoverMs = Date.now() - discoverStarted;
 
-  const wanted = candidates.map((address) => ({
-    address,
-    decimals: RWA_BY_ADDRESS.get(address)?.decimals ?? 18,
-  }));
+  const wanted = candidates
+    .filter((address) => address !== QUOTE_USDG)
+    .map((address) => ({
+      address,
+      decimals: RWA_BY_ADDRESS.get(address)?.decimals ?? 18,
+    }));
+  // USDG rides in the same balance read; it is cash, split out below.
+  wanted.push({address: QUOTE_USDG, decimals: USDG_DECIMALS});
 
   // Names and prices for every candidate token load beside the balance read
   // rather than after it: the held tokens are among the candidates.
@@ -312,6 +322,8 @@ export async function holdingsFor(
     degraded = true;
   }
   const rpcMs = Date.now() - rpcStarted;
+  const usdgBalance = merged.get(QUOTE_USDG) ?? 0;
+  merged.delete(QUOTE_USDG);
 
   const held = [...merged.entries()].filter(([, amount]) => amount > 0);
   const heldAddresses = held.map(([address]) => address);
@@ -390,6 +402,7 @@ export async function holdingsFor(
   return {
     holdings,
     ethBalance: eth,
+    usdgBalance,
     degraded,
     wallets,
     chainId: RH_MAINNET_ID,
@@ -415,22 +428,36 @@ function pairedTickerOf(row: TokenRow | undefined): string | null {
   return null;
 }
 
+async function usdgBalanceOf(wallet: string): Promise<number> {
+  const raw = await rpc().readContract({
+    address: QUOTE_USDG,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [wallet as `0x${string}`],
+  });
+  return Number(raw) / 10 ** USDG_DECIMALS;
+}
+
 export async function nativeOnly(
   walletOrWallets: string | string[],
-): Promise<{ethBalance: number; wallets: string[]; chainId: number; rpcCalls: number; totalMs: number}> {
+): Promise<{ethBalance: number; usdgBalance: number; wallets: string[]; chainId: number; rpcCalls: number; totalMs: number}> {
   const started = Date.now();
   const wallets = walletsOf(
     Array.isArray(walletOrWallets) ? walletOrWallets : [walletOrWallets],
   );
   if (wallets.length === 0) {
-    return {ethBalance: 0, wallets: [], chainId: RH_MAINNET_ID, rpcCalls: 0, totalMs: 0};
+    return {ethBalance: 0, usdgBalance: 0, wallets: [], chainId: RH_MAINNET_ID, rpcCalls: 0, totalMs: 0};
   }
-  const reads = await Promise.all(wallets.map((wallet) => nativeBalance(wallet).catch(() => 0)));
+  const [reads, usdg] = await Promise.all([
+    Promise.all(wallets.map((wallet) => nativeBalance(wallet).catch(() => 0))),
+    Promise.all(wallets.map((wallet) => usdgBalanceOf(wallet).catch(() => 0))),
+  ]);
   return {
     ethBalance: reads.reduce((sum, value) => sum + value, 0),
+    usdgBalance: usdg.reduce((sum, value) => sum + value, 0),
     wallets,
     chainId: RH_MAINNET_ID,
-    rpcCalls: wallets.length,
+    rpcCalls: wallets.length * 2,
     totalMs: Date.now() - started,
   };
 }

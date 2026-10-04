@@ -57,11 +57,13 @@ export async function GET(request: NextRequest) {
   const ethUsd = book.ethBalance * (eth.data > 0 ? eth.data : 0);
   // A missing ETH print would understate a native-only book; skip the row.
   const priced = book.ethBalance <= 0 || eth.data > 0;
+  // USDG is cash at $1: it counts toward the total like ETH does.
+  const usdgUsd = book.usdgBalance;
 
   if (!book.degraded && priced && !pricesMissing) {
     await maybeWritePortfolioSnapshot({
       wallets,
-      totalUsd: positionsUsd + ethUsd,
+      totalUsd: positionsUsd + ethUsd + usdgUsd,
       positionsUsd,
       ethUsd,
       degraded: book.degraded,

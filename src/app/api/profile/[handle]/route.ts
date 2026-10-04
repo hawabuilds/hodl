@@ -49,7 +49,7 @@ export async function GET(
         followingByHandle(profile.handle),
         address && /^0x[0-9a-fA-F]{40}$/.test(address)
           ? holdingsFor(address)
-          : Promise.resolve({holdings: [], ethBalance: 0, degraded: false}),
+          : Promise.resolve({holdings: [], ethBalance: 0, usdgBalance: 0, degraded: false}),
       ]);
 
       return json({

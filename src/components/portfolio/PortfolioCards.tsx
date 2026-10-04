@@ -26,6 +26,7 @@ import {
   donutSlices,
   signedPct,
   signedUsd,
+  USDG_KEY,
   type PortfolioRow,
   type RowKind,
 } from "@/lib/portfolioView";
@@ -146,7 +147,7 @@ const EMPTY: Record<Filter, string> = {
   all: "Nothing here yet. Buy from any chart page.",
   token: "No tokens yet. Buy one from any token chart page.",
   rwa: "No tokenized stocks yet. Buy one from any RWA chart page.",
-  cash: "No ETH in this wallet.",
+  cash: "No ETH or USDG in this wallet.",
 };
 
 export function HoldingsCard({
@@ -221,7 +222,7 @@ export function HoldingsCard({
                     <Tag row={row} />
                   </div>
                   <div className="tabular-nums mt-[3px] truncate text-[12.5px] font-medium text-faint">
-                    {compactAmount(row.amount)} {row.symbol}
+                    {compactAmount(row.amount)} {row.unit ?? row.symbol}
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
@@ -277,7 +278,7 @@ function HoldingsTableView({rows, pricesPending}: {rows: readonly PortfolioRow[]
           </span>
           {/* Wraps rather than cutting off: the number always shows whole. */}
           <span className="tabular-nums min-w-0 font-medium leading-[1.35] text-muted [overflow-wrap:anywhere]">
-            <span className="whitespace-nowrap">{compactAmount(row.amount)}</span> {row.symbol}
+            <span className="whitespace-nowrap">{compactAmount(row.amount)}</span> {row.unit ?? row.symbol}
           </span>
           <span className="tabular-nums whitespace-nowrap font-extrabold">
             <RowValue row={row} />
@@ -320,7 +321,21 @@ export function RowLink({row, className, children}: {row: PortfolioRow; classNam
 
 export function RowAvatar({row, size}: {row: PortfolioRow; size: number}) {
   if (row.holding) return <HoldingAvatar holding={row.holding} size={size} />;
+  if (row.key === USDG_KEY) return <UsdMark size={size} />;
   return <EthMark size={size} />;
+}
+
+/** The USD cash row's mark, in the same circle as ETH's. */
+export function UsdMark({size}: {size: number}) {
+  return (
+    <span
+      aria-hidden="true"
+      className="grid shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--brand-500)_18%,var(--surface-raised,#1b1d2b))] font-extrabold text-ink"
+      style={{width: size, height: size, fontSize: size * 0.46}}
+    >
+      $
+    </span>
+  );
 }
 
 export function EthMark({size}: {size: number}) {
@@ -340,7 +355,7 @@ export function EthMark({size}: {size: number}) {
   );
 }
 
-/** "NVDA" for a token, "RWA" for a stock, "Cash" for ETH. */
+/** "NVDA" for a token, "RWA" for a stock, "Cash" for ETH and USD. */
 export function Tag({row}: {row: PortfolioRow}) {
   const text = row.kind === "cash" ? "Cash" : row.kind === "rwa" ? "RWA" : (row.holding?.pairedTicker ?? null);
   if (!text) return null;
@@ -352,7 +367,7 @@ export function Tag({row}: {row: PortfolioRow}) {
 }
 
 function subtitle(row: PortfolioRow): string {
-  if (row.kind === "cash") return "Cash";
+  if (row.kind === "cash") return row.unit ?? "Cash";
   if (row.kind === "rwa") return row.name;
   return row.holding?.pairedTicker ?? row.name;
 }
